@@ -1,4 +1,11 @@
 .env
 .env.*
+.env.local
 git-filter-repo*
 node_modules/
+node_modules
+dist/
+dist
+build
+.DS_Store
+tsconfig.tsbuildinfo

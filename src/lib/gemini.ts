@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import {
   db,
   type Submission,
@@ -7,13 +6,8 @@ import {
   type AnswerExtractionCorrection
 } from './db'
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || ''
-export const isGeminiAvailable = !!apiKey
-
-let genAI: GoogleGenerativeAI | null = null
-if (apiKey) {
-  genAI = new GoogleGenerativeAI(apiKey)
-}
+const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
+export const isGeminiAvailable = Boolean(geminiProxyUrl)
 
 // 工具：Blob 轉 Base64（去掉 data: 前綴）
 async function blobToBase64(blob: Blob): Promise<string> {
@@ -25,13 +19,68 @@ async function blobToBase64(blob: Blob): Promise<string> {
   })
 }
 
+type GeminiInlineDataPart = {
+  inlineData: {
+    mimeType: string
+    data: string
+  }
+}
+
+type GeminiRequestPart = string | GeminiInlineDataPart
+type GeminiPart = { text: string } | GeminiInlineDataPart
+
+function normalizeParts(parts: GeminiRequestPart[]): GeminiPart[] {
+  return parts.map((part) => (typeof part === 'string' ? { text: part } : part))
+}
+
+async function generateGeminiText(
+  modelName: string,
+  parts: GeminiRequestPart[]
+): Promise<string> {
+  const response = await fetch(geminiProxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: modelName,
+      contents: [{ role: 'user', parts: normalizeParts(parts) }]
+    })
+  })
+
+  let data: any = null
+  try {
+    data = await response.json()
+  } catch {
+    data = {}
+  }
+
+  if (!response.ok) {
+    const message =
+      data?.error?.message ||
+      data?.error ||
+      `Gemini request failed (${response.status})`
+    throw new Error(message)
+  }
+
+  const text = (data?.candidates ?? [])
+    .flatMap((candidate: any) => candidate?.content?.parts ?? [])
+    .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('')
+    .trim()
+
+  if (!text) {
+    throw new Error('Gemini response empty')
+  }
+
+  return text
+}
+
 /**
  * 🔍 模型健診工具
  * 依序測試候選模型，選出可用的一個作為 currentModelName
  */
 export async function diagnoseModels() {
-  if (!genAI) {
-    console.error('⚠️ API Key 未設定')
+  if (!isGeminiAvailable) {
+    console.error('Gemini 服務未設定')
     return
   }
 
@@ -47,10 +96,8 @@ export async function diagnoseModels() {
   for (const modelName of candidates) {
     try {
       console.log(`Testing: ${modelName} ...`)
-      const model = genAI.getGenerativeModel({ model: modelName })
-      const result = await model.generateContent('Hi')
-      const response = await result.response
-      console.log(`✅ ${modelName} 測試成功，回應片段:`, response.text().slice(0, 10))
+      const text = await generateGeminiText(modelName, ['Hi'])
+      console.log(`✅ ${modelName} 測試成功，回應片段:`, text.slice(0, 10))
 
       if (!winnerModel) winnerModel = modelName
     } catch (error: any) {
@@ -188,14 +235,13 @@ export async function gradeSubmission(
   answerKey?: AnswerKey,
   options?: GradeSubmissionOptions
 ): Promise<GradingResult> {
-  if (!genAI) throw new Error('Gemini API 未設定')
+  if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
 
   try {
     console.log(`🧠 使用模型 ${currentModelName} 進行批改...`)
-    const model = genAI.getGenerativeModel({ model: currentModelName })
 
     const submissionBase64 = await blobToBase64(submissionImage)
-    const requestParts: any[] = []
+    const requestParts: GeminiRequestPart[] = []
 
     // --- Prompt 區（通用所有科目） ---
     let prompt = `
@@ -389,9 +435,9 @@ ${lines}
       inlineData: { mimeType: 'image/jpeg', data: submissionBase64 }
     })
 
-    const result = await model.generateContent(requestParts)
-    const response = await result.response
-    const text = response.text().replace(/```json|```/g, '').trim()
+    const text = (await generateGeminiText(currentModelName, requestParts))
+      .replace(/```json|```/g, '')
+      .trim()
 
     const parsed = JSON.parse(text) as GradingResult
 
@@ -506,21 +552,27 @@ export async function extractAnswerKeyFromImage(
   answerSheetImage: Blob,
   opts?: ExtractAnswerKeyOptions
 ): Promise<AnswerKey> {
-  if (!genAI) throw new Error('Gemini API 未設定')
+  if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
 
   console.log('🧾 開始從答案卷圖片抽取 AnswerKey...')
-  const model = genAI.getGenerativeModel({ model: currentModelName })
   const imageBase64 = await blobToBase64(answerSheetImage)
 
   const prompt = buildAnswerKeyPrompt(opts?.domain)
 
-  const result = await model.generateContent([
+  const text = (await generateGeminiText(currentModelName, [
     prompt,
     { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } }
-  ])
-
-  const response = await result.response
-  const text = response.text().replace(/```json|```/g, '').trim()
+  ]))
+    .replace(/```json|```/g, '')
+    .trim()
 
   return JSON.parse(text) as AnswerKey
 }
+
+
+
+
+
+
+
+

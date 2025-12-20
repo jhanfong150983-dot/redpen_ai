@@ -1,4 +1,4 @@
-﻿
+
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   ArrowLeft,
@@ -238,7 +238,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
   }
   const handleRegradeSingle = async (submission: Submission) => {
     if (!isGeminiAvailable) {
-      alert('Gemini API 未設定')
+      alert('Gemini 服務未設定')
       return
     }
 
@@ -284,7 +284,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
 
   const handleRegradeFlagged = async (submission: Submission) => {
     if (!isGeminiAvailable) {
-      alert('Gemini API 未設定')
+      alert('Gemini 服務未設定')
       return
     }
 
@@ -417,7 +417,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
 
   const handleGradeAll = async () => {
     if (!isGeminiAvailable) {
-      alert('Gemini API 未設定')
+      alert('Gemini 服務未設定')
       return
     }
 
@@ -1310,3 +1310,4 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
     </div>
   )
 }
+

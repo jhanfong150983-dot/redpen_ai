@@ -25,17 +25,25 @@
 
 ## 2. 設定環境變數
 
-### 方法 1：編輯 .env 檔案
+### 方法 1：編輯 .env 檔案（前端）
 
 打開專案根目錄的 `.env` 檔案，添加：
 
 ```env
-VITE_GEMINI_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+VITE_GEMINI_PROXY_URL=/api/proxy
 ```
 
-將 `AIzaSyXXX...` 替換為你實際的 API Key。
+若不設定，預設使用 `/api/proxy`。
 
-### 方法 2：從 .env.example 複製
+### 方法 2：設定伺服器環境變數（Vercel / Server）
+
+在部署平台的環境變數中設定：
+
+```env
+SECRET_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+```
+
+### 方法 3：從 .env.example 複製
 
 如果 `.env` 不存在，可以從 `.env.example` 複製：
 
@@ -43,7 +51,7 @@ VITE_GEMINI_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 cp .env.example .env
 ```
 
-然後編輯 `.env`，填入你的 API Key。
+然後依照上方填入 `VITE_GEMINI_PROXY_URL`。
 
 ## 3. 重啟開發伺服器
 
@@ -57,33 +65,18 @@ cp .env.example .env
 
 ## 4. 驗證設定
 
-### 檢查 1：查看首頁
+### 檢查 1：AI 批改是否可用
 
 訪問 http://localhost:5174，點擊 **「AI 批改」** 按鈕。
 
-如果看到黃色警告訊息：
-```
-⚠️ Gemini API 未設定，請在 .env 中設定 VITE_GEMINI_API_KEY
-```
-
-說明 API Key 沒有正確設定，請檢查：
-- `.env` 檔案是否存在
-- API Key 格式是否正確（`VITE_GEMINI_API_KEY=...`）
+如果批改時出現錯誤，請檢查：
+- 伺服器是否已設定 `SECRET_API_KEY`
+- `VITE_GEMINI_PROXY_URL` 是否指向可用的 `/api/proxy`
 - 是否重啟了開發伺服器
 
 ### 檢查 2：瀏覽器控制台
 
-打開瀏覽器控制台（F12），應該看到：
-```
-✅ Gemini API 已設定
-```
-
-如果看到：
-```
-⚠️ VITE_GEMINI_API_KEY 未設定，AI 批改功能將無法使用
-```
-
-說明環境變數未正確載入。
+打開瀏覽器控制台（F12），確認 `/api/proxy` 請求回應為 200。
 
 ## 5. 使用 AI 批改功能
 
