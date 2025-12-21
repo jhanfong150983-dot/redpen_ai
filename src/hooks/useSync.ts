@@ -35,7 +35,9 @@ export function useSync(options: UseSyncOptions = {}) {
     pendingCount: 0,
     error: null
   })
+  const isSyncingRef = useRef(false)
   const syncQueuedRef = useRef(false)
+  const prevOnlineRef = useRef(isOnline)
 
   /**
    * 更新待同步數量
@@ -213,13 +215,14 @@ export function useSync(options: UseSyncOptions = {}) {
       return
     }
 
-    if (status.isSyncing) {
+    if (isSyncingRef.current) {
       console.log('目前正在同步中，跳過本次')
       syncQueuedRef.current = true
       return
     }
 
     try {
+      isSyncingRef.current = true
       setStatus((prev) => ({ ...prev, isSyncing: true, error: null }))
 
       const pendingSubmissions = await db.submissions
@@ -266,6 +269,7 @@ export function useSync(options: UseSyncOptions = {}) {
         error: error instanceof Error ? error.message : '同步失敗'
       }))
     } finally {
+      isSyncingRef.current = false
       if (syncQueuedRef.current) {
         syncQueuedRef.current = false
         window.setTimeout(() => {
@@ -273,7 +277,7 @@ export function useSync(options: UseSyncOptions = {}) {
         }, 0)
       }
     }
-  }, [isOnline, status.isSyncing, updatePendingCount, pushMetadata, pullMetadata])
+  }, [isOnline, updatePendingCount, pushMetadata, pullMetadata])
 
   /**
    * 提供給外部手動觸發同步
@@ -293,7 +297,10 @@ export function useSync(options: UseSyncOptions = {}) {
   }, [autoSync, isOnline, performSync, updatePendingCount])
 
   useEffect(() => {
-    if (isOnline && autoSync) {
+    if (!autoSync) return
+    const wasOnline = prevOnlineRef.current
+    prevOnlineRef.current = isOnline
+    if (!wasOnline && isOnline) {
       console.log('網路恢復，觸發同步')
       void performSync()
     }
