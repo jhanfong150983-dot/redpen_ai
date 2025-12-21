@@ -1,4 +1,4 @@
-import { Cloud, CloudOff, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react'
+import { CloudOff, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react'
 import { useSync } from '@/hooks/useSync'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 
