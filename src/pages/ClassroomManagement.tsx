@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { db, generateId } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
+import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import type { Classroom, Student } from '@/lib/db'
 
 interface ClassroomManagementProps {
@@ -236,11 +237,31 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
     try {
       const classroomId = target.classroom.id
 
+      const students = await db.students
+        .where('classroomId')
+        .equals(classroomId)
+        .toArray()
+      const studentIds = students.map((s) => s.id)
+
       const assignments = await db.assignments
         .where('classroomId')
         .equals(classroomId)
         .toArray()
       const assignmentIds = assignments.map((a) => a.id)
+
+      let submissionIds: string[] = []
+      if (assignmentIds.length > 0) {
+        const submissions = await db.submissions
+          .where('assignmentId')
+          .anyOf(assignmentIds)
+          .toArray()
+        submissionIds = submissions.map((s) => s.id)
+      }
+
+      await queueDeleteMany('classrooms', [classroomId])
+      await queueDeleteMany('students', studentIds)
+      await queueDeleteMany('assignments', assignmentIds)
+      await queueDeleteMany('submissions', submissionIds)
 
       await db.students.where('classroomId').equals(classroomId).delete()
       if (assignmentIds.length > 0) {

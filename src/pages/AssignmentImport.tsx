@@ -11,6 +11,7 @@ import {
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
+import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import {
   convertPdfToImages,
   fileToBlob,
@@ -295,6 +296,9 @@ export default function AssignmentImport({
           .equals(assignment.id)
           .and((sub) => sub.studentId === mapping.studentId)
           .toArray()
+
+        const existingIds = existingSubmissions.map((sub) => sub.id)
+        await queueDeleteMany('submissions', existingIds)
 
         for (const oldSub of existingSubmissions) {
           await db.submissions.delete(oldSub.id)

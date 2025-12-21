@@ -18,6 +18,7 @@ export interface AnswerKey {
 export interface Classroom {
   id: string
   name: string
+  updatedAt?: number
 }
 
 /**
@@ -28,6 +29,7 @@ export interface Student {
   classroomId: string
   seatNumber: number
   name: string
+  updatedAt?: number
 }
 
 /**
@@ -40,6 +42,7 @@ export interface Assignment {
   totalPages: number
   domain?: string // 國語、數學、社會、自然、英語、其他
   answerKey?: AnswerKey
+  updatedAt?: number
 }
 
 export type SubmissionStatus = 'missing' | 'scanned' | 'synced' | 'graded'
@@ -99,6 +102,7 @@ export interface Submission {
   imageBlob?: Blob
   imageUrl?: string
   createdAt: number
+  updatedAt?: number
 
   // AI 批改欄位
   score?: number
@@ -155,6 +159,53 @@ class RedPenDatabase extends Dexie {
       syncQueue: '++id, tableName, recordId, createdAt',
       answerExtractionCorrections:
         '++id, assignmentId, studentId, submissionId, questionId, createdAt'
+    })
+
+    const setUpdatedAt = (value: unknown) => {
+      if (typeof value === 'number' && Number.isFinite(value)) return value
+      return Date.now()
+    }
+
+    const applyUpdatedAtOnCreate = (obj: { updatedAt?: number }) => {
+      if (obj.updatedAt === undefined) {
+        obj.updatedAt = setUpdatedAt(obj.updatedAt)
+      }
+    }
+
+    const applyUpdatedAtOnUpdate = (mods: Record<string, unknown>) => {
+      if (!('updatedAt' in mods)) {
+        mods.updatedAt = Date.now()
+      }
+      return mods
+    }
+
+    this.classrooms.hook('creating', (_, obj) => {
+      applyUpdatedAtOnCreate(obj)
+    })
+    this.classrooms.hook('updating', (mods) => applyUpdatedAtOnUpdate(mods))
+
+    this.students.hook('creating', (_, obj) => {
+      applyUpdatedAtOnCreate(obj)
+    })
+    this.students.hook('updating', (mods) => applyUpdatedAtOnUpdate(mods))
+
+    this.assignments.hook('creating', (_, obj) => {
+      applyUpdatedAtOnCreate(obj)
+    })
+    this.assignments.hook('updating', (mods) => applyUpdatedAtOnUpdate(mods))
+
+    this.submissions.hook('creating', (_, obj) => {
+      if (obj.createdAt === undefined) {
+        obj.createdAt = Date.now()
+      }
+      applyUpdatedAtOnCreate(obj)
+    })
+    this.submissions.hook('updating', (mods) => {
+      const keys = Object.keys(mods)
+      if (keys.length === 1 && keys[0] === 'imageBlob') {
+        return mods
+      }
+      return applyUpdatedAtOnUpdate(mods)
     })
   }
 }

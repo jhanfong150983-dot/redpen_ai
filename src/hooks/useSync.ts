@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
 import { useOnlineStatus } from './useOnlineStatus'
 import { SYNC_EVENT_NAME } from '@/lib/sync-events'
+import { clearDeleteQueue, readDeleteQueue } from '@/lib/sync-delete-queue'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
 
 interface SyncStatus {
@@ -25,6 +26,15 @@ const blobToBase64 = async (blob: Blob): Promise<string> => {
   })
 }
 
+const toMillis = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
 export function useSync(options: UseSyncOptions = {}) {
   const { autoSync = true } = options
 
@@ -38,6 +48,7 @@ export function useSync(options: UseSyncOptions = {}) {
   const isSyncingRef = useRef(false)
   const syncQueuedRef = useRef(false)
   const prevOnlineRef = useRef(isOnline)
+  const lastFocusSyncRef = useRef(0)
 
   /**
    * 更新待同步數量
@@ -104,12 +115,80 @@ export function useSync(options: UseSyncOptions = {}) {
    * 上傳本機資料到雲端
    */
   const pushMetadata = useCallback(async () => {
-    const [classrooms, students, assignments, submissions] = await Promise.all([
-      db.classrooms.toArray(),
-      db.students.toArray(),
-      db.assignments.toArray(),
-      db.submissions.toArray()
-    ])
+    const [classrooms, students, assignments, submissions, deleteQueue] =
+      await Promise.all([
+        db.classrooms.toArray(),
+        db.students.toArray(),
+        db.assignments.toArray(),
+        db.submissions.toArray(),
+        readDeleteQueue()
+      ])
+
+    const deleteQueueIds = deleteQueue
+      .map((item) => item.id)
+      .filter((id): id is number => typeof id === 'number')
+
+    const deletedPayload: Record<string, Array<{ id: string; deletedAt: number }>> = {
+      classrooms: [],
+      students: [],
+      assignments: [],
+      submissions: []
+    }
+
+    const deleteMap = new Map<
+      string,
+      { tableName: string; recordId: string; deletedAt: number }
+    >()
+
+    for (const entry of deleteQueue) {
+      if (!entry.tableName || !entry.recordId) continue
+      const key = `${entry.tableName}:${entry.recordId}`
+      const existing = deleteMap.get(key)
+      if (!existing || entry.deletedAt > existing.deletedAt) {
+        deleteMap.set(key, {
+          tableName: entry.tableName,
+          recordId: entry.recordId,
+          deletedAt: entry.deletedAt
+        })
+      }
+    }
+
+    for (const entry of deleteMap.values()) {
+      const bucket = deletedPayload[entry.tableName]
+      if (bucket) {
+        bucket.push({ id: entry.recordId, deletedAt: entry.deletedAt })
+      }
+    }
+
+    const classroomPayload = classrooms
+      .filter((c) => c?.id)
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        updatedAt: c.updatedAt
+      }))
+
+    const studentPayload = students
+      .filter((s) => s?.id && s?.classroomId)
+      .map((s) => ({
+        id: s.id,
+        classroomId: s.classroomId,
+        seatNumber: s.seatNumber,
+        name: s.name,
+        updatedAt: s.updatedAt
+      }))
+
+    const assignmentPayload = assignments
+      .filter((a) => a?.id && a?.classroomId)
+      .map((a) => ({
+        id: a.id,
+        classroomId: a.classroomId,
+        title: a.title,
+        totalPages: a.totalPages,
+        domain: a.domain,
+        answerKey: a.answerKey,
+        updatedAt: a.updatedAt
+      }))
 
     const submissionPayload = submissions
       .filter((sub) => sub.status !== 'scanned')
@@ -124,7 +203,8 @@ export function useSync(options: UseSyncOptions = {}) {
         feedback: rest.feedback,
         gradingResult: rest.gradingResult,
         gradedAt: rest.gradedAt,
-        correctionCount: rest.correctionCount
+        correctionCount: rest.correctionCount,
+        updatedAt: rest.updatedAt
       }))
 
     const response = await fetch('/api/data/sync', {
@@ -132,16 +212,21 @@ export function useSync(options: UseSyncOptions = {}) {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({
-        classrooms,
-        students,
-        assignments,
-        submissions: submissionPayload
+        classrooms: classroomPayload,
+        students: studentPayload,
+        assignments: assignmentPayload,
+        submissions: submissionPayload,
+        deleted: deletedPayload
       })
     })
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
       throw new Error(data?.error || '同步失敗')
+    }
+
+    if (deleteQueueIds.length > 0) {
+      await clearDeleteQueue(deleteQueueIds)
     }
   }, [])
 
@@ -163,6 +248,30 @@ export function useSync(options: UseSyncOptions = {}) {
     const students = Array.isArray(data.students) ? data.students : []
     const assignments = Array.isArray(data.assignments) ? data.assignments : []
     const submissions = Array.isArray(data.submissions) ? data.submissions : []
+    const deleted = data?.deleted && typeof data.deleted === 'object' ? data.deleted : {}
+
+    const collectDeletedIds = (items: unknown) =>
+      Array.isArray(items)
+        ? items
+            .map((item) => {
+              if (typeof item === 'string') return item
+              if (item && typeof item === 'object' && 'id' in item) {
+                return (item as { id?: unknown }).id
+              }
+              return null
+            })
+            .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        : []
+
+    const deletedClassroomIds = collectDeletedIds(deleted.classrooms)
+    const deletedStudentIds = collectDeletedIds(deleted.students)
+    const deletedAssignmentIds = collectDeletedIds(deleted.assignments)
+    const deletedSubmissionIds = collectDeletedIds(deleted.submissions)
+
+    const deletedClassroomSet = new Set(deletedClassroomIds)
+    const deletedStudentSet = new Set(deletedStudentIds)
+    const deletedAssignmentSet = new Set(deletedAssignmentIds)
+    const deletedSubmissionSet = new Set(deletedSubmissionIds)
 
     const existingSubmissions = await db.submissions.toArray()
     const imageMap = new Map(
@@ -172,7 +281,13 @@ export function useSync(options: UseSyncOptions = {}) {
     )
 
     const mergedSubmissions: Submission[] = submissions
-      .filter((sub: Submission) => sub?.id && sub?.assignmentId && sub?.studentId)
+      .filter(
+        (sub: Submission) =>
+          sub?.id &&
+          sub?.assignmentId &&
+          sub?.studentId &&
+          !deletedSubmissionSet.has(sub.id)
+      )
       .map((sub: Submission) => {
         const createdAt =
           typeof sub.createdAt === 'number' && Number.isFinite(sub.createdAt)
@@ -195,13 +310,68 @@ export function useSync(options: UseSyncOptions = {}) {
           gradedAt,
           correctionCount: sub.correctionCount,
           imageUrl: sub.imageUrl,
-          imageBlob: imageMap.get(sub.id)
+          imageBlob: imageMap.get(sub.id),
+          updatedAt: toMillis(sub.updatedAt ?? (sub as { updated_at?: unknown }).updated_at)
         }
       })
 
-    await db.classrooms.bulkPut(classrooms as Classroom[])
-    await db.students.bulkPut(students as Student[])
-    await db.assignments.bulkPut(assignments as Assignment[])
+    const normalizedClassrooms: Classroom[] = classrooms
+      .filter((c: Classroom) => c?.id && !deletedClassroomSet.has(c.id))
+      .map((c: Classroom) => ({
+        id: c.id,
+        name: c.name,
+        updatedAt: toMillis(
+          (c as Classroom & { updatedAt?: unknown }).updatedAt ??
+            (c as { updated_at?: unknown }).updated_at
+        )
+      }))
+
+    const normalizedStudents: Student[] = students
+      .filter((s: Student) => s?.id && s?.classroomId && !deletedStudentSet.has(s.id))
+      .map((s: Student) => ({
+        id: s.id,
+        classroomId: s.classroomId,
+        seatNumber: s.seatNumber,
+        name: s.name,
+        updatedAt: toMillis(
+          (s as Student & { updatedAt?: unknown }).updatedAt ??
+            (s as { updated_at?: unknown }).updated_at
+        )
+      }))
+
+    const normalizedAssignments: Assignment[] = assignments
+      .filter(
+        (a: Assignment) => a?.id && a?.classroomId && !deletedAssignmentSet.has(a.id)
+      )
+      .map((a: Assignment) => ({
+        id: a.id,
+        classroomId: a.classroomId,
+        title: a.title,
+        totalPages: a.totalPages,
+        domain: a.domain ?? undefined,
+        answerKey: a.answerKey ?? undefined,
+        updatedAt: toMillis(
+          (a as Assignment & { updatedAt?: unknown }).updatedAt ??
+            (a as { updated_at?: unknown }).updated_at
+        )
+      }))
+
+    if (deletedClassroomIds.length > 0) {
+      await db.classrooms.bulkDelete(deletedClassroomIds)
+    }
+    if (deletedStudentIds.length > 0) {
+      await db.students.bulkDelete(deletedStudentIds)
+    }
+    if (deletedAssignmentIds.length > 0) {
+      await db.assignments.bulkDelete(deletedAssignmentIds)
+    }
+    if (deletedSubmissionIds.length > 0) {
+      await db.submissions.bulkDelete(deletedSubmissionIds)
+    }
+
+    await db.classrooms.bulkPut(normalizedClassrooms)
+    await db.students.bulkPut(normalizedStudents)
+    await db.assignments.bulkPut(normalizedAssignments)
     await db.submissions.bulkPut(mergedSubmissions)
   }, [])
 
@@ -305,6 +475,33 @@ export function useSync(options: UseSyncOptions = {}) {
       void performSync()
     }
   }, [isOnline, autoSync, performSync])
+
+  useEffect(() => {
+    if (!autoSync) return
+
+    const triggerIfVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      const now = Date.now()
+      if (now - lastFocusSyncRef.current < 500) return
+      lastFocusSyncRef.current = now
+      void performSync()
+    }
+
+    const handleVisibility = () => {
+      triggerIfVisible()
+    }
+
+    const handleFocus = () => {
+      triggerIfVisible()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('focus', handleFocus)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [autoSync, performSync])
 
   useEffect(() => {
     if (!autoSync) return

@@ -4,6 +4,7 @@ import { Camera, Mic, MicOff, User, CheckCircle, AlertCircle, Upload } from 'luc
 import { useSeatController } from '@/hooks/useSeatController'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
+import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { compressImage } from '@/lib/imageCompression'
 import { convertPdfToImage, getFileType } from '@/lib/pdfToImage'
 import type { Student, Submission } from '@/lib/db'
@@ -265,6 +266,8 @@ export default function ScannerPage({
 
         if (existingSubmissions.length > 0) {
           console.log(`🗑️ 刪除學生 ${studentId} 的 ${existingSubmissions.length} 份舊提交`)
+          const existingIds = existingSubmissions.map((sub) => sub.id)
+          await queueDeleteMany('submissions', existingIds)
           for (const oldSub of existingSubmissions) {
             await db.submissions.delete(oldSub.id)
           }

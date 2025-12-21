@@ -39,6 +39,25 @@ export default async function handler(req, res) {
     }
 
     const supabaseAdmin = getSupabaseAdmin()
+
+    const tombstoneCheck = await supabaseAdmin
+      .from('deleted_records')
+      .select('record_id')
+      .eq('owner_id', user.id)
+      .eq('table_name', 'submissions')
+      .eq('record_id', submissionId)
+      .limit(1)
+
+    if (tombstoneCheck.error) {
+      res.status(500).json({ error: tombstoneCheck.error.message })
+      return
+    }
+
+    if (tombstoneCheck.data && tombstoneCheck.data.length > 0) {
+      res.status(409).json({ error: '提交已被刪除，請重新建立' })
+      return
+    }
+
     const filePath = `submissions/${submissionId}.webp`
     const buffer = Buffer.from(String(imageBase64), 'base64')
 

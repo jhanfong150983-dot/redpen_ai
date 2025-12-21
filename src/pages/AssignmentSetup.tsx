@@ -17,6 +17,7 @@ import {
   type Classroom
 } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
+import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { extractAnswerKeyFromImage } from '@/lib/gemini'
 import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
 
@@ -274,6 +275,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     const ok = window.confirm('確定要刪除這份作業嗎？相關學生繳交也會一併移除。')
     if (!ok) return
     try {
+      const submissions = await db.submissions
+        .where('assignmentId')
+        .equals(id)
+        .toArray()
+      const submissionIds = submissions.map((s) => s.id)
+
+      await queueDeleteMany('assignments', [id])
+      await queueDeleteMany('submissions', submissionIds)
+
       await db.assignments.delete(id)
       await db.submissions.where('assignmentId').equals(id).delete()
       setAssignments((prev) => prev.filter((a) => a.id !== id))

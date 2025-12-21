@@ -134,6 +134,26 @@ ADD COLUMN IF NOT EXISTS graded_at BIGINT,
 ADD COLUMN IF NOT EXISTS correction_count INTEGER;
 ```
 
+### deleted_records 表（衝突刪除 tombstone）
+
+刪除時不直接復活舊資料，會先寫入刪除記錄，避免不同裝置互相覆蓋。
+
+```sql
+CREATE TABLE IF NOT EXISTS public.deleted_records (
+  id BIGSERIAL PRIMARY KEY,
+  owner_id UUID NOT NULL REFERENCES auth.users(id),
+  table_name TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_deleted_records_unique
+ON public.deleted_records(owner_id, table_name, record_id);
+
+CREATE INDEX IF NOT EXISTS idx_deleted_records_owner
+ON public.deleted_records(owner_id);
+```
+
 ### updated_at 自動更新（classrooms / students / assignments / submissions）
 
 ```sql
@@ -188,6 +208,7 @@ END $$;
 - `POST /api/data/submission`：上傳圖片 + 寫入資料庫
 - `POST /api/data/sync`：上傳班級／學生／作業／批改結果（全量同步）
 - `GET /api/data/sync`：下載雲端資料回本機
+- `deleted_records` 會用於「刪除優先」衝突規則，避免資料被舊裝置覆蓋回來。
 - `GET /api/storage/download?submissionId=...`：下載圖片
 
 前端已改為「資料變更後自動同步」，不需要手動按鈕。
