@@ -86,7 +86,8 @@ export function useSync(options: UseSyncOptions = {}) {
       console.log('圖片與資料同步成功')
 
       await db.submissions.update(submission.id, {
-        status: 'synced'
+        status: 'synced',
+        imageUrl: `submissions/${submission.id}.webp`
       })
       console.log('本地狀態更新成功，保留 Blob 供預覽')
 
@@ -116,6 +117,7 @@ export function useSync(options: UseSyncOptions = {}) {
         studentId: rest.studentId,
         status: rest.status,
         createdAt: rest.createdAt,
+        imageUrl: rest.imageUrl || `submissions/${rest.id}.webp`,
         score: rest.score,
         feedback: rest.feedback,
         gradingResult: rest.gradingResult,
@@ -190,6 +192,7 @@ export function useSync(options: UseSyncOptions = {}) {
           gradingResult: sub.gradingResult,
           gradedAt,
           correctionCount: sub.correctionCount,
+          imageUrl: sub.imageUrl,
           imageBlob: imageMap.get(sub.id)
         }
       })

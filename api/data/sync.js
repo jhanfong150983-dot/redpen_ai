@@ -105,6 +105,7 @@ export default async function handler(req, res) {
           assignmentId: row.assignment_id,
           studentId: row.student_id,
           status: row.status ?? 'synced',
+          imageUrl: row.image_url ?? undefined,
           createdAt: Number.isFinite(createdAt) ? createdAt : undefined,
           score: row.score ?? undefined,
           feedback: row.feedback ?? undefined,
@@ -215,12 +216,15 @@ export default async function handler(req, res) {
           .map((s) => {
             const createdAt = toIsoTimestamp(s.createdAt)
             const gradedAt = toNumber(s.gradedAt)
+            const imageUrl =
+              s.imageUrl || s.image_url || `submissions/${s.id}.webp`
 
             return compactObject({
               id: s.id,
               assignment_id: s.assignmentId,
               student_id: s.studentId,
               status: s.status ?? undefined,
+              image_url: imageUrl,
               created_at: createdAt ?? undefined,
               score: toNumber(s.score) ?? undefined,
               feedback: s.feedback ?? undefined,

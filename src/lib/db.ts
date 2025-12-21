@@ -97,6 +97,7 @@ export interface Submission {
   studentId: string
   status: SubmissionStatus
   imageBlob?: Blob
+  imageUrl?: string
   createdAt: number
 
   // AI 批改欄位
