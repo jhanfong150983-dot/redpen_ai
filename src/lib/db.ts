@@ -172,11 +172,12 @@ class RedPenDatabase extends Dexie {
       }
     }
 
-    const applyUpdatedAtOnUpdate = (mods: Record<string, unknown>) => {
-      if (!('updatedAt' in mods)) {
-        mods.updatedAt = Date.now()
+    const applyUpdatedAtOnUpdate = (mods: Record<string, unknown> | object) => {
+      const mutableMods = mods as Record<string, unknown>
+      if (!('updatedAt' in mutableMods)) {
+        mutableMods.updatedAt = Date.now()
       }
-      return mods
+      return mutableMods
     }
 
     this.classrooms.hook('creating', (_, obj) => {

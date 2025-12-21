@@ -1,6 +1,6 @@
-import { db } from '@/lib/db'
+import { db, type SyncQueue } from '@/lib/db'
 
-const DELETE_ACTION = 'delete'
+const DELETE_ACTION = 'delete' as const
 
 export interface DeleteQueueEntry {
   id?: number
@@ -44,7 +44,7 @@ export async function queueDeleteMany(
 ): Promise<void> {
   if (!tableName || recordIds.length === 0) return
 
-  const rows = recordIds
+  const rows: Array<Omit<SyncQueue, 'id'>> = recordIds
     .filter((recordId) => recordId)
     .map((recordId) => ({
       action: DELETE_ACTION,
