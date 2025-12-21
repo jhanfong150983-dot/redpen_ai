@@ -8,8 +8,8 @@ import {
   Users,
   X
 } from 'lucide-react'
-import { db } from '@/lib/db'
-import type { Assignment, Classroom, Student } from '@/lib/db'
+import { db, generateId, getCurrentTimestamp } from '@/lib/db'
+import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
 import {
   convertPdfToImages,
   fileToBlob,
@@ -35,6 +35,44 @@ interface MappingRow {
   name: string
 }
 
+async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
+  if (pageBlobs.length === 1) return pageBlobs[0]
+
+  const bitmaps = await Promise.all(pageBlobs.map((blob) => createImageBitmap(blob)))
+  const width = Math.max(...bitmaps.map((bmp) => bmp.width))
+  const height = bitmaps.reduce((sum, bmp) => sum + bmp.height, 0)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    bitmaps.forEach((bmp) => bmp.close())
+    throw new Error('無法建立畫布')
+  }
+
+  let offsetY = 0
+  bitmaps.forEach((bmp) => {
+    const offsetX = Math.floor((width - bmp.width) / 2)
+    ctx.drawImage(bmp, offsetX, offsetY)
+    offsetY += bmp.height
+    bmp.close()
+  })
+
+  const merged = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob)
+        else reject(new Error('無法產生合併影像'))
+      },
+      'image/webp',
+      0.85
+    )
+  })
+
+  return merged
+}
+
 export default function AssignmentImport({
   assignmentId,
   onBack
@@ -56,6 +94,7 @@ export default function AssignmentImport({
   const [mappings, setMappings] = useState<MappingRow[]>([])
   const [selectedMappingIndex, setSelectedMappingIndex] = useState(0)
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
 
   // 載入作業與班級、學生資料
@@ -222,6 +261,64 @@ export default function AssignmentImport({
 
     setMappings(result)
     setSelectedMappingIndex(0)
+  }
+
+  const handleSaveMappings = async () => {
+    if (!assignment) {
+      setError('找不到這份作業')
+      return
+    }
+    if (mappings.length === 0) {
+      setError('請先產生配對結果')
+      return
+    }
+
+    setError(null)
+    setIsSaving(true)
+
+    try {
+      let successCount = 0
+
+      for (const mapping of mappings) {
+        const pageBlobs = pages
+          .filter((p) => p.index >= mapping.fromIndex && p.index <= mapping.toIndex)
+          .map((p) => p.blob)
+
+        if (pageBlobs.length === 0) continue
+
+        const imageBlob =
+          pageBlobs.length === 1 ? pageBlobs[0] : await mergePageBlobs(pageBlobs)
+
+        const existingSubmissions = await db.submissions
+          .where('assignmentId')
+          .equals(assignment.id)
+          .and((sub) => sub.studentId === mapping.studentId)
+          .toArray()
+
+        for (const oldSub of existingSubmissions) {
+          await db.submissions.delete(oldSub.id)
+        }
+
+        const submission: Submission = {
+          id: generateId(),
+          assignmentId: assignment.id,
+          studentId: mapping.studentId,
+          status: 'scanned',
+          imageBlob,
+          createdAt: getCurrentTimestamp()
+        }
+
+        await db.submissions.add(submission)
+        successCount += 1
+      }
+
+      alert(`已成功建立 ${successCount} 份作業`)
+    } catch (e) {
+      console.error(e)
+      setError(e instanceof Error ? e.message : '配對結果寫入失敗')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   if (isLoading) {
@@ -523,6 +620,27 @@ export default function AssignmentImport({
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {mappings.length > 0 && (
+              <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                <span>已配對 {mappings.length} 位學生</span>
+                <button
+                  type="button"
+                  onClick={handleSaveMappings}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader className="w-4 h-4 animate-spin" />
+                      寫入中...
+                    </>
+                  ) : (
+                    '確認匯入'
+                  )}
+                </button>
               </div>
             )}
           </div>
