@@ -3,6 +3,7 @@ import Webcam from 'react-webcam'
 import { Camera, Mic, MicOff, User, CheckCircle, AlertCircle, Upload } from 'lucide-react'
 import { useSeatController } from '@/hooks/useSeatController'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
+import { requestSync } from '@/lib/sync-events'
 import { compressImage } from '@/lib/imageCompression'
 import { convertPdfToImage, getFileType } from '@/lib/pdfToImage'
 import type { Student, Submission } from '@/lib/db'
@@ -304,6 +305,7 @@ export default function ScannerPage({
       setLastCapturedImage(null)
 
       alert(`成功送出 ${successCount} 份作業！`)
+      requestSync()
 
     } catch (err) {
       console.error('❌ 批量送出失敗:', err)

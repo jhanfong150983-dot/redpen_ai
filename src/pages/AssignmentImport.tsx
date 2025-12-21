@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
+import { requestSync } from '@/lib/sync-events'
 import {
   convertPdfToImages,
   fileToBlob,
@@ -313,6 +314,9 @@ export default function AssignmentImport({
       }
 
       alert(`已成功建立 ${successCount} 份作業`)
+      if (successCount > 0) {
+        requestSync()
+      }
     } catch (e) {
       console.error(e)
       setError(e instanceof Error ? e.message : '配對結果寫入失敗')

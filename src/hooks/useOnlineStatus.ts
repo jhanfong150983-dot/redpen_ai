@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { onNetworkChange } from '@/lib/supabase'
 
 /**
  * Hook 用於檢測網路連線狀態
@@ -8,11 +7,16 @@ export function useOnlineStatus() {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
 
   useEffect(() => {
-    const cleanup = onNetworkChange((online) => {
-      setIsOnline(online)
-    })
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
 
-    return cleanup
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
   }, [])
 
   return isOnline

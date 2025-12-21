@@ -1,8 +1,24 @@
 // api/proxy.js
 // 這段程式碼在 Vercel 的伺服器上執行，前端看不到
+import { getAuthUser } from './_auth.js'
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method Not Allowed' })
+    return
+  }
+
+  let user = null
+  try {
+    const result = await getAuthUser(req, res)
+    user = result.user
+  } catch (error) {
+    res.status(500).json({ error: 'Auth check failed' })
+    return
+  }
+
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' })
     return
   }
 

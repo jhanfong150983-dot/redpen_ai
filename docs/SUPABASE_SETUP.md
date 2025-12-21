@@ -1,50 +1,74 @@
 # Supabase 設定指南
 
-本文檔說明如何設定 Supabase 以支援作業批改 App 的雲端同步功能。
+本文檔說明如何設定 Supabase，並改為「前端不直接連 Supabase」的安全模式。
 
-## 1. 環境變數設定
+## 0. Google OAuth（登入用）
 
-在專案根目錄創建 `.env` 檔案：
+在 Supabase Dashboard → Authentication → Providers 啟用 Google，填入 Google Client ID/Secret。
+Redirect URL 使用 Supabase 提供的 callback（通常為 `https://<project>.supabase.co/auth/v1/callback`）。
 
-```bash
-cp .env.example .env
-```
+## 1. 伺服器端環境變數
 
-填入你的 Supabase 憑證：
+前端不再讀取 Supabase URL/Key，所有設定只放在伺服器環境變數：
 
 ```env
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key-here
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+SITE_URL=http://localhost:5173
 ```
+
+- `SUPABASE_SERVICE_ROLE_KEY` 只放在 Vercel / Server 端，不可放前端。
+- `SITE_URL` 用於 OAuth 回呼（本機與正式網域都要設定）。
 
 ## 2. 資料庫結構 (Database Schema)
 
-### submissions 表
-
-在 Supabase SQL Editor 中執行以下 SQL：
+### profiles 表
 
 ```sql
--- 創建 submissions 表
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT,
+  name TEXT,
+  avatar_url TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION update_profiles_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_profiles_updated_at
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION update_profiles_updated_at();
+```
+
+### submissions 表（新增 owner_id）
+
+```sql
 CREATE TABLE IF NOT EXISTS public.submissions (
   id TEXT PRIMARY KEY,
   assignment_id TEXT NOT NULL,
   student_id TEXT NOT NULL,
   image_url TEXT NOT NULL,
   status TEXT DEFAULT 'synced',
+  owner_id UUID NOT NULL REFERENCES auth.users(id),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 創建索引以加快查詢
 CREATE INDEX idx_submissions_assignment_id ON public.submissions(assignment_id);
 CREATE INDEX idx_submissions_student_id ON public.submissions(student_id);
-CREATE INDEX idx_submissions_created_at ON public.submissions(created_at);
+CREATE INDEX idx_submissions_owner_id ON public.submissions(owner_id);
 
--- 創建複合唯一索引，確保同一作業的同一學生不會重複提交
 CREATE UNIQUE INDEX idx_submissions_assignment_student
 ON public.submissions(assignment_id, student_id);
 
--- 自動更新 updated_at 欄位的觸發器
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -59,259 +83,55 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 ```
 
-### 欄位說明
-
-| 欄位 | 類型 | 說明 |
-|------|------|------|
-| `id` | TEXT | 提交記錄的唯一 ID（與 Dexie 同步） |
-| `assignment_id` | TEXT | 作業 ID |
-| `student_id` | TEXT | 學生 ID |
-| `image_url` | TEXT | 上傳到 Storage 的圖片公開 URL |
-| `status` | TEXT | 狀態（默認 'synced'） |
-| `created_at` | TIMESTAMP | 創建時間 |
-| `updated_at` | TIMESTAMP | 更新時間 |
-
 ## 3. Storage 設定
 
-### 創建 Bucket
+1. Supabase Dashboard → Storage
+2. 建立 Bucket：`homework-images`
 
-1. 進入 Supabase Dashboard → Storage
-2. 創建新的 Bucket：`homework-images`
-3. 設定為 **Public** Bucket（允許公開讀取）
+是否設為 Public 視需求而定。若不公開，圖片仍可由後端下載。
 
-### Bucket 設定
+## 4. 同步 API 流程（後端代理）
 
-```javascript
-// Bucket 名稱
-const bucketName = 'homework-images'
+前端不再使用 Supabase SDK，而是呼叫你的後端 API：
 
-// 文件路徑格式
-const filePath = `submissions/${submissionId}-${timestamp}.webp`
-```
+- `POST /api/data/submission`：上傳圖片 + 寫入資料庫
+- `GET /api/storage/download?submissionId=...`：下載圖片
 
-### Storage Policy (RLS)
-
-如果需要更細緻的權限控制，可以設定 Row Level Security：
-
-```sql
--- 允許所有人讀取圖片
-CREATE POLICY "Public Access"
-ON storage.objects FOR SELECT
-USING ( bucket_id = 'homework-images' );
-
--- 只允許認證用戶上傳
-CREATE POLICY "Authenticated users can upload"
-ON storage.objects FOR INSERT
-WITH CHECK (
-  bucket_id = 'homework-images'
-  AND auth.role() = 'authenticated'
-);
-```
-
-## 4. 使用 useSync Hook
-
-### 基本使用
+範例（前端僅供參考）：
 
 ```typescript
-import { useSync } from '@/hooks/useSync'
-
-function App() {
-  const {
-    isSyncing,
-    lastSyncTime,
-    pendingCount,
-    error,
-    triggerSync
-  } = useSync({
-    autoSync: true,      // 自動同步
-    syncInterval: 30000  // 每 30 秒同步一次
+await fetch('/api/data/submission', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',
+  body: JSON.stringify({
+    submissionId,
+    assignmentId,
+    studentId,
+    createdAt,
+    imageBase64,
+    contentType: 'image/webp'
   })
-
-  return (
-    <div>
-      <p>待同步: {pendingCount} 條</p>
-      <p>上次同步: {lastSyncTime ? new Date(lastSyncTime).toLocaleString() : '從未同步'}</p>
-      {isSyncing && <p>同步中...</p>}
-      {error && <p className="text-red-600">{error}</p>}
-
-      <button onClick={triggerSync} disabled={isSyncing}>
-        手動同步
-      </button>
-    </div>
-  )
-}
-```
-
-### 同步狀態顯示組件
-
-```typescript
-import { useSync } from '@/hooks/useSync'
-import { useOnlineStatus } from '@/hooks/useOnlineStatus'
-
-function SyncStatus() {
-  const isOnline = useOnlineStatus()
-  const { isSyncing, pendingCount, lastSyncTime, error, triggerSync } = useSync()
-
-  return (
-    <div className="p-4 bg-white rounded-lg shadow">
-      <div className="flex items-center justify-between mb-2">
-        <span className="font-semibold">同步狀態</span>
-        <span className={`px-2 py-1 rounded text-xs ${isOnline ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-          {isOnline ? '在線' : '離線'}
-        </span>
-      </div>
-
-      {pendingCount > 0 && (
-        <p className="text-sm text-gray-600 mb-2">
-          待同步: {pendingCount} 條記錄
-        </p>
-      )}
-
-      {lastSyncTime && (
-        <p className="text-xs text-gray-500 mb-2">
-          上次同步: {new Date(lastSyncTime).toLocaleString()}
-        </p>
-      )}
-
-      {error && (
-        <p className="text-sm text-red-600 mb-2">{error}</p>
-      )}
-
-      {isSyncing && (
-        <p className="text-sm text-blue-600">同步中...</p>
-      )}
-
-      <button
-        onClick={triggerSync}
-        disabled={isSyncing || !isOnline}
-        className="w-full mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-      >
-        {isSyncing ? '同步中...' : '手動同步'}
-      </button>
-    </div>
-  )
-}
-```
-
-## 5. 同步流程
-
-```
-1. 檢查網路狀態 (navigator.onLine)
-   ↓
-2. 從 Dexie 查詢 status === 'scanned' 的記錄
-   ↓
-3. 逐筆處理：
-   ├─ 上傳圖片 Blob 到 Supabase Storage
-   ├─ 取得圖片公開 URL
-   ├─ 將記錄寫入 Supabase Database
-   └─ 更新 Dexie 狀態為 'synced' 並刪除 imageBlob
-   ↓
-4. 完成同步，更新待同步數量
-```
-
-## 6. 離線優先架構
-
-- **離線時**：所有資料存儲在 Dexie (IndexedDB)
-- **在線時**：自動同步到 Supabase
-- **網路恢復時**：自動觸發同步
-- **定時同步**：每 30 秒自動檢查並同步（可配置）
-
-## 7. 空間優化
-
-同步成功後，本地 `imageBlob` 會被刪除以節省空間：
-
-```typescript
-await db.submissions.update(submission.id, {
-  status: 'synced',
-  imageBlob: undefined  // 刪除本地 Blob
 })
 ```
 
-查詢時可根據 `status` 判斷：
-- `scanned`: 有本地圖片，未同步
-- `synced`: 已同步，需從 Supabase 取得圖片
+## 5. 驗證方式
 
-## 8. 錯誤處理
+1. 登入後，先建立一筆掃描作業
+2. 觸發同步（首頁「同步狀態」）
+3. Supabase Database 應該看到 submissions 資料
+4. Storage 應該出現 submissions/{submissionId}.webp
 
-- 網路錯誤：保留在本地，下次繼續嘗試
-- 上傳失敗：記錄錯誤，跳過該筆繼續處理其他
-- 重複上傳：使用 `upsert: false` 避免覆蓋
+## 6. 本機開發提醒
 
-## 9. 開發測試
+`/api/*` 是後端 Serverless Function，本機開發建議使用 `vercel dev`，或設定等效的 API proxy。
 
-```typescript
-// 手動創建測試資料
-const submission = await db.submissions.add({
-  id: generateId(),
-  assignmentId: 'test-assignment',
-  studentId: 'test-student',
-  status: 'scanned',
-  imageBlob: blob,  // WebP Blob
-  createdAt: Date.now()
-})
+## 7. 安全性建議
 
-// 觸發同步
-const { triggerSync } = useSync({ autoSync: false })
-await triggerSync()
-
-// 檢查結果
-const synced = await db.submissions.get(submission.id)
-console.log(synced.status)  // 應為 'synced'
-console.log(synced.imageBlob)  // 應為 undefined
-```
-
-## 10. 安全性建議
-
-1. **啟用 RLS (Row Level Security)**：確保使用者只能訪問自己的資料
-2. **使用認證**：結合 Supabase Auth 進行使用者驗證
-3. **限制 Storage 大小**：設定單檔案大小上限
-4. **定期清理**：刪除過期或無效的圖片
-
----
-
-## 疑難排解
-
-### 問題：圖片上傳失敗
-
-**可能原因**：
-- Bucket 不存在或名稱錯誤
-- Storage Policy 設定錯誤
-- 網路連線問題
-
-**解決方法**：
-```typescript
-// 檢查 Bucket 是否存在
-const { data, error } = await supabase.storage.listBuckets()
-console.log(data)
-
-// 測試上傳
-const { error } = await supabase.storage
-  .from('homework-images')
-  .upload('test.webp', blob)
-console.log(error)
-```
-
-### 問題：資料庫寫入失敗
-
-**可能原因**：
-- 表格不存在
-- 欄位類型不匹配
-- 違反唯一性約束
-
-**解決方法**：
-```sql
--- 檢查表格結構
-SELECT column_name, data_type
-FROM information_schema.columns
-WHERE table_name = 'submissions';
-
--- 查看錯誤詳情
--- 在 Supabase Dashboard → Database → Logs
-```
+- 不要把 `SUPABASE_SERVICE_ROLE_KEY` 放進前端
+- 若需開放多人共用，再加 RLS 政策與共享權限模型
 
 ---
 
 **相關文檔**：
-- [Supabase Storage 文檔](https://supabase.com/docs/guides/storage)
-- [Supabase Database 文檔](https://supabase.com/docs/guides/database)
-- [Row Level Security](https://supabase.com/docs/guides/auth/row-level-security)
+- https://supabase.com/docs

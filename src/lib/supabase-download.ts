@@ -1,43 +1,31 @@
 /**
- * 從 Supabase Storage 下載圖片
+ * 從伺服器下載圖片為 Blob
  */
 
-import { supabase } from './supabase'
-
 /**
- * 從 Supabase Storage 下載圖片為 Blob
+ * 從伺服器下載圖片為 Blob
  *
  * @param submissionId - 提交紀錄 ID
  * @returns 圖片 Blob
  */
 export async function downloadImageFromSupabase(submissionId: string): Promise<Blob> {
-  if (!supabase) {
-    throw new Error('Supabase 未設定')
-  }
-
   try {
-    const fileName = `${submissionId}.webp`
-    const filePath = `submissions/${fileName}`
+    const response = await fetch(
+      `/api/storage/download?submissionId=${encodeURIComponent(submissionId)}`,
+      { credentials: 'include' }
+    )
 
-    console.log(`📥 從 Supabase 下載圖片: ${filePath}`)
-
-    const { data, error } = await supabase.storage
-      .from('homework-images')
-      .download(filePath)
-
-    if (error) {
-      throw new Error(`下載失敗: ${error.message}`)
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data?.error || '下載失敗')
     }
 
-    if (!data) {
-      throw new Error('下載的圖片為空')
-    }
+    const blob = await response.blob()
+    console.log(`圖片下載成功: ${(blob.size / 1024).toFixed(2)} KB`)
 
-    console.log(`✅ 圖片下載成功: ${(data.size / 1024).toFixed(2)} KB`)
-
-    return data
+    return blob
   } catch (error) {
-    console.error('❌ 下載圖片失敗:', error)
+    console.error('下載圖片失敗:', error)
     throw error
   }
 }
@@ -73,4 +61,3 @@ export async function downloadMultipleImages(
 
   return results
 }
-

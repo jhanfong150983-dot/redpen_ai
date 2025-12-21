@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Users, BookOpen, Sparkles, FileImage, ClipboardCheck } from 'lucide-react'
 import ClassroomManagement from '@/pages/ClassroomManagement'
 import AssignmentSetup from '@/pages/AssignmentSetup'
@@ -10,7 +10,7 @@ import AssignmentScanImport from '@/pages/AssignmentScanImport'
 import CorrectionSelect from '@/pages/CorrectionSelect'
 import CorrectionManagement from '@/pages/CorrectionManagement'
 import Gradebook from '@/pages/Gradebook'
-import { SyncStatus } from '@/components'
+import { SyncIndicator } from '@/components'
 import '@/lib/debug-sync'
 
 type Page =
@@ -26,9 +26,117 @@ type Page =
   | 'correction-select'
   | 'correction'
 
+type AuthState =
+  | { status: 'loading' }
+  | { status: 'unauthenticated'; error?: string }
+  | {
+      status: 'authenticated'
+      user: {
+        id: string
+        email: string
+        name?: string
+        avatarUrl?: string
+      }
+    }
+
 function App() {
+  const [auth, setAuth] = useState<AuthState>({ status: 'loading' })
   const [currentPage, setCurrentPage] = useState<Page>('home')
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>('')
+
+  const fetchAuth = useCallback(async () => {
+    try {
+      const response = await fetch('/api/auth/me', { credentials: 'include' })
+      if (!response.ok) {
+        setAuth({ status: 'unauthenticated' })
+        return
+      }
+
+      const data = await response.json()
+      if (!data?.user?.id) {
+        setAuth({ status: 'unauthenticated' })
+        return
+      }
+
+      setAuth({
+        status: 'authenticated',
+        user: data.user
+      })
+    } catch (error) {
+      console.error('驗證登入狀態失敗', error)
+      setAuth({ status: 'unauthenticated', error: '無法連線到伺服器' })
+    }
+  }, [])
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include'
+      })
+    } catch (error) {
+      console.error('登出失敗', error)
+    } finally {
+      setAuth({ status: 'unauthenticated' })
+      setCurrentPage('home')
+      setSelectedAssignmentId('')
+    }
+  }, [])
+
+  useEffect(() => {
+    void fetchAuth()
+  }, [fetchAuth])
+
+  useEffect(() => {
+    const handleFocus = () => {
+      void fetchAuth()
+    }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [fetchAuth])
+
+  if (auth.status === 'loading') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-gray-600 text-sm">驗證登入狀態...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (auth.status === 'unauthenticated') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+          <img
+            src="/logo.png"
+            alt="RedPen AI logo"
+            className="w-20 h-20 mx-auto object-contain"
+          />
+          <h1 className="text-2xl font-bold text-gray-900">RedPen AI</h1>
+          <p className="text-sm text-gray-600">
+            請先登入 Google 帳號才能使用完整功能。
+          </p>
+          {auth.error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
+              {auth.error}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = '/api/auth/google'
+            }}
+            className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors"
+          >
+            使用 Google 登入
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   // 班級管理
   if (currentPage === 'classroom-management') {
@@ -132,16 +240,34 @@ function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="w-full max-w-5xl bg-white rounded-2xl shadow-xl p-8">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3 mb-2">
-            <img src="/logo.png" alt="RedPen AI logo" className="w-[100px] h-[100px] object-contain" />
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-4">
+          <div className="flex items-center gap-3">
+            <img
+              src="/logo.png"
+              alt="RedPen AI logo"
+              className="w-[100px] h-[100px] object-contain"
+            />
             <h1 className="text-3xl font-bold text-gray-900">RedPen AI</h1>
+          </div>
+          <div className="flex items-center gap-3 justify-between md:justify-end">
+            <div className="text-right">
+              <p className="text-xs text-gray-500">已登入</p>
+              <p className="text-sm font-semibold text-gray-800">
+                {auth.user.name || auth.user.email}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="px-4 py-2 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:border-red-300 hover:text-red-600 transition-colors"
+            >
+              登出
+            </button>
           </div>
         </div>
 
-        {/* 同步狀態 */}
         <div className="mb-6">
-          <SyncStatus autoSync={false} syncInterval={30000} />
+          <SyncIndicator />
         </div>
 
         <div className="grid md:grid-cols-2 gap-6">

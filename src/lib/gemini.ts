@@ -40,6 +40,7 @@ async function generateGeminiText(
   const response = await fetch(geminiProxyUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify({
       model: modelName,
       contents: [{ role: 'user', parts: normalizeParts(parts) }]

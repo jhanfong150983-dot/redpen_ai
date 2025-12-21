@@ -4,7 +4,15 @@
  */
 
 import { db } from './db'
-import { supabase } from './supabase'
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => resolve((reader.result as string).split(',')[1])
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+}
 
 /**
  * 查看所有待同步的記錄
@@ -61,107 +69,61 @@ export async function checkSyncedSubmissions() {
  * 測試單條記錄上傳
  */
 export async function testSingleUpload(submissionId: string) {
-  console.log(`🧪 測試上傳記錄: ${submissionId}`)
-
-  if (!supabase) {
-    console.error('❌ Supabase 未設置')
-    return
-  }
+  console.log(`測試上傳記錄: ${submissionId}`)
 
   try {
-    // 獲取記錄
     const submission = await db.submissions.get(submissionId)
 
     if (!submission) {
-      console.error('❌ 找不到記錄')
+      console.error('找不到記錄')
       return
     }
 
-    console.log('✅ 找到記錄:', submission)
+    console.log('找到記錄:', submission)
 
     if (!submission.imageBlob) {
-      console.error('❌ 記錄沒有圖片')
+      console.error('記錄沒有圖片')
       return
     }
 
-    console.log(`📤 開始上傳圖片 (${(submission.imageBlob.size / 1024).toFixed(2)} KB)...`)
+    console.log(`開始上傳圖片 (${(submission.imageBlob.size / 1024).toFixed(2)} KB)...`)
 
-    // 上傳圖片
-    const fileName = `${submission.id}-${Date.now()}.webp`
-    const filePath = `submissions/${fileName}`
+    const imageBase64 = await blobToBase64(submission.imageBlob)
 
-    const { data, error } = await supabase.storage
-      .from('homework-images')
-      .upload(filePath, submission.imageBlob, {
-        contentType: 'image/webp',
-        upsert: false
+    const response = await fetch("/api/data/submission", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        submissionId: submission.id,
+        assignmentId: submission.assignmentId,
+        studentId: submission.studentId,
+        createdAt: submission.createdAt,
+        imageBase64,
+        contentType: submission.imageBlob.type || 'image/webp'
       })
-
-    if (error) {
-      console.error('❌ 上傳失敗:', error)
-      console.error('錯誤詳情:')
-      console.error('  message:', error.message)
-      // 部分 StorageError 型別未暴露 statusCode，採用可選存取避免型別錯誤
-      console.error('  statusCode:', (error as any)?.statusCode ?? 'n/a')
-      console.error('  name:', error.name)
-      return { success: false, error }
-    }
-
-    console.log('✅ 圖片上傳成功:', data)
-
-    // 獲取公開 URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('homework-images')
-      .getPublicUrl(filePath)
-
-    console.log('🌐 公開 URL:', publicUrl)
-
-    // 寫入資料庫
-    console.log('💾 寫入 Supabase 資料庫...')
-
-    const { error: dbError } = await supabase
-      .from('submissions')
-      .insert({
-        id: submission.id,
-        assignment_id: submission.assignmentId,
-        student_id: submission.studentId,
-        image_url: publicUrl,
-        status: 'synced',
-        created_at: new Date(submission.createdAt).toISOString()
-      })
-
-    if (dbError) {
-      console.error('❌ 資料庫寫入失敗:', dbError)
-      console.error('錯誤詳情:')
-      console.error('  message:', dbError.message)
-      console.error('  code:', dbError.code)
-      console.error('  details:', dbError.details)
-      console.error('  hint:', dbError.hint)
-      return { success: false, error: dbError }
-    }
-
-    console.log('✅ 資料庫寫入成功')
-
-    // 更新本地狀態
-    await db.submissions.update(submission.id, {
-      status: 'synced',
-      imageBlob: undefined
     })
 
-    console.log('✅ 本地狀態更新成功')
-    console.log('🎉 完整同步流程測試成功！')
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      console.error('上傳失敗:', data?.error || '未知錯誤')
+      return { success: false, error: data?.error || '未知錯誤' }
+    }
 
-    return { success: true, url: publicUrl }
+    await db.submissions.update(submission.id, {
+      status: 'synced'
+    })
 
+    console.log('本地狀態更新成功（保留圖片）')
+    console.log('完整同步流程測試成功！')
+
+    return { success: true }
   } catch (error) {
-    console.error('❌ 測試過程出錯:', error)
+    console.error('測試過程出錯:', error)
     return { success: false, error }
   }
 }
 
-/**
- * 重置指定記錄的狀態為 'scanned'（用於重試）
- */
 export async function resetSubmissionStatus(submissionId: string) {
   console.log(`🔄 重置記錄狀態: ${submissionId}`)
 
@@ -357,6 +319,47 @@ export async function checkDatabaseStatus() {
   console.log('='.repeat(60))
 }
 
+/**
+ * 下載雲端圖片並補回缺少的 imageBlob（已同步/已批改）
+ */
+export async function restoreSyncedImages() {
+  console.log('開始補回雲端圖片...')
+
+  const targets = await db.submissions
+    .where('status')
+    .anyOf('synced', 'graded')
+    .and((s) => !s.imageBlob)
+    .toArray()
+
+  console.log(`找到 ${targets.length} 筆缺少圖片的記錄`)
+
+  let success = 0
+  let failed = 0
+
+  for (let i = 0; i < targets.length; i++) {
+    const submission = targets[i]
+    try {
+      const response = await fetch(
+        `/api/storage/download?submissionId=${encodeURIComponent(submission.id)}`,
+        { credentials: 'include' }
+      )
+      if (!response.ok) {
+        throw new Error(`下載失敗 (${response.status})`)
+      }
+      const blob = await response.blob()
+      await db.submissions.update(submission.id, { imageBlob: blob })
+      success++
+      console.log(`已補回 ${submission.id} (${i + 1}/${targets.length})`)
+    } catch (error) {
+      failed++
+      console.error(`補回失敗 ${submission.id}:`, error)
+    }
+  }
+
+  console.log(`完成：成功 ${success} 筆，失敗 ${failed} 筆`)
+  return { success, failed }
+}
+
 // 在瀏覽器 Console 中可用
 if (typeof window !== 'undefined') {
   ;(window as any).checkPendingSubmissions = checkPendingSubmissions
@@ -367,4 +370,5 @@ if (typeof window !== 'undefined') {
   ;(window as any).clearPendingSubmissions = clearPendingSubmissions
   ;(window as any).checkAssignmentSubmissions = checkAssignmentSubmissions
   ;(window as any).checkDatabaseStatus = checkDatabaseStatus
+  ;(window as any).restoreSyncedImages = restoreSyncedImages
 }

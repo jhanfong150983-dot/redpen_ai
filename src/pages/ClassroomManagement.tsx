@@ -21,6 +21,13 @@ interface ClassroomWithStats {
   assignmentCount: number
 }
 
+interface StudentRow {
+  id?: string
+  tempId: string
+  seatNumber: string
+  name: string
+}
+
 export default function ClassroomManagement({ onBack }: ClassroomManagementProps) {
   const [items, setItems] = useState<ClassroomWithStats[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -37,6 +44,13 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+
+  // 編輯學生名單
+  const [isStudentModalOpen, setIsStudentModalOpen] = useState(false)
+  const [studentModalError, setStudentModalError] = useState<string | null>(null)
+  const [studentModalClassroom, setStudentModalClassroom] = useState<Classroom | null>(null)
+  const [studentRows, setStudentRows] = useState<StudentRow[]>([])
+  const [isStudentSaving, setIsStudentSaving] = useState(false)
 
   const loadData = useCallback(async () => {
     setIsLoading(true)
@@ -241,6 +255,114 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
     }
   }
 
+  const openStudentEditor = async (target: ClassroomWithStats) => {
+    setStudentModalError(null)
+    setStudentModalClassroom(target.classroom)
+    const list = await db.students
+      .where('classroomId')
+      .equals(target.classroom.id)
+      .sortBy('seatNumber')
+
+    setStudentRows(
+      list.map((student) => ({
+        id: student.id,
+        tempId: student.id,
+        seatNumber: String(student.seatNumber),
+        name: student.name
+      }))
+    )
+    setIsStudentModalOpen(true)
+  }
+
+  const handleStudentRowChange = (
+    tempId: string,
+    field: 'seatNumber' | 'name',
+    value: string
+  ) => {
+    setStudentRows((prev) =>
+      prev.map((row) =>
+        row.tempId === tempId ? { ...row, [field]: value } : row
+      )
+    )
+  }
+
+  const handleAddStudentRow = () => {
+    const seats = studentRows
+      .map((row) => Number.parseInt(row.seatNumber, 10))
+      .filter((n) => Number.isFinite(n) && n > 0) as number[]
+    const nextSeat = seats.length > 0 ? Math.max(...seats) + 1 : 1
+    setStudentRows((prev) => [
+      ...prev,
+      {
+        tempId: generateId(),
+        seatNumber: String(nextSeat),
+        name: ''
+      }
+    ])
+  }
+
+  const handleSaveStudents = async () => {
+    if (!studentModalClassroom) return
+
+    setStudentModalError(null)
+
+    const seen = new Set<number>()
+    const cleaned: Array<{
+      id?: string
+      seatNumber: number
+      name: string
+    }> = []
+
+    for (const row of studentRows) {
+      const seat = Number.parseInt(row.seatNumber, 10)
+      const name = row.name.trim()
+      if (!Number.isFinite(seat) || seat <= 0) {
+        setStudentModalError('座號必須是大於 0 的整數')
+        return
+      }
+      if (!name) {
+        setStudentModalError('學生姓名不可為空')
+        return
+      }
+      if (seen.has(seat)) {
+        setStudentModalError(`座號 ${seat} 重複，請修正`)
+        return
+      }
+      seen.add(seat)
+      cleaned.push({ id: row.id, seatNumber: seat, name })
+    }
+
+    cleaned.sort((a, b) => a.seatNumber - b.seatNumber)
+
+    setIsStudentSaving(true)
+    try {
+      const records: Student[] = cleaned.map((row) => ({
+        id: row.id ?? generateId(),
+        classroomId: studentModalClassroom.id,
+        seatNumber: row.seatNumber,
+        name: row.name
+      }))
+
+      await db.students.bulkPut(records)
+
+      setStudentRows(
+        records.map((student) => ({
+          id: student.id,
+          tempId: student.id,
+          seatNumber: String(student.seatNumber),
+          name: student.name
+        }))
+      )
+
+      await loadData()
+    } catch (e) {
+      console.error(e)
+      setStudentModalError(e instanceof Error ? e.message : '更新學生名單失敗')
+    } finally {
+      setIsStudentSaving(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-5xl mx-auto pt-8">
@@ -364,18 +486,31 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                       {item.studentCount} 位學生 · {item.assignmentCount} 份作業
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      void handleDeleteClassroom(item)
-                    }}
-                    className="p-1.5 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-60"
-                    title="刪除班級"
-                    disabled={isSaving}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void openStudentEditor(item)
+                      }}
+                      className="p-1.5 rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+                      title="編輯學生名單"
+                    >
+                      <Users className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void handleDeleteClassroom(item)
+                      }}
+                      className="p-1.5 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-60"
+                      title="刪除班級"
+                      disabled={isSaving}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -393,6 +528,13 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                     <Edit2 className="w-3 h-3" />
                   </span>
                   可直接在卡片上更改名稱。
+                </li>
+                <li>
+                  點卡片右側的
+                  <span className="inline-flex items-center px-1">
+                    <Users className="w-3 h-3" />
+                  </span>
+                  可編輯學生名單。
                 </li>
                 <li>
                   點卡片右側的
@@ -530,7 +672,129 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
           </div>
         </div>
       )}
+
+      {/* 編輯學生名單視窗 */}
+      {isStudentModalOpen && studentModalClassroom && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+          onClick={() => {
+            if (!isStudentSaving) {
+              setIsStudentModalOpen(false)
+              setStudentModalError(null)
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">
+                  編輯學生名單 · {studentModalClassroom.name}
+                </h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  可調整座號與姓名，新增學生後會依座號排序。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isStudentSaving) {
+                    setIsStudentModalOpen(false)
+                    setStudentModalError(null)
+                  }
+                }}
+                className="p-1 rounded-full hover:bg-gray-100 text-gray-500"
+              >
+                X
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              {studentModalError && (
+                <div className="p-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg">
+                  {studentModalError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-[90px_1fr] gap-2 text-xs text-gray-500">
+                <span>座號</span>
+                <span>學生姓名</span>
+              </div>
+
+              <div className="space-y-2 max-h-[45vh] overflow-auto">
+                {studentRows.map((row) => (
+                  <div key={row.tempId} className="grid grid-cols-[90px_1fr] gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      value={row.seatNumber}
+                      onChange={(e) =>
+                        handleStudentRowChange(row.tempId, 'seatNumber', e.target.value)
+                      }
+                      className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      disabled={isStudentSaving}
+                    />
+                    <input
+                      type="text"
+                      value={row.name}
+                      onChange={(e) =>
+                        handleStudentRowChange(row.tempId, 'name', e.target.value)
+                      }
+                      className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      disabled={isStudentSaving}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleAddStudentRow}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                  disabled={isStudentSaving}
+                >
+                  <Plus className="w-4 h-4" />
+                  新增學生
+                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isStudentSaving) {
+                        setIsStudentModalOpen(false)
+                        setStudentModalError(null)
+                      }
+                    }}
+                    className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50"
+                    disabled={isStudentSaving}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveStudents}
+                    disabled={isStudentSaving || studentRows.length === 0}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {isStudentSaving ? (
+                      <>
+                        <Loader className="w-4 h-4 animate-spin" />
+                        儲存中...
+                      </>
+                    ) : (
+                      '儲存變更'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
-
