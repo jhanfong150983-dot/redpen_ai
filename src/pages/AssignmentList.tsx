@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BookOpen, ArrowLeft, Loader, X, Plus } from 'lucide-react'
 import { db } from '@/lib/db'
+import { requestSync } from '@/lib/sync-events'
 import type { AnswerKey, Assignment, Classroom } from '@/lib/db'
 
 interface AssignmentListProps {
@@ -328,6 +329,7 @@ export default function AssignmentList({
                           : a
                       )
                     )
+                    requestSync()
                   } catch (e) {
                     console.error('儲存標準答案失敗:', e)
                     setAnswerKeyError('儲存失敗，請稍後再試。')
@@ -346,4 +348,3 @@ export default function AssignmentList({
     </div>
   )
 }
-

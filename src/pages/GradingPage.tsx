@@ -15,6 +15,7 @@ import {
   AlertTriangle
 } from 'lucide-react'
 import { db, type Assignment, type Student, type Submission, type Classroom } from '@/lib/db'
+import { requestSync } from '@/lib/sync-events'
 import {
   gradeMultipleSubmissions,
   gradeSubmission,
@@ -145,6 +146,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
 
         const newGradingResult = { ...submission.gradingResult, needsReview: false, reviewReasons: [] }
         await db.submissions.update(id, { gradingResult: newGradingResult })
+        requestSync()
 
         const updated = await db.submissions.get(id)
         if (updated) {
@@ -191,6 +193,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       await db.submissions.update(submissionId, {
         gradingResult: { ...submission.gradingResult, details: updatedDetails }
       })
+      requestSync()
 
       const updated = await db.submissions.get(submissionId)
       if (updated) {
@@ -264,6 +267,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         gradingResult: result,
         gradedAt: Date.now()
       })
+      requestSync()
 
       const updatedSub = await db.submissions.get(submission.id)
       if (updatedSub) {
@@ -381,6 +385,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         gradingResult: newGradingResult,
         gradedAt: Date.now()
       })
+      requestSync()
 
       const updatedSub = await db.submissions.get(submission.id)
       if (updatedSub) {
@@ -478,6 +483,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
           : toGrade.length
 
       await loadData()
+      requestSync()
       alert(`批改完成！成功批改 ${successCount} 份`)
     } catch (err) {
       console.error('批改失敗', err)
@@ -536,6 +542,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       score: newTotal,
       gradingResult: newGradingResult
     })
+    requestSync()
 
     const updated = await db.submissions.get(id)
     if (updated) {
@@ -596,6 +603,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       score: newTotal,
       gradingResult: newGradingResult
     })
+    requestSync()
 
     const updated = await db.submissions.get(id)
     if (updated) {

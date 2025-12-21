@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Loader, CheckCircle, Download, Columns } from 'lucide-react'
 import { db } from '@/lib/db'
+import { requestSync } from '@/lib/sync-events'
 import type { Assignment, Classroom, Submission } from '@/lib/db'
 
 interface CorrectionManagementProps {
@@ -172,6 +173,7 @@ export default function CorrectionManagement({
       await db.submissions.update(submissionId, {
         correctionCount: safeCount
       } as Partial<Submission>)
+      requestSync()
     } catch (e) {
       console.error('更新訂正次數失敗', e)
     }

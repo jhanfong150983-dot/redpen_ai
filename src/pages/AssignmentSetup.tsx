@@ -16,6 +16,7 @@ import {
   type Assignment,
   type Classroom
 } from '@/lib/db'
+import { requestSync } from '@/lib/sync-events'
 import { extractAnswerKeyFromImage } from '@/lib/gemini'
 import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
 
@@ -200,6 +201,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       }
       await db.assignments.add(assignment)
       setAssignments((prev) => [...prev, assignment])
+      requestSync()
       resetForm()
       setIsCreateModalOpen(false)
     } catch (err) {
@@ -259,6 +261,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setAssignments((prev) =>
         prev.map((item) => (item.id === id ? { ...item, title: nextTitle } : item))
       )
+      requestSync()
     } catch (err) {
       console.error('更新作業標題失敗', err)
     } finally {
@@ -274,6 +277,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       await db.assignments.delete(id)
       await db.submissions.where('assignmentId').equals(id).delete()
       setAssignments((prev) => prev.filter((a) => a.id !== id))
+      requestSync()
     } catch (err) {
       console.error('刪除作業失敗', err)
     }
@@ -328,6 +332,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         domain: editingDomain,
         answerKey: editingAnswerKey
       })
+      requestSync()
       closeAnswerKeyModal()
     } catch (err) {
       console.error('儲存標準答案失敗', err)

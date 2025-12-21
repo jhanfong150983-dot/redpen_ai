@@ -14,7 +14,7 @@ Redirect URL 使用 Supabase 提供的 callback（通常為 `https://<project>.s
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
-SITE_URL=http://localhost:5173
+SITE_URL=http://localhost:3000
 ```
 
 - `SUPABASE_SERVICE_ROLE_KEY` 只放在 Vercel / Server 端，不可放前端。
@@ -48,7 +48,55 @@ FOR EACH ROW
 EXECUTE FUNCTION update_profiles_updated_at();
 ```
 
-### submissions 表（新增 owner_id）
+### classrooms 表
+
+```sql
+CREATE TABLE IF NOT EXISTS public.classrooms (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner_id UUID NOT NULL REFERENCES auth.users(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+### students 表
+
+```sql
+CREATE TABLE IF NOT EXISTS public.students (
+  id TEXT PRIMARY KEY,
+  classroom_id TEXT NOT NULL,
+  seat_number INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  owner_id UUID NOT NULL REFERENCES auth.users(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_students_classroom_id ON public.students(classroom_id);
+CREATE INDEX idx_students_owner_id ON public.students(owner_id);
+```
+
+### assignments 表
+
+```sql
+CREATE TABLE IF NOT EXISTS public.assignments (
+  id TEXT PRIMARY KEY,
+  classroom_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  total_pages INTEGER NOT NULL,
+  domain TEXT,
+  answer_key JSONB,
+  owner_id UUID NOT NULL REFERENCES auth.users(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_assignments_classroom_id ON public.assignments(classroom_id);
+CREATE INDEX idx_assignments_owner_id ON public.assignments(owner_id);
+```
+
+### submissions 表（同步批改結果）
 
 ```sql
 CREATE TABLE IF NOT EXISTS public.submissions (
@@ -57,6 +105,11 @@ CREATE TABLE IF NOT EXISTS public.submissions (
   student_id TEXT NOT NULL,
   image_url TEXT NOT NULL,
   status TEXT DEFAULT 'synced',
+  score NUMERIC,
+  feedback TEXT,
+  grading_result JSONB,
+  graded_at BIGINT,
+  correction_count INTEGER,
   owner_id UUID NOT NULL REFERENCES auth.users(id),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -68,7 +121,22 @@ CREATE INDEX idx_submissions_owner_id ON public.submissions(owner_id);
 
 CREATE UNIQUE INDEX idx_submissions_assignment_student
 ON public.submissions(assignment_id, student_id);
+```
 
+已存在 `submissions` 表時，可用以下方式補欄位：
+
+```sql
+ALTER TABLE public.submissions
+ADD COLUMN IF NOT EXISTS score NUMERIC,
+ADD COLUMN IF NOT EXISTS feedback TEXT,
+ADD COLUMN IF NOT EXISTS grading_result JSONB,
+ADD COLUMN IF NOT EXISTS graded_at BIGINT,
+ADD COLUMN IF NOT EXISTS correction_count INTEGER;
+```
+
+### updated_at 自動更新（classrooms / students / assignments / submissions）
+
+```sql
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -77,10 +145,33 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_submissions_updated_at
-BEFORE UPDATE ON public.submissions
-FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_classrooms_updated_at') THEN
+    CREATE TRIGGER update_classrooms_updated_at
+    BEFORE UPDATE ON public.classrooms
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_students_updated_at') THEN
+    CREATE TRIGGER update_students_updated_at
+    BEFORE UPDATE ON public.students
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_assignments_updated_at') THEN
+    CREATE TRIGGER update_assignments_updated_at
+    BEFORE UPDATE ON public.assignments
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_submissions_updated_at') THEN
+    CREATE TRIGGER update_submissions_updated_at
+    BEFORE UPDATE ON public.submissions
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
 ```
 
 ## 3. Storage 設定
@@ -95,7 +186,11 @@ EXECUTE FUNCTION update_updated_at_column();
 前端不再使用 Supabase SDK，而是呼叫你的後端 API：
 
 - `POST /api/data/submission`：上傳圖片 + 寫入資料庫
+- `POST /api/data/sync`：上傳班級／學生／作業／批改結果（全量同步）
+- `GET /api/data/sync`：下載雲端資料回本機
 - `GET /api/storage/download?submissionId=...`：下載圖片
+
+前端已改為「資料變更後自動同步」，不需要手動按鈕。
 
 範例（前端僅供參考）：
 
@@ -115,11 +210,20 @@ await fetch('/api/data/submission', {
 })
 ```
 
+完整同步（拉資料回本機）：
+
+```typescript
+await fetch('/api/data/sync', {
+  method: 'GET',
+  credentials: 'include'
+})
+```
+
 ## 5. 驗證方式
 
-1. 登入後，先建立一筆掃描作業
-2. 觸發同步（首頁「同步狀態」）
-3. Supabase Database 應該看到 submissions 資料
+1. 登入後建立班級 / 作業 / 匯入作業
+2. 等待同步指示顯示「已同步」
+3. Supabase Database 應該看到 classrooms / students / assignments / submissions
 4. Storage 應該出現 submissions/{submissionId}.webp
 
 ## 6. 本機開發提醒

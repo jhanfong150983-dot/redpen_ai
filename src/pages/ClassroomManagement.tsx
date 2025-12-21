@@ -9,6 +9,7 @@ import {
   Loader
 } from 'lucide-react'
 import { db, generateId } from '@/lib/db'
+import { requestSync } from '@/lib/sync-events'
 import type { Classroom, Student } from '@/lib/db'
 
 interface ClassroomManagementProps {
@@ -180,6 +181,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       setImportText('')
       setIsCreateModalOpen(false)
       await loadData()
+      requestSync()
     } catch (e) {
       console.error(e)
       setError(e instanceof Error ? e.message : '新增班級失敗')
@@ -209,6 +211,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
             : item
         )
       )
+      requestSync()
     } catch (e) {
       console.error(e)
       setError(e instanceof Error ? e.message : '更新班級名稱失敗')
@@ -247,6 +250,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       await db.classrooms.delete(classroomId)
 
       await loadData()
+      requestSync()
     } catch (e) {
       console.error(e)
       setError(e instanceof Error ? e.message : '刪除班級失敗')
@@ -355,6 +359,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       )
 
       await loadData()
+      requestSync()
     } catch (e) {
       console.error(e)
       setStudentModalError(e instanceof Error ? e.message : '更新學生名單失敗')

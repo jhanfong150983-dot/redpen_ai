@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
 import { useOnlineStatus } from './useOnlineStatus'
 import { SYNC_EVENT_NAME } from '@/lib/sync-events'
+import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
 
 interface SyncStatus {
   isSyncing: boolean
@@ -34,6 +35,7 @@ export function useSync(options: UseSyncOptions = {}) {
     pendingCount: 0,
     error: null
   })
+  const syncQueuedRef = useRef(false)
 
   /**
    * 更新待同步數量
@@ -96,6 +98,109 @@ export function useSync(options: UseSyncOptions = {}) {
   }
 
   /**
+   * 上傳本機資料到雲端
+   */
+  const pushMetadata = useCallback(async () => {
+    const [classrooms, students, assignments, submissions] = await Promise.all([
+      db.classrooms.toArray(),
+      db.students.toArray(),
+      db.assignments.toArray(),
+      db.submissions.toArray()
+    ])
+
+    const submissionPayload = submissions
+      .filter((sub) => sub.status !== 'scanned')
+      .map(({ imageBlob, ...rest }) => ({
+        id: rest.id,
+        assignmentId: rest.assignmentId,
+        studentId: rest.studentId,
+        status: rest.status,
+        createdAt: rest.createdAt,
+        score: rest.score,
+        feedback: rest.feedback,
+        gradingResult: rest.gradingResult,
+        gradedAt: rest.gradedAt,
+        correctionCount: rest.correctionCount
+      }))
+
+    const response = await fetch('/api/data/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        classrooms,
+        students,
+        assignments,
+        submissions: submissionPayload
+      })
+    })
+
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data?.error || '同步失敗')
+    }
+  }, [])
+
+  /**
+   * 從雲端拉回資料
+   */
+  const pullMetadata = useCallback(async () => {
+    const response = await fetch('/api/data/sync', {
+      method: 'GET',
+      credentials: 'include'
+    })
+
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data?.error || '載入雲端資料失敗')
+    }
+
+    const classrooms = Array.isArray(data.classrooms) ? data.classrooms : []
+    const students = Array.isArray(data.students) ? data.students : []
+    const assignments = Array.isArray(data.assignments) ? data.assignments : []
+    const submissions = Array.isArray(data.submissions) ? data.submissions : []
+
+    const existingSubmissions = await db.submissions.toArray()
+    const imageMap = new Map(
+      existingSubmissions
+        .filter((sub) => sub.imageBlob)
+        .map((sub) => [sub.id, sub.imageBlob as Blob])
+    )
+
+    const mergedSubmissions: Submission[] = submissions
+      .filter((sub: Submission) => sub?.id && sub?.assignmentId && sub?.studentId)
+      .map((sub: Submission) => {
+        const createdAt =
+          typeof sub.createdAt === 'number' && Number.isFinite(sub.createdAt)
+            ? sub.createdAt
+            : Date.now()
+        const gradedAt =
+          typeof sub.gradedAt === 'number' && Number.isFinite(sub.gradedAt)
+            ? sub.gradedAt
+            : undefined
+
+        return {
+          id: sub.id,
+          assignmentId: sub.assignmentId,
+          studentId: sub.studentId,
+          status: sub.status || 'synced',
+          createdAt,
+          score: sub.score,
+          feedback: sub.feedback,
+          gradingResult: sub.gradingResult,
+          gradedAt,
+          correctionCount: sub.correctionCount,
+          imageBlob: imageMap.get(sub.id)
+        }
+      })
+
+    await db.classrooms.bulkPut(classrooms as Classroom[])
+    await db.students.bulkPut(students as Student[])
+    await db.assignments.bulkPut(assignments as Assignment[])
+    await db.submissions.bulkPut(mergedSubmissions)
+  }, [])
+
+  /**
    * 執行同步
    */
   const performSync = useCallback(async () => {
@@ -107,6 +212,7 @@ export function useSync(options: UseSyncOptions = {}) {
 
     if (status.isSyncing) {
       console.log('目前正在同步中，跳過本次')
+      syncQueuedRef.current = true
       return
     }
 
@@ -119,16 +225,6 @@ export function useSync(options: UseSyncOptions = {}) {
         .toArray()
 
       console.log(`找到 ${pendingSubmissions.length} 條待同步紀錄`)
-
-      if (pendingSubmissions.length === 0) {
-        setStatus((prev) => ({
-          ...prev,
-          isSyncing: false,
-          lastSyncTime: Date.now(),
-          pendingCount: 0
-        }))
-        return
-      }
 
       let successCount = 0
       let failCount = 0
@@ -143,12 +239,14 @@ export function useSync(options: UseSyncOptions = {}) {
         }
       }
 
-      console.log(`同步完成：成功 ${successCount} 筆，失敗 ${failCount} 筆`)
+      if (pendingSubmissions.length > 0) {
+        console.log(`同步完成：成功 ${successCount} 筆，失敗 ${failCount} 筆`)
+      }
 
-      const remainingCount = await db.submissions
-        .where('status')
-        .equals('scanned')
-        .count()
+      await pushMetadata()
+      await pullMetadata()
+
+      const remainingCount = await updatePendingCount()
 
       setStatus((prev) => ({
         ...prev,
@@ -164,8 +262,15 @@ export function useSync(options: UseSyncOptions = {}) {
         isSyncing: false,
         error: error instanceof Error ? error.message : '同步失敗'
       }))
+    } finally {
+      if (syncQueuedRef.current) {
+        syncQueuedRef.current = false
+        window.setTimeout(() => {
+          void performSync()
+        }, 0)
+      }
     }
-  }, [isOnline, status.isSyncing, updatePendingCount])
+  }, [isOnline, status.isSyncing, updatePendingCount, pushMetadata, pullMetadata])
 
   /**
    * 提供給外部手動觸發同步
@@ -178,25 +283,18 @@ export function useSync(options: UseSyncOptions = {}) {
   useEffect(() => {
     if (!autoSync) return
 
-    void (async () => {
-      const count = await updatePendingCount()
-      if (isOnline && count > 0) {
-        void performSync()
-      }
-    })()
+    void updatePendingCount()
+    if (isOnline) {
+      void performSync()
+    }
   }, [autoSync, isOnline, performSync, updatePendingCount])
 
   useEffect(() => {
     if (isOnline && autoSync) {
       console.log('網路恢復，觸發同步')
-      void (async () => {
-        const count = await updatePendingCount()
-        if (count > 0) {
-          void performSync()
-        }
-      })()
+      void performSync()
     }
-  }, [isOnline, autoSync, performSync, updatePendingCount])
+  }, [isOnline, autoSync, performSync])
 
   useEffect(() => {
     if (!autoSync) return
