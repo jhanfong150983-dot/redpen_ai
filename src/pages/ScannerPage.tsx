@@ -431,7 +431,7 @@ export default function ScannerPage({
   }
 
   return (
-    <div className="fixed inset-0 bg-black flex flex-col">
+    <div className="fixed inset-0 bg-black">
       {/* 隱藏的文件輸入 */}
       <input
         ref={fileInputRef}
@@ -442,82 +442,95 @@ export default function ScannerPage({
       />
 
       {/* 攝像頭畫面 - 滿版顯示 */}
-      <div className="flex-1 relative overflow-hidden">
-        <Webcam
-          ref={webcamRef}
-          audio={false}
-          screenshotFormat="image/jpeg"
-          videoConstraints={{
-            facingMode: 'environment', // 使用後置攝像頭
-            width: 1920,
-            height: 1080
-          }}
-          className="absolute inset-0 w-full h-full object-cover"
-        />
+      <Webcam
+        ref={webcamRef}
+        audio={false}
+        screenshotFormat="image/jpeg"
+        videoConstraints={{
+          facingMode: 'environment', // 使用後置攝像頭
+          width: 1920,
+          height: 1080
+        }}
+        className="absolute inset-0 w-full h-full object-cover"
+      />
 
-        {/* 成功提示動畫 */}
-        {captureSuccess && (
-          <div className="absolute inset-0 bg-green-500 bg-opacity-30 flex items-center justify-center animate-pulse z-10">
-            <div className="bg-white rounded-full p-6">
-              <CheckCircle className="w-16 h-16 text-green-600" />
-            </div>
+      {/* 成功提示動畫 */}
+      {captureSuccess && (
+        <div className="absolute inset-0 bg-green-500 bg-opacity-30 flex items-center justify-center animate-pulse z-10">
+          <div className="bg-white rounded-full p-6">
+            <CheckCircle className="w-16 h-16 text-green-600" />
           </div>
-        )}
+        </div>
+      )}
 
-        {/* 頂部狀態欄 */}
-        <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/70 to-transparent p-4">
-          <div className="flex items-center justify-between text-white">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-              <span className="text-sm font-medium">掃描中</span>
-            </div>
-
-            {/* 語音控制按鈕 */}
-            {isVoiceSupported && (
-              <button
-                onClick={isListening ? stopListening : startListening}
-                className={`p-2 rounded-full transition-colors ${
-                  isListening
-                    ? 'bg-red-500 hover:bg-red-600'
-                    : 'bg-white/20 hover:bg-white/30'
-                }`}
-              >
-                {isListening ? (
-                  <MicOff className="w-5 h-5" />
-                ) : (
-                  <Mic className="w-5 h-5" />
-                )}
-              </button>
+      {/* 頂部狀態欄 */}
+      <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/70 to-transparent p-3 sm:p-4">
+        <div className="flex items-center justify-between text-white">
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
+            <span className="text-sm font-medium">掃描中</span>
+            {capturedImages.size > 0 && (
+              <span className="ml-2 text-xs text-blue-100 bg-blue-500/30 border border-blue-400/30 px-2 py-0.5 rounded-full">
+                已掃描 {capturedImages.size} / {maxSeat}
+              </span>
             )}
           </div>
+
+          {/* 語音控制按鈕 */}
+          {isVoiceSupported && (
+            <button
+              onClick={isListening ? stopListening : startListening}
+              className={`p-2 rounded-full transition-colors ${
+                isListening
+                  ? 'bg-red-500 hover:bg-red-600'
+                  : 'bg-white/20 hover:bg-white/30'
+              }`}
+            >
+              {isListening ? (
+                <MicOff className="w-5 h-5" />
+              ) : (
+                <Mic className="w-5 h-5" />
+              )}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* 底部控制欄 */}
-      <div className="bg-gradient-to-t from-black via-black/95 to-black/70 text-white p-6 pb-8">
-        {/* 錯誤提示 */}
-        {error && (
-          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-            <span className="text-sm text-red-200">{error}</span>
-          </div>
-        )}
+      {/* 底部控制面板 */}
+      <div className="absolute bottom-0 left-0 right-0 px-3 pb-4 sm:px-6 sm:pb-6">
+        <div className="bg-black/65 border border-white/10 backdrop-blur-md rounded-2xl p-3 sm:p-5 text-white shadow-2xl">
+          {/* 錯誤提示 */}
+          {error && (
+            <div className="mb-3 p-2.5 bg-red-500/20 border border-red-500/40 rounded-lg flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-300 flex-shrink-0" />
+              <span className="text-xs text-red-100">{error}</span>
+            </div>
+          )}
 
-        {/* 學生資訊 */}
-        <div className="mb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <User className="w-6 h-6 text-blue-400" />
-            <div className="flex-1">
-              <div className="text-sm text-gray-400">當前學生</div>
-              <div className="text-2xl font-bold">
+          {/* 學生資訊 */}
+          <div className="flex items-center gap-3">
+            <div className="flex-shrink-0 bg-blue-600/90 rounded-xl px-3 py-2 text-center min-w-[72px]">
+              <div className="text-[10px] text-blue-100">座號</div>
+              <div className="text-2xl font-bold">{currentSeat}</div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] text-gray-300 flex items-center gap-1">
+                <User className="w-3.5 h-3.5" />
+                當前學生
+              </div>
+              <div className="text-base sm:text-lg font-semibold truncate">
                 {currentStudent ? currentStudent.name : '載入中...'}
               </div>
+              {capturedImages.size > 0 && (
+                <div className="text-[11px] text-blue-100 mt-1">
+                  已掃描 {capturedImages.size} / {maxSeat} 份作業
+                </div>
+              )}
             </div>
-            {/* 預覽圖片 */}
             {lastCapturedImage && (
-              <div className="flex-shrink-0">
-                <div className="text-xs text-gray-400 mb-1 text-center">最近上傳</div>
-                <div className="w-20 h-20 rounded-lg overflow-hidden border-2 border-green-400 shadow-lg">
+              <div className="hidden sm:flex flex-col items-center gap-1">
+                <span className="text-[10px] text-gray-300">最近上傳</span>
+                <div className="w-16 h-16 rounded-lg overflow-hidden border border-green-300/50">
                   <img
                     src={lastCapturedImage}
                     alt="預覽"
@@ -527,32 +540,13 @@ export default function ScannerPage({
               </div>
             )}
           </div>
-        </div>
 
-        {/* 掃描進度 */}
-        {capturedImages.size > 0 && (
-          <div className="mb-4 p-3 bg-blue-500/20 border border-blue-500/50 rounded-lg">
-            <div className="text-sm text-blue-200">
-              已掃描 <span className="font-bold text-xl">{capturedImages.size}</span> / {maxSeat} 份作業
-            </div>
-          </div>
-        )}
-
-        {/* 座號顯示和操作按鈕 */}
-        <div className="space-y-3">
-          {/* 座號和拍照/上傳按鈕 */}
-          <div className="flex items-center gap-3">
-            {/* 座號 */}
-            <div className="flex-shrink-0 bg-blue-600 rounded-xl px-6 py-4 text-center min-w-[100px]">
-              <div className="text-sm text-blue-200 mb-1">座號</div>
-              <div className="text-4xl font-bold">{currentSeat}</div>
-            </div>
-
-            {/* 上傳文件按鈕 */}
+          {/* 操作按鈕 */}
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
             <button
               onClick={triggerFileUpload}
               disabled={isCapturing || !currentStudent}
-              className={`flex-shrink-0 flex items-center justify-center gap-2 px-4 py-6 rounded-xl font-bold text-base transition-all ${
+              className={`flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-semibold text-sm transition-all ${
                 isCapturing
                   ? 'bg-gray-600 cursor-not-allowed'
                   : currentStudent
@@ -560,15 +554,13 @@ export default function ScannerPage({
                   : 'bg-gray-600 cursor-not-allowed'
               }`}
             >
-              <Upload className="w-5 h-5" />
+              <Upload className="w-4 h-4" />
               上傳
             </button>
-
-            {/* 拍照按鈕 */}
             <button
               onClick={capture}
               disabled={isCapturing || !currentStudent}
-              className={`flex-1 flex items-center justify-center gap-3 py-6 rounded-xl font-bold text-lg transition-all ${
+              className={`col-span-1 sm:col-span-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-semibold text-sm transition-all ${
                 isCapturing
                   ? 'bg-gray-600 cursor-not-allowed'
                   : currentStudent
@@ -576,36 +568,34 @@ export default function ScannerPage({
                   : 'bg-gray-600 cursor-not-allowed'
               }`}
             >
-              <Camera className="w-6 h-6" />
+              <Camera className="w-4 h-4" />
               {isCapturing ? '處理中...' : '拍照'}
             </button>
+            {capturedImages.size > 0 && (
+              <button
+                onClick={() => setShowConfirmation(true)}
+                className="col-span-2 sm:col-span-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-semibold text-sm bg-orange-600 hover:bg-orange-700 active:scale-95"
+              >
+                <CheckCircle className="w-4 h-4" />
+                送出 ({capturedImages.size})
+              </button>
+            )}
           </div>
 
-          {/* 完成掃描按鈕 */}
-          {capturedImages.size > 0 && (
-            <button
-              onClick={() => setShowConfirmation(true)}
-              className="w-full flex items-center justify-center gap-2 py-4 rounded-xl font-bold text-lg transition-all bg-orange-600 hover:bg-orange-700 active:scale-95"
-            >
-              <CheckCircle className="w-6 h-6" />
-              完成掃描，確認送出 ({capturedImages.size} 份)
-            </button>
-          )}
-        </div>
-
-        {/* 語音監聽狀態 */}
-        {isListening && (
-          <div className="mt-4 text-center">
-            <div className="inline-flex items-center gap-2 bg-red-500/20 border border-red-500/50 px-4 py-2 rounded-full text-sm">
-              <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-              語音識別中...
+          {/* 語音監聽狀態 */}
+          {isListening && (
+            <div className="mt-3 text-center">
+              <div className="inline-flex items-center gap-2 bg-red-500/20 border border-red-500/40 px-3 py-1.5 rounded-full text-xs">
+                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                語音識別中...
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* 提示資訊 */}
-        <div className="mt-4 text-center text-sm text-gray-400">
-          拍照 (空格) | 上傳圖片/PDF | {isVoiceSupported ? '語音跳轉座號' : '語音功能不可用'}
+          {/* 提示資訊 */}
+          <div className="mt-3 text-center text-[11px] text-gray-300 sm:text-right">
+            拍照 (空格) · 上傳圖片/PDF · {isVoiceSupported ? '語音跳轉座號' : '語音不可用'}
+          </div>
         </div>
       </div>
     </div>
