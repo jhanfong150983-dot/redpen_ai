@@ -315,7 +315,6 @@ export default function ScannerPage({
       // 清空暫存
       setCapturedImages(new Map())
       setShowConfirmation(false)
-      setLastCapturedImage(null)
 
       alert(`成功送出 ${successCount} 份作業！`)
       requestSync()
