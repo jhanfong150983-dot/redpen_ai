@@ -12,11 +12,13 @@ export function cn(...inputs: ClassValue[]) {
  * 获取 Submission 图片的显示 URL
  * 优先使用本地 Blob，否则使用云端 imageUrl
  */
-export function getSubmissionImageUrl(submission: {
+export function getSubmissionImageUrl(submission?: {
   id?: string
   imageBlob?: Blob
   imageUrl?: string
-}): string | null {
+} | null): string | null {
+  if (!submission) return null
+
   // 优先使用本地 Blob
   if (submission.imageBlob) {
     return URL.createObjectURL(submission.imageBlob)
