@@ -13,52 +13,12 @@ interface ScannerPageProps {
   classroomId: string
   assignmentId: string
   maxSeat: number
-  pagesPerStudent: number
-}
-
-async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
-  if (pageBlobs.length === 1) return pageBlobs[0]
-
-  const bitmaps = await Promise.all(pageBlobs.map((blob) => createImageBitmap(blob)))
-  const width = Math.max(...bitmaps.map((bmp) => bmp.width))
-  const height = bitmaps.reduce((sum, bmp) => sum + bmp.height, 0)
-
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d')
-  if (!ctx) {
-    bitmaps.forEach((bmp) => bmp.close())
-    throw new Error('無法建立畫布')
-  }
-
-  let offsetY = 0
-  bitmaps.forEach((bmp) => {
-    const offsetX = Math.floor((width - bmp.width) / 2)
-    ctx.drawImage(bmp, offsetX, offsetY)
-    offsetY += bmp.height
-    bmp.close()
-  })
-
-  const merged = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) resolve(blob)
-        else reject(new Error('無法產生合併影像'))
-      },
-      'image/webp',
-      0.85
-    )
-  })
-
-  return merged
 }
 
 export default function ScannerPage({
   classroomId,
   assignmentId,
-  maxSeat,
-  pagesPerStudent
+  maxSeat
 }: ScannerPageProps) {
   const webcamRef = useRef<Webcam>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -69,13 +29,10 @@ export default function ScannerPage({
   const [error, setError] = useState<string | null>(null)
 
   // 批量模式：暫存所有學生的圖片
-  const [capturedImages, setCapturedImages] = useState<
-    Map<string, { blobs: Blob[]; urls: string[] }>
-  >(new Map())
+  const [capturedImages, setCapturedImages] = useState<Map<string, { blob: Blob; url: string }>>(new Map())
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLandscape, setIsLandscape] = useState(false)
-  const [previewStudentId, setPreviewStudentId] = useState<string | null>(null)
 
   // 調試：打印接收到的 props
   useEffect(() => {
@@ -83,10 +40,7 @@ export default function ScannerPage({
     console.log(`   classroomId: ${classroomId}`)
     console.log(`   assignmentId: ${assignmentId}`)
     console.log(`   maxSeat: ${maxSeat}`)
-    console.log(`   pagesPerStudent: ${pagesPerStudent}`)
-  }, [classroomId, assignmentId, maxSeat, pagesPerStudent])
-
-  const requiredPages = Math.max(1, Math.round(pagesPerStudent || 1))
+  }, [classroomId, assignmentId, maxSeat])
 
   useEffect(() => {
     const updateLayout = () => {
@@ -150,31 +104,18 @@ export default function ScannerPage({
       throw new Error('當前學生資訊未載入')
     }
 
-    const existing = capturedImages.get(currentStudent.id)
-    const existingCount = existing?.blobs.length ?? 0
-    const shouldReset = existingCount >= requiredPages
-    const nextCount = shouldReset ? 1 : existingCount + 1
-
     // 創建預覽 URL
     const previewUrl = URL.createObjectURL(imageBlob)
 
     // 暫存到 Map 中
     setCapturedImages(prev => {
       const newMap = new Map(prev)
-      const current = prev.get(currentStudent.id)
-      const existingBlobs = current?.blobs ?? []
-      const existingUrls = current?.urls ?? []
-
-      if (existingBlobs.length >= requiredPages) {
-        existingUrls.forEach((url) => URL.revokeObjectURL(url))
-        newMap.set(currentStudent.id, { blobs: [imageBlob], urls: [previewUrl] })
-        return newMap
+      // 如果已經有這個學生的圖片，先清理舊的 URL
+      const existing = prev.get(currentStudent.id)
+      if (existing) {
+        URL.revokeObjectURL(existing.url)
       }
-
-      newMap.set(currentStudent.id, {
-        blobs: [...existingBlobs, imageBlob],
-        urls: [...existingUrls, previewUrl]
-      })
+      newMap.set(currentStudent.id, { blob: imageBlob, url: previewUrl })
       return newMap
     })
 
@@ -183,18 +124,12 @@ export default function ScannerPage({
     // 顯示成功提示
     setCaptureSuccess(true)
 
-    if (nextCount >= requiredPages) {
-      // 自動切換到下一位
-      setTimeout(() => {
-        nextSeat()
-        setCaptureSuccess(false)
-      }, 500)
-    } else {
-      setTimeout(() => {
-        setCaptureSuccess(false)
-      }, 500)
-    }
-  }, [currentStudent, nextSeat, requiredPages])
+    // 自動切換到下一位
+    setTimeout(() => {
+      nextSeat()
+      setCaptureSuccess(false)
+    }, 500)
+  }, [currentStudent, nextSeat])
 
   /**
    * 拍照並暫存
@@ -320,17 +255,6 @@ export default function ScannerPage({
       return
     }
 
-    const incompleteStudents = Array.from(capturedImages.entries())
-      .filter(([, data]) => data.blobs.length < requiredPages)
-      .map(([studentId]) => students.find((s) => s.id === studentId))
-      .filter((s): s is Student => Boolean(s))
-
-    if (incompleteStudents.length > 0) {
-      const seats = incompleteStudents.map((s) => s.seatNumber).join(', ')
-      setError(`以下座號尚未拍滿 ${requiredPages} 張：${seats}`)
-      return
-    }
-
     setIsSubmitting(true)
     setError(null)
 
@@ -359,18 +283,13 @@ export default function ScannerPage({
           }
         }
 
-        const mergedBlob =
-          imageData.blobs.length === 1
-            ? imageData.blobs[0]
-            : await mergePageBlobs(imageData.blobs)
-
         // 創建新提交
         const submission: Submission = {
           id: generateId(),
           assignmentId,
           studentId: studentId,
           status: 'scanned',
-          imageBlob: mergedBlob,
+          imageBlob: imageData.blob,
           createdAt: getCurrentTimestamp()
         }
 
@@ -390,7 +309,7 @@ export default function ScannerPage({
 
       // 清理所有 URL
       capturedImages.forEach(imageData => {
-        imageData.urls.forEach((url) => URL.revokeObjectURL(url))
+        URL.revokeObjectURL(imageData.url)
       })
 
       // 清空暫存
@@ -406,7 +325,7 @@ export default function ScannerPage({
     } finally {
       setIsSubmitting(false)
     }
-  }, [capturedImages, assignmentId, requiredPages, students])
+  }, [capturedImages, assignmentId])
 
   /**
    * 觸發文件選擇
@@ -462,127 +381,35 @@ export default function ScannerPage({
     return () => window.removeEventListener('keydown', handleKeyPress)
   }, [capture, isCapturing])
 
-  const currentStudentCount = currentStudent
-    ? capturedImages.get(currentStudent.id)?.blobs.length ?? 0
-    : 0
-  const completedEntries = Array.from(capturedImages.entries()).filter(
-    ([, data]) => data.blobs.length >= requiredPages
-  )
-  const completedCount = completedEntries.length
-  const previewEntry =
-    completedEntries.find(([studentId]) => studentId === previewStudentId) ??
-    completedEntries[0]
-  const previewStudent = previewEntry
-    ? students.find((s) => s.id === previewEntry[0]) ?? null
-    : null
-  const previewUrls = previewEntry ? previewEntry[1].urls : []
-
-  useEffect(() => {
-    if (!showConfirmation) return
-    const firstId = completedEntries[0]?.[0] ?? null
-    if (!firstId) return
-    if (
-      !previewStudentId ||
-      !completedEntries.some(([studentId]) => studentId === previewStudentId)
-    ) {
-      setPreviewStudentId(firstId)
-    }
-  }, [showConfirmation, completedEntries, previewStudentId])
-
   // 如果顯示確認視窗
   if (showConfirmation) {
     return (
       <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50">
         <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto p-6">
           <h2 className="text-2xl font-bold text-gray-900 mb-4">確認送出作業</h2>
-          <p className="text-gray-600 mb-6">
-            已完成 {completedCount} 份作業（每份 {requiredPages} 張），請確認後送出
-          </p>
+          <p className="text-gray-600 mb-6">已掃描 {capturedImages.size} 份作業，請確認後送出</p>
 
           {/* 縮圖網格 */}
-          <div className="grid lg:grid-cols-[1.4fr_1fr] gap-4 mb-6">
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex flex-col gap-3 min-h-[320px]">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-gray-700">作業預覽</h3>
-                {previewStudent && (
-                  <span className="text-xs text-gray-500">
-                    {previewStudent.seatNumber}號 {previewStudent.name}
-                  </span>
-                )}
-              </div>
-              <div className="flex-1 border border-dashed border-gray-200 rounded-xl flex items-center justify-center bg-white/70">
-                {previewUrls.length > 0 ? (
-                  <div className="flex gap-3 overflow-auto px-2 py-2">
-                    {previewUrls.map((url, idx) => (
-                      <img
-                        key={`${previewStudent?.id ?? 'preview'}-${idx}`}
-                        src={url}
-                        alt={`第 ${idx + 1} 張預覽`}
-                        className="w-40 h-56 sm:w-48 sm:h-64 rounded-lg shadow-md object-contain bg-white border border-gray-200"
-                      />
-                    ))}
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4 mb-6">
+            {Array.from(capturedImages.entries()).map(([studentId, imageData]) => {
+              const student = students.find(s => s.id === studentId)
+              return (
+                <div key={studentId} className="bg-gray-100 rounded-lg overflow-hidden">
+                  <div className="aspect-square relative">
+                    <img
+                      src={imageData.url}
+                      alt={`${student?.name} 的作業`}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
-                ) : (
-                  <div className="text-xs text-gray-400 flex flex-col items-center gap-1">
-                    <AlertCircle className="w-4 h-4" />
-                    <span>尚未選擇預覽作業</span>
+                  <div className="p-2 text-center">
+                    <p className="text-xs font-semibold text-gray-900">
+                      {student?.seatNumber}號 {student?.name}
+                    </p>
                   </div>
-                )}
-              </div>
-              {previewUrls.length > 1 && (
-                <p className="text-xs text-gray-500">
-                  共 {previewUrls.length} 張影像
-                </p>
-              )}
-            </div>
-
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-gray-700">
-                  已完成清單
-                </h3>
-                <span className="text-xs text-gray-500">
-                  {completedCount} 份
-                </span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[360px] overflow-auto pr-1">
-                {completedEntries.map(([studentId, imageData]) => {
-                  const student = students.find(s => s.id === studentId)
-                  const coverUrl = imageData.urls[0]
-                  const isActive = studentId === previewEntry?.[0]
-                  return (
-                    <button
-                      key={studentId}
-                      type="button"
-                      onClick={() => setPreviewStudentId(studentId)}
-                      className={`rounded-lg border text-left transition ${
-                        isActive
-                          ? 'border-indigo-400 bg-indigo-50'
-                          : 'border-gray-200 bg-white hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="aspect-square relative overflow-hidden rounded-t-lg">
-                        {coverUrl && (
-                          <img
-                            src={coverUrl}
-                            alt={`${student?.name} 的作業`}
-                            className="w-full h-full object-cover"
-                          />
-                        )}
-                        {imageData.urls.length > 1 && (
-                          <span className="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/60 text-white">
-                            {imageData.urls.length}
-                          </span>
-                        )}
-                      </div>
-                      <div className="px-2 py-1.5 text-[11px] text-gray-700">
-                        {student?.seatNumber}號 {student?.name}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
+                </div>
+              )
+            })}
           </div>
 
           {error && (
@@ -654,9 +481,9 @@ export default function ScannerPage({
           <div className="flex items-center gap-2">
             <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
             <span className="text-sm font-medium">掃描中</span>
-            {completedCount > 0 && (
+            {capturedImages.size > 0 && (
               <span className="ml-2 text-xs text-blue-100">
-                已完成 {completedCount} / {maxSeat}
+                已掃描 {capturedImages.size} / {maxSeat}
               </span>
             )}
           </div>
@@ -690,9 +517,6 @@ export default function ScannerPage({
         <div className="text-[11px] text-white/80">座號 {currentSeat}</div>
         <div className="text-sm font-semibold">
           {currentStudent ? currentStudent.name : '載入中...'}
-        </div>
-        <div className="text-[11px] text-white/80">
-          第 {Math.min(currentStudentCount, requiredPages)}/{requiredPages} 張
         </div>
       </div>
 
@@ -732,7 +556,7 @@ export default function ScannerPage({
         >
           <Camera className="w-6 h-6" />
         </button>
-        {completedCount > 0 && (
+        {capturedImages.size > 0 && (
           <button
             onClick={() => setShowConfirmation(true)}
             className={actionBase}

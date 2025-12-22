@@ -3,39 +3,12 @@ import Dexie, { type EntityTable } from 'dexie'
 /**
  * 標準答案資料結構
  */
-export type QuestionType =
-  | 'truefalse'
-  | 'choice'
-  | 'fill'
-  | 'calc'
-  | 'qa'
-  | 'short'
-  | 'short_sentence'
-  | 'long'
-  | 'essay'
-
-export interface RubricLevel {
-  label: '優秀' | '良好' | '尚可' | '待努力'
-  min: number
-  max: number
-  criteria: string
-}
-
-export interface Rubric {
-  levels: RubricLevel[]
-}
-
-export interface AnswerKeyQuestion {
-  id: string // 例如 "1", "1-1"
-  type?: QuestionType
-  answer?: string
-  referenceAnswer?: string
-  rubric?: Rubric
-  maxScore: number
-}
-
 export interface AnswerKey {
-  questions: AnswerKeyQuestion[]
+  questions: Array<{
+    id: string // 例如 "q1", "q2"
+    answer: string
+    maxScore: number
+  }>
   totalScore: number
 }
 
@@ -86,7 +59,6 @@ export interface GradingDetail {
   reason?: string
   comment?: string
   confidence?: number
-  matchedLevel?: string
 }
 
 /**

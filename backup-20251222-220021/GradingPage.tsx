@@ -1012,18 +1012,14 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             className="bg-white rounded-2xl w-full max-w-6xl h-[90vh] flex overflow-hidden shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex-1 bg-gray-100 relative overflow-auto p-4">
+            <div className="flex-1 bg-gray-100 relative overflow-auto flex items-center justify-center p-4">
               {selectedSubmission.submission.imageBlob && (
-                <div className="min-w-full">
-                  <p className="text-xs text-gray-500 mb-2">
-                    可上下滑動查看完整作業
-                  </p>
-                  <img
-                    src={URL.createObjectURL(selectedSubmission.submission.imageBlob)}
-                    alt="作業大圖"
-                    className="w-full h-auto shadow-lg"
-                  />
-                </div>
+                <img
+                  src={URL.createObjectURL(selectedSubmission.submission.imageBlob)}
+                  alt="作業大圖"
+                  className="max-w-none shadow-lg"
+                  style={{ maxHeight: 'none', maxWidth: '100%' }}
+                />
               )}
             </div>
 

@@ -130,7 +130,6 @@ export interface ExtractAnswerKeyOptions {
 export interface GradeSubmissionOptions {
   strict?: boolean
   domain?: string
-  skipMissingRetry?: boolean
   regrade?: {
     questionIds: string[]
     previousDetails?: Array<{
@@ -143,7 +142,6 @@ export interface GradeSubmissionOptions {
       confidence?: number
     }>
     forceUnrecognizableQuestionIds?: string[]
-    mode?: 'correction' | 'missing'
   }
 }
 
@@ -210,39 +208,16 @@ function buildAnswerKeyPrompt(domain?: string) {
 只回傳符合此型別的純 JSON（無 Markdown/解釋/註解）：
 interface AnswerKey {
   questions: Array<{
-    id: string;      // 題號，如 "1", "1-1"
-    type: "truefalse" | "choice" | "fill" | "calc" | "qa" | "short" | "short_sentence" | "long" | "essay";
-    answer?: string;          // 客觀題：判斷對錯所需的核心字詞/數值
-    referenceAnswer?: string; // 主觀題：範例答案或關鍵要點
-    rubric?: {
-      levels: Array<{
-        label: "優秀" | "良好" | "尚可" | "待努力";
-        min: number;
-        max: number;
-        criteria: string;
-      }>;
-    };
+    id: string;      // 題號，如 "q1", "q2-1"
+    answer: string;  // 判斷對錯所需的核心字詞/數值；可簡寫，但不得新增題目沒有的詞
     maxScore: number;// 該題滿分 > 0
   }>;
   totalScore: number; // 為所有 maxScore 之和
 }
 
 規則（嚴禁憑空捏造）：
-- 題號：圖片有題號就用；看不到則依序用 1, 2...，不可跳號或重複。
-- 題型：請判斷題目類型並填入 type。若不確定，預設填 "fill"。
-  - truefalse：是非題
-  - choice：選擇題
-  - fill：填空/簡答式填寫
-  - calc：計算題
-  - qa：問答題
-  - short：簡答題
-  - short_sentence：短句題
-  - long：長句題
-  - essay：作文
-- 客觀題（truefalse/choice/fill）：填 answer，只留能判斷對錯的核心字詞/數值。
-- 主觀題（calc/qa/short/short_sentence/long/essay）：填 referenceAnswer 與 rubric。
-  - rubric 固定 4 級（優秀/良好/尚可/待努力），分數範圍需落在 1~maxScore。
-  - criteria 請依題目與 referenceAnswer 擬定，簡潔且可判分。
+- 題號：圖片有題號就用；看不到則依序用 q1, q2...，不可跳號或重複。
+- 答案：只留能判斷對錯的核心字詞/數值。選擇題可用選項代號/文字；計算題寫計算結果或必要公式；去除冗詞。不得補寫圖片裡沒有的詞。
 - 配分：圖片有配分直接用；否則估計：選擇題 2-5 分、填充/是非 2-4 分、簡答 5-8 分、申論 8-15 分；不可為 0。
 - totalScore 必須等於所有 maxScore 總和，若不符請重算後回傳。
 - 若完全無法辨識任何題目，回傳 { "questions": [], "totalScore": 0 }。若部分題目模糊，就跳過那些題，不要猜。
@@ -250,50 +225,6 @@ interface AnswerKey {
 
   const hint = domain ? answerKeyDomainHints[domain] : ''
   return hint ? `${base}\n\n【${domain} 額外規則】${hint.trim()}` : base
-}
-
-/**
- * 後處理：檢查並補充缺失的題目
- */
-function fillMissingQuestions(
-  result: GradingResult,
-  answerKey: AnswerKey
-): { result: GradingResult; missingQuestionIds: string[] } {
-  const expectedIds = new Set(answerKey.questions.map(q => q.id))
-  const actualIds = new Set((result.details ?? []).map(d => d.questionId))
-  const missingIds = Array.from(expectedIds).filter(id => !actualIds.has(id))
-
-  if (missingIds.length > 0) {
-    console.warn(`⚠️ AI 遺漏了 ${missingIds.length} 題：${missingIds.join(', ')}`)
-
-    // 補充缺失的題目
-    const missingDetails = missingIds.map(id => {
-      const question = answerKey.questions.find(q => q.id === id)
-      return {
-        questionId: id,
-        studentAnswer: '未作答/無法辨識',
-        score: 0,
-        maxScore: question?.maxScore ?? 0,
-        isCorrect: false,
-        reason: 'AI未能辨識此題答案，已自動標記為0分，需人工複核',
-        confidence: 0
-      }
-    })
-
-    result.details = [...(result.details ?? []), ...missingDetails]
-
-    // 重新計算 totalScore
-    result.totalScore = result.details.reduce((sum, d) => sum + (d.score ?? 0), 0)
-
-    // 標記需要複核
-    result.needsReview = true
-    result.reviewReasons = [
-      ...(result.reviewReasons ?? []),
-      `AI 遺漏 ${missingIds.length} 題，已自動補上（${missingIds.join(', ')}）`
-    ]
-  }
-
-  return { result, missingQuestionIds: missingIds }
 }
 
 /**
@@ -322,25 +253,14 @@ export async function gradeSubmission(
 
     if (answerKey) {
       // 情境 1：已經有結構化 AnswerKey
-      const questionIds = answerKey.questions.map(q => q.id).join(', ')
       prompt += `
 
 下面是本次作業的標準答案與配分（JSON 格式）：
 ${JSON.stringify(answerKey)}
 
 請嚴格依照這份 AnswerKey 逐題批改：
-- **必須輸出所有題號**：${questionIds}（共 ${answerKey.questions.length} 題）
-- 即使學生未作答、空白、或答案完全無法辨識，也必須為該題輸出一條記錄：
-  * studentAnswer 填 "未作答" 或 "無法辨識"
-  * score = 0
-  * isCorrect = false
-  * confidence 可設為 100（因為確實沒寫或確實看不清）
 - 每一題都要輸出是否正確與得分。
-- 題號 id 以 AnswerKey 中的 "id" 為主（例如 "1", "1-1"）。
-- 客觀題（truefalse/choice/fill）使用 answer 判斷對錯。
-- 主觀題（calc/qa/short/short_sentence/long/essay）使用 referenceAnswer 與 rubric 判分：
-  - 分數需落在 rubric 對應等級的 min~max 區間。
-  - reason 請寫出「符合哪個等級」與對應 criteria。
+- 題號 id 以 AnswerKey 中的 "id" 為主（例如 "q1", "q2-1"）。
 - 學生答案只要清楚寫出關鍵字（例如「黑潮」「黃海」「6/7」等），即使字跡不完美也視為正確。
 - 相同的錯誤答案出現在不同題目時，要分別根據各題題意判斷是否錯誤。
 `.trim()
@@ -484,13 +404,12 @@ ${lines}
   "totalScore": 整數（0 到本份作業總分。若沒有 AnswerKey，可用 0-100）,
   "details": [
     {
-      "questionId": "題號（如 1, 1-1）",
+      "questionId": "題號（如 q1, q2-1）",
       "studentAnswer": "完整還原學生實際寫的內容，包括錯字或無法辨識的部分",
       "isCorrect": true 或 false,
       "score": 已給分數,
       "maxScore": 該題滿分,
-      "reason": "為什麼判定對或錯（簡短說明，著重在概念與規則；主觀題需對應 rubric）",
-      "matchedLevel": "主觀題可選：優秀/良好/尚可/待努力",
+      "reason": "為什麼判定對或錯（簡短說明，著重在概念與規則）",
       "confidence": 0-100（擷取學生答案時的猶豫程度）
     }
   ],
@@ -521,7 +440,7 @@ ${lines}
       .replace(/```json|```/g, '')
       .trim()
 
-    let parsed = JSON.parse(text) as GradingResult
+    const parsed = JSON.parse(text) as GradingResult
 
     const reviewReasons: string[] = []
     if (!parsed.details || !Array.isArray(parsed.details)) {
@@ -546,94 +465,6 @@ ${lines}
 
     parsed.needsReview = reviewReasons.length > 0
     parsed.reviewReasons = reviewReasons
-
-    // 步驟 2：後處理補漏（如果有 AnswerKey）
-    let missingQuestionIds: string[] = []
-    if (answerKey && !options?.regrade?.mode) {
-      const fillResult = fillMissingQuestions(parsed, answerKey)
-      parsed = fillResult.result
-      missingQuestionIds = fillResult.missingQuestionIds
-    }
-
-    // 步驟 3：自動重試缺失的題目（除非明確跳過）
-    if (
-      missingQuestionIds.length > 0 &&
-      !options?.skipMissingRetry &&
-      !options?.regrade?.mode
-    ) {
-      console.log(`🔄 自動重試批改缺失的 ${missingQuestionIds.length} 題...`)
-
-      try {
-        const retryResult = await gradeSubmission(
-          submissionImage,
-          answerKeyImage,
-          answerKey,
-          {
-            ...options,
-            skipMissingRetry: true, // 防止無限遞迴
-            regrade: {
-              questionIds: missingQuestionIds,
-              previousDetails: parsed.details,
-              mode: 'missing'
-            }
-          }
-        )
-
-        // 合併重試結果
-        if (retryResult.details && Array.isArray(retryResult.details)) {
-          const retryDetailsMap = new Map(
-            retryResult.details.map(d => [d.questionId, d])
-          )
-
-          parsed.details = (parsed.details ?? []).map(detail => {
-            if (
-              missingQuestionIds.includes(detail.questionId ?? '') &&
-              retryDetailsMap.has(detail.questionId ?? '')
-            ) {
-              const retryDetail = retryDetailsMap.get(detail.questionId ?? '')
-              // 只有當重試結果不是空答案時才替換
-              if (
-                retryDetail &&
-                retryDetail.studentAnswer !== '未作答/無法辨識' &&
-                retryDetail.studentAnswer !== '未作答' &&
-                retryDetail.studentAnswer !== '無法辨識'
-              ) {
-                console.log(`✅ 重試成功辨識題目 ${detail.questionId}`)
-                return retryDetail
-              }
-            }
-            return detail
-          })
-
-          // 重新計算 totalScore
-          parsed.totalScore = parsed.details.reduce(
-            (sum, d) => sum + (d.score ?? 0),
-            0
-          )
-
-          // 更新 reviewReasons
-          const stillMissingIds = (parsed.details ?? [])
-            .filter(
-              d =>
-                missingQuestionIds.includes(d.questionId ?? '') &&
-                (d.studentAnswer === '未作答/無法辨識' ||
-                  d.studentAnswer === '未作答' ||
-                  d.studentAnswer === '無法辨識')
-            )
-            .map(d => d.questionId)
-
-          if (stillMissingIds.length < missingQuestionIds.length) {
-            parsed.reviewReasons = (parsed.reviewReasons ?? []).map(reason =>
-              reason.includes('AI 遺漏')
-                ? `AI 遺漏 ${missingQuestionIds.length} 題，重試後仍有 ${stillMissingIds.length} 題無法辨識（${stillMissingIds.join(', ')}）`
-                : reason
-            )
-          }
-        }
-      } catch (retryError) {
-        console.warn('⚠️ 重試批改失敗:', retryError)
-      }
-    }
 
     return parsed
   } catch (error) {

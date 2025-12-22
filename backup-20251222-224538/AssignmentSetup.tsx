@@ -69,7 +69,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [answerKeyFile, setAnswerKeyFile] = useState<File | null>(null)
   const [isExtractingAnswerKey, setIsExtractingAnswerKey] = useState(false)
   const [answerKeyError, setAnswerKeyError] = useState<string | null>(null)
-  const [answerKeyNotice, setAnswerKeyNotice] = useState<string | null>(null)
 
   const [isLoading, setIsLoading] = useState(true)
   const [isAssignmentsLoading, setIsAssignmentsLoading] = useState(false)
@@ -86,16 +85,12 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [editingAnswerKey, setEditingAnswerKey] = useState<AnswerKey | null>(
     null
   )
-  const [editingClassroomId, setEditingClassroomId] = useState('')
   const [editingDomain, setEditingDomain] = useState('')
   const [isSavingAnswerKey, setIsSavingAnswerKey] = useState(false)
   const [editAnswerKeyFile, setEditAnswerKeyFile] = useState<File | null>(null)
   const [isExtractingAnswerKeyEdit, setIsExtractingAnswerKeyEdit] =
     useState(false)
   const [editAnswerKeyError, setEditAnswerKeyError] = useState<string | null>(
-    null
-  )
-  const [editAnswerKeyNotice, setEditAnswerKeyNotice] = useState<string | null>(
     null
   )
 
@@ -152,7 +147,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAnswerKey(null)
     setAnswerKeyFile(null)
     setAnswerKeyError(null)
-    setAnswerKeyNotice(null)
   }
 
   const buildRubricRanges = (maxScore: number) => {
@@ -191,11 +185,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     return normalizeRubric(undefined, maxScore)
   }
 
-  const sanitizeQuestionId = (value: string | undefined, fallback: string) => {
-    const base = (value ?? '').trim() || fallback
-    return base.replace(/^[qQ](?=\d)/, '')
-  }
-
   const normalizeAnswerKey = (ak: AnswerKey): AnswerKey => {
     const questions = (ak.questions ?? []).map((q, idx) => {
       const maxScore =
@@ -206,7 +195,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
       if (isSubjectiveType(type)) {
         return {
-          id: sanitizeQuestionId(q.id, `${idx + 1}`),
+          id: q.id ?? `q${idx + 1}`,
           type,
           maxScore,
           referenceAnswer: q.referenceAnswer ?? '',
@@ -216,7 +205,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       }
 
       return {
-        id: sanitizeQuestionId(q.id, `${idx + 1}`),
+        id: q.id ?? `q${idx + 1}`,
         type,
         maxScore,
         answer: q.answer ?? ''
@@ -226,42 +215,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     return { questions, totalScore }
   }
 
-  const mergeAnswerKeys = (current: AnswerKey | null, incoming: AnswerKey) => {
-    const base = current ? normalizeAnswerKey(current) : { questions: [], totalScore: 0 }
-    const normalizedIncoming = normalizeAnswerKey(incoming)
-    const questions = [...base.questions]
-    const usedIds = new Set(questions.map((q) => q.id))
-    let hasDuplicate = false
-
-    normalizedIncoming.questions.forEach((question) => {
-      let nextId = question.id
-      if (usedIds.has(nextId)) {
-        hasDuplicate = true
-        let suffix = 2
-        while (usedIds.has(`${nextId}-${suffix}`)) {
-          suffix += 1
-        }
-        nextId = `${nextId}-${suffix}`
-      }
-      usedIds.add(nextId)
-      questions.push({ ...question, id: nextId })
-    })
-
-    const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
-    const notice = hasDuplicate
-      ? '偵測到重複題號，已自動加上後綴（-2、-3）。請確認題號是否對應試卷。'
-      : null
-
-    return { merged: { questions, totalScore }, notice }
-  }
-
   const extractAndSetAnswerKey = async (
     file: File,
-    currentKey: AnswerKey | null,
     onSet: (key: AnswerKey) => void,
     setBusy: (busy: boolean) => void,
     setErr: (msg: string | null) => void,
-    setNotice: (msg: string | null) => void,
     domain?: string
   ) => {
     const fileType = getFileType(file)
@@ -286,9 +244,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       }
 
       const extracted = await extractAnswerKeyFromImage(imageBlob, { domain })
-      const { merged, notice } = mergeAnswerKeys(currentKey, extracted)
-      onSet(merged)
-      setNotice(notice)
+      onSet(normalizeAnswerKey(extracted))
     } catch (err) {
       console.error('AI 讀取標準答案失敗', err)
       setErr('AI 讀取失敗，請確認檔案或稍後再試')
@@ -345,7 +301,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     const file = e.target.files?.[0] || null
     setAnswerKeyFile(file)
     setAnswerKeyError(null)
-    setAnswerKeyNotice(null)
   }
 
   const handleExtractAnswerKey = async () => {
@@ -355,11 +310,9 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     }
     await extractAndSetAnswerKey(
       answerKeyFile,
-      answerKey,
       (ak) => setAnswerKey(ak),
       setIsExtractingAnswerKey,
       setAnswerKeyError,
-      setAnswerKeyNotice,
       assignmentDomain
     )
   }
@@ -371,11 +324,9 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     }
     await extractAndSetAnswerKey(
       editAnswerKeyFile,
-      editingAnswerKey,
       (ak) => setEditingAnswerKey(ak),
       setIsExtractingAnswerKeyEdit,
       setEditAnswerKeyError,
-      setEditAnswerKeyNotice,
       editingDomain
     )
   }
@@ -436,7 +387,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       }
     setEditingAnswerAssignment(assignment)
     setEditingAnswerKey(normalizeAnswerKey(ak))
-    setEditingClassroomId(assignment.classroomId)
     setEditingDomain(assignment.domain ?? '')
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
@@ -447,21 +397,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAnswerKeyModalOpen(false)
     setEditingAnswerAssignment(null)
     setEditingAnswerKey(null)
-    setEditingClassroomId('')
     setEditingDomain('')
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
-    setEditAnswerKeyNotice(null)
     setIsExtractingAnswerKeyEdit(false)
     setIsSavingAnswerKey(false)
   }
 
   const saveAnswerKey = async () => {
     if (!editingAnswerAssignment || !editingAnswerKey) return
-    if (!editingClassroomId) {
-      setEditAnswerKeyError('請選擇班級')
-      return
-    }
     if (!editingDomain) {
       setEditAnswerKeyError('請選擇作業領域')
       return
@@ -470,27 +414,17 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setIsSavingAnswerKey(true)
       await db.assignments.update(editingAnswerAssignment.id, {
         answerKey: editingAnswerKey,
-        domain: editingDomain,
-        classroomId: editingClassroomId
+        domain: editingDomain
       })
-      setAssignments((prev) => {
-        if (selectedClassroomId && editingClassroomId !== selectedClassroomId) {
-          return prev.filter((a) => a.id !== editingAnswerAssignment.id)
-        }
-        return prev.map((a) =>
+      setAssignments((prev) =>
+        prev.map((a) =>
           a.id === editingAnswerAssignment.id
-            ? {
-                ...a,
-                answerKey: editingAnswerKey,
-                domain: editingDomain,
-                classroomId: editingClassroomId
-              }
+            ? { ...a, answerKey: editingAnswerKey, domain: editingDomain }
             : a
         )
-      })
+      )
       setEditingAnswerAssignment({
         ...editingAnswerAssignment,
-        classroomId: editingClassroomId,
         domain: editingDomain,
         answerKey: editingAnswerKey
       })
@@ -510,7 +444,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
     const base = current ?? { questions: [], totalScore: 0 }
     const newQuestion = {
-      id: `${base.questions.length + 1}`,
+      id: `q${base.questions.length + 1}`,
       type: 'fill' as QuestionType,
       answer: '',
       maxScore: 0
@@ -571,7 +505,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         item.referenceAnswer = item.referenceAnswer ?? ''
       }
     } else if (field === 'id') {
-      item.id = sanitizeQuestionId(value, item.id || `${index + 1}`)
+      item.id = value
     } else if (field === 'answer') {
       item.answer = value
     } else if (field === 'referenceAnswer') {
@@ -916,7 +850,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     htmlFor="totalPages"
                     className="block text-sm font-medium text-gray-700 mb-2"
                   >
-                    拍照或批次分割頁數
+                    總頁數
                   </label>
                   <div className="relative">
                     <input
@@ -963,9 +897,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     disabled={isSubmitting || isExtractingAnswerKey}
                     className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                   />
-                  <p className="text-xs text-gray-500 mt-1">
-                    可多次上傳，題目會合併；重複題號會自動加上後綴。
-                  </p>
                   <button
                     type="button"
                     onClick={handleExtractAnswerKey}
@@ -976,13 +907,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   >
                     {isExtractingAnswerKey
                       ? 'AI 解析中…'
-                      : '使用 AI 解析並合併答案'}
+                      : '使用 AI 從試卷建立答案'}
                   </button>
                   {answerKeyError && (
                     <p className="text-sm text-red-600 mt-1">{answerKeyError}</p>
-                  )}
-                  {answerKeyNotice && (
-                    <p className="text-xs text-amber-600 mt-1">{answerKeyNotice}</p>
                   )}
                 </div>
 
@@ -1204,10 +1132,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 </h2>
                 <p className="text-xs text-gray-500">
                   {editingAnswerAssignment.title} ·{' '}
-                  {classrooms.find(
-                    (c) =>
-                      c.id === (editingClassroomId || editingAnswerAssignment.classroomId)
-                  )?.name || '未知班級'}
+                  {classrooms.find((c) => c.id === editingAnswerAssignment.classroomId)?.name ||
+                    '未知班級'}
                 </p>
               </div>
               <button
@@ -1220,25 +1146,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
             </div>
 
             <div className="flex-1 overflow-auto px-4 py-3 space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  所屬班級
-                </label>
-                <select
-                  value={editingClassroomId}
-                  onChange={(e) => setEditingClassroomId(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all bg-white"
-                  disabled={isSavingAnswerKey}
-                >
-                  <option value="">請選擇</option>
-                  {classrooms.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   作業領域
@@ -1268,14 +1175,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   onChange={(e) => {
                     setEditAnswerKeyFile(e.target.files?.[0] || null)
                     setEditAnswerKeyError(null)
-                    setEditAnswerKeyNotice(null)
                   }}
                   disabled={isExtractingAnswerKeyEdit}
                   className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  可多次上傳，題目會合併；重複題號會自動加上後綴。
-                </p>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -1287,7 +1190,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   >
                     {isExtractingAnswerKeyEdit
                       ? 'AI 解析中…'
-                      : '使用 AI 解析並合併答案'}
+                      : '使用 AI 重新產生答案'}
                   </button>
                   <button
                     type="button"
@@ -1300,11 +1203,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 {editAnswerKeyError && (
                   <p className="text-sm text-red-600 mt-1">
                     {editAnswerKeyError}
-                  </p>
-                )}
-                {editAnswerKeyNotice && (
-                  <p className="text-xs text-amber-600 mt-1">
-                    {editAnswerKeyNotice}
                   </p>
                 )}
               </div>

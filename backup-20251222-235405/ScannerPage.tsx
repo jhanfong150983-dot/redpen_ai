@@ -75,7 +75,6 @@ export default function ScannerPage({
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLandscape, setIsLandscape] = useState(false)
-  const [previewStudentId, setPreviewStudentId] = useState<string | null>(null)
 
   // 調試：打印接收到的 props
   useEffect(() => {
@@ -469,25 +468,6 @@ export default function ScannerPage({
     ([, data]) => data.blobs.length >= requiredPages
   )
   const completedCount = completedEntries.length
-  const previewEntry =
-    completedEntries.find(([studentId]) => studentId === previewStudentId) ??
-    completedEntries[0]
-  const previewStudent = previewEntry
-    ? students.find((s) => s.id === previewEntry[0]) ?? null
-    : null
-  const previewUrls = previewEntry ? previewEntry[1].urls : []
-
-  useEffect(() => {
-    if (!showConfirmation) return
-    const firstId = completedEntries[0]?.[0] ?? null
-    if (!firstId) return
-    if (
-      !previewStudentId ||
-      !completedEntries.some(([studentId]) => studentId === previewStudentId)
-    ) {
-      setPreviewStudentId(firstId)
-    }
-  }, [showConfirmation, completedEntries, previewStudentId])
 
   // 如果顯示確認視窗
   if (showConfirmation) {
@@ -500,89 +480,34 @@ export default function ScannerPage({
           </p>
 
           {/* 縮圖網格 */}
-          <div className="grid lg:grid-cols-[1.4fr_1fr] gap-4 mb-6">
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex flex-col gap-3 min-h-[320px]">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-gray-700">作業預覽</h3>
-                {previewStudent && (
-                  <span className="text-xs text-gray-500">
-                    {previewStudent.seatNumber}號 {previewStudent.name}
-                  </span>
-                )}
-              </div>
-              <div className="flex-1 border border-dashed border-gray-200 rounded-xl flex items-center justify-center bg-white/70">
-                {previewUrls.length > 0 ? (
-                  <div className="flex gap-3 overflow-auto px-2 py-2">
-                    {previewUrls.map((url, idx) => (
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4 mb-6">
+            {completedEntries.map(([studentId, imageData]) => {
+              const student = students.find(s => s.id === studentId)
+              const coverUrl = imageData.urls[0]
+              return (
+                <div key={studentId} className="bg-gray-100 rounded-lg overflow-hidden">
+                  <div className="aspect-square relative">
+                    {coverUrl && (
                       <img
-                        key={`${previewStudent?.id ?? 'preview'}-${idx}`}
-                        src={url}
-                        alt={`第 ${idx + 1} 張預覽`}
-                        className="w-40 h-56 sm:w-48 sm:h-64 rounded-lg shadow-md object-contain bg-white border border-gray-200"
+                        src={coverUrl}
+                        alt={`${student?.name} 的作業`}
+                        className="w-full h-full object-cover"
                       />
-                    ))}
+                    )}
+                    {imageData.urls.length > 1 && (
+                      <span className="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/60 text-white">
+                        {imageData.urls.length}
+                      </span>
+                    )}
                   </div>
-                ) : (
-                  <div className="text-xs text-gray-400 flex flex-col items-center gap-1">
-                    <AlertCircle className="w-4 h-4" />
-                    <span>尚未選擇預覽作業</span>
+                  <div className="p-2 text-center">
+                    <p className="text-xs font-semibold text-gray-900">
+                      {student?.seatNumber}號 {student?.name}
+                    </p>
                   </div>
-                )}
-              </div>
-              {previewUrls.length > 1 && (
-                <p className="text-xs text-gray-500">
-                  共 {previewUrls.length} 張影像
-                </p>
-              )}
-            </div>
-
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-gray-700">
-                  已完成清單
-                </h3>
-                <span className="text-xs text-gray-500">
-                  {completedCount} 份
-                </span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[360px] overflow-auto pr-1">
-                {completedEntries.map(([studentId, imageData]) => {
-                  const student = students.find(s => s.id === studentId)
-                  const coverUrl = imageData.urls[0]
-                  const isActive = studentId === previewEntry?.[0]
-                  return (
-                    <button
-                      key={studentId}
-                      type="button"
-                      onClick={() => setPreviewStudentId(studentId)}
-                      className={`rounded-lg border text-left transition ${
-                        isActive
-                          ? 'border-indigo-400 bg-indigo-50'
-                          : 'border-gray-200 bg-white hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="aspect-square relative overflow-hidden rounded-t-lg">
-                        {coverUrl && (
-                          <img
-                            src={coverUrl}
-                            alt={`${student?.name} 的作業`}
-                            className="w-full h-full object-cover"
-                          />
-                        )}
-                        {imageData.urls.length > 1 && (
-                          <span className="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/60 text-white">
-                            {imageData.urls.length}
-                          </span>
-                        )}
-                      </div>
-                      <div className="px-2 py-1.5 text-[11px] text-gray-700">
-                        {student?.seatNumber}號 {student?.name}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
+                </div>
+              )
+            })}
           </div>
 
           {error && (

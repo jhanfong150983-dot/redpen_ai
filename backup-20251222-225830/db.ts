@@ -26,7 +26,7 @@ export interface Rubric {
 }
 
 export interface AnswerKeyQuestion {
-  id: string // 例如 "1", "1-1"
+  id: string // 例如 "q1", "q2"
   type?: QuestionType
   answer?: string
   referenceAnswer?: string

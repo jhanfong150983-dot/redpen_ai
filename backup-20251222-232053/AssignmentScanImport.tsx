@@ -16,7 +16,6 @@ export default function AssignmentScanImport({
   const [assignment, setAssignment] = useState<Assignment | null>(null)
   const [classroom, setClassroom] = useState<Classroom | null>(null)
   const [maxSeat, setMaxSeat] = useState<number>(30)
-  const [pagesPerStudent, setPagesPerStudent] = useState<number>(1)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,7 +30,6 @@ export default function AssignmentScanImport({
           return
         }
         setAssignment(a)
-        setPagesPerStudent(Math.max(1, a.totalPages || 1))
 
         const c = await db.classrooms.get(a.classroomId)
         if (!c) {
@@ -71,7 +69,6 @@ export default function AssignmentScanImport({
           classroomId={assignment.classroomId}
           assignmentId={assignment.id}
           maxSeat={maxSeat}
-          pagesPerStudent={pagesPerStudent}
         />
       </div>
     )
@@ -94,3 +91,4 @@ export default function AssignmentScanImport({
     </div>
   )
 }
+

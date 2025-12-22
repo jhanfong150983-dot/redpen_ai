@@ -14,9 +14,7 @@ import {
   generateId,
   type AnswerKey,
   type Assignment,
-  type Classroom,
-  type QuestionType,
-  type Rubric
+  type Classroom
 } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
@@ -37,39 +35,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [assignmentDomain, setAssignmentDomain] = useState('')
   const domainOptions = ['國語', '數學', '社會', '自然', '英語', '其他']
 
-  const questionTypeOptions: Array<{ value: QuestionType; label: string }> = [
-    { value: 'truefalse', label: '是非' },
-    { value: 'choice', label: '選擇' },
-    { value: 'fill', label: '填空' },
-    { value: 'calc', label: '計算' },
-    { value: 'qa', label: '問答' },
-    { value: 'short', label: '簡答' },
-    { value: 'short_sentence', label: '短句' },
-    { value: 'long', label: '長句' },
-    { value: 'essay', label: '作文' }
-  ]
-  const rubricLabels: Rubric['levels'][number]['label'][] = [
-    '優秀',
-    '良好',
-    '尚可',
-    '待努力'
-  ]
-  const subjectiveTypes = new Set<QuestionType>([
-    'calc',
-    'qa',
-    'short',
-    'short_sentence',
-    'long',
-    'essay'
-  ])
-  const isSubjectiveType = (type?: QuestionType) =>
-    type ? subjectiveTypes.has(type) : false
-
   const [answerKey, setAnswerKey] = useState<AnswerKey | null>(null)
   const [answerKeyFile, setAnswerKeyFile] = useState<File | null>(null)
   const [isExtractingAnswerKey, setIsExtractingAnswerKey] = useState(false)
   const [answerKeyError, setAnswerKeyError] = useState<string | null>(null)
-  const [answerKeyNotice, setAnswerKeyNotice] = useState<string | null>(null)
 
   const [isLoading, setIsLoading] = useState(true)
   const [isAssignmentsLoading, setIsAssignmentsLoading] = useState(false)
@@ -86,16 +55,12 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [editingAnswerKey, setEditingAnswerKey] = useState<AnswerKey | null>(
     null
   )
-  const [editingClassroomId, setEditingClassroomId] = useState('')
   const [editingDomain, setEditingDomain] = useState('')
   const [isSavingAnswerKey, setIsSavingAnswerKey] = useState(false)
   const [editAnswerKeyFile, setEditAnswerKeyFile] = useState<File | null>(null)
   const [isExtractingAnswerKeyEdit, setIsExtractingAnswerKeyEdit] =
     useState(false)
   const [editAnswerKeyError, setEditAnswerKeyError] = useState<string | null>(
-    null
-  )
-  const [editAnswerKeyNotice, setEditAnswerKeyNotice] = useState<string | null>(
     null
   )
 
@@ -152,117 +117,26 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAnswerKey(null)
     setAnswerKeyFile(null)
     setAnswerKeyError(null)
-    setAnswerKeyNotice(null)
-  }
-
-  const buildRubricRanges = (maxScore: number) => {
-    const safeMax = Math.max(1, Math.round(maxScore))
-    const excellentMin = Math.max(1, Math.ceil(safeMax * 0.9))
-    const goodMin = Math.max(1, Math.ceil(safeMax * 0.7))
-    const okMin = Math.max(1, Math.ceil(safeMax * 0.5))
-
-    const excellent = { min: excellentMin, max: safeMax }
-    const good = { min: goodMin, max: Math.max(goodMin, excellentMin - 1) }
-    const ok = { min: okMin, max: Math.max(okMin, goodMin - 1) }
-    const needs = { min: 1, max: Math.max(1, okMin - 1) }
-
-    return [excellent, good, ok, needs]
-  }
-
-  const normalizeRubric = (rubric: Rubric | undefined, maxScore: number): Rubric => {
-    const ranges = buildRubricRanges(maxScore)
-    const existing = new Map(
-      (rubric?.levels ?? []).map((level) => [level.label, level])
-    )
-    const levels = rubricLabels.map((label, index) => {
-      const current = existing.get(label)
-      const range = ranges[index]
-      return {
-        label,
-        min: current?.min ?? range.min,
-        max: current?.max ?? range.max,
-        criteria: current?.criteria ?? ''
-      }
-    })
-    return { levels }
-  }
-
-  const buildDefaultRubric = (maxScore: number): Rubric => {
-    return normalizeRubric(undefined, maxScore)
-  }
-
-  const sanitizeQuestionId = (value: string | undefined, fallback: string) => {
-    const base = (value ?? '').trim() || fallback
-    return base.replace(/^[qQ](?=\d)/, '')
   }
 
   const normalizeAnswerKey = (ak: AnswerKey): AnswerKey => {
-    const questions = (ak.questions ?? []).map((q, idx) => {
-      const maxScore =
+    const questions = (ak.questions ?? []).map((q, idx) => ({
+      id: q.id ?? `q${idx + 1}`,
+      answer: q.answer ?? '',
+      maxScore:
         typeof q.maxScore === 'number' && Number.isFinite(q.maxScore)
           ? q.maxScore
           : 0
-      const type = (q.type ?? 'fill') as QuestionType
-
-      if (isSubjectiveType(type)) {
-        return {
-          id: sanitizeQuestionId(q.id, `${idx + 1}`),
-          type,
-          maxScore,
-          referenceAnswer: q.referenceAnswer ?? '',
-          rubric: normalizeRubric(q.rubric, maxScore),
-          answer: q.answer ?? ''
-        }
-      }
-
-      return {
-        id: sanitizeQuestionId(q.id, `${idx + 1}`),
-        type,
-        maxScore,
-        answer: q.answer ?? ''
-      }
-    })
+    }))
     const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
     return { questions, totalScore }
   }
 
-  const mergeAnswerKeys = (current: AnswerKey | null, incoming: AnswerKey) => {
-    const base = current ? normalizeAnswerKey(current) : { questions: [], totalScore: 0 }
-    const normalizedIncoming = normalizeAnswerKey(incoming)
-    const questions = [...base.questions]
-    const usedIds = new Set(questions.map((q) => q.id))
-    let hasDuplicate = false
-
-    normalizedIncoming.questions.forEach((question) => {
-      let nextId = question.id
-      if (usedIds.has(nextId)) {
-        hasDuplicate = true
-        let suffix = 2
-        while (usedIds.has(`${nextId}-${suffix}`)) {
-          suffix += 1
-        }
-        nextId = `${nextId}-${suffix}`
-      }
-      usedIds.add(nextId)
-      questions.push({ ...question, id: nextId })
-    })
-
-    const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
-    const notice = hasDuplicate
-      ? '偵測到重複題號，已自動加上後綴（-2、-3）。請確認題號是否對應試卷。'
-      : null
-
-    return { merged: { questions, totalScore }, notice }
-  }
-
   const extractAndSetAnswerKey = async (
     file: File,
-    currentKey: AnswerKey | null,
     onSet: (key: AnswerKey) => void,
     setBusy: (busy: boolean) => void,
-    setErr: (msg: string | null) => void,
-    setNotice: (msg: string | null) => void,
-    domain?: string
+    setErr: (msg: string | null) => void
   ) => {
     const fileType = getFileType(file)
     if (fileType !== 'image' && fileType !== 'pdf') {
@@ -285,10 +159,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         })
       }
 
-      const extracted = await extractAnswerKeyFromImage(imageBlob, { domain })
-      const { merged, notice } = mergeAnswerKeys(currentKey, extracted)
-      onSet(merged)
-      setNotice(notice)
+      const extracted = await extractAnswerKeyFromImage(imageBlob)
+      onSet(normalizeAnswerKey(extracted))
     } catch (err) {
       console.error('AI 讀取標準答案失敗', err)
       setErr('AI 讀取失敗，請確認檔案或稍後再試')
@@ -345,7 +217,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     const file = e.target.files?.[0] || null
     setAnswerKeyFile(file)
     setAnswerKeyError(null)
-    setAnswerKeyNotice(null)
   }
 
   const handleExtractAnswerKey = async () => {
@@ -355,12 +226,9 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     }
     await extractAndSetAnswerKey(
       answerKeyFile,
-      answerKey,
       (ak) => setAnswerKey(ak),
       setIsExtractingAnswerKey,
-      setAnswerKeyError,
-      setAnswerKeyNotice,
-      assignmentDomain
+      setAnswerKeyError
     )
   }
 
@@ -371,12 +239,9 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     }
     await extractAndSetAnswerKey(
       editAnswerKeyFile,
-      editingAnswerKey,
       (ak) => setEditingAnswerKey(ak),
       setIsExtractingAnswerKeyEdit,
-      setEditAnswerKeyError,
-      setEditAnswerKeyNotice,
-      editingDomain
+      setEditAnswerKeyError
     )
   }
 
@@ -436,7 +301,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       }
     setEditingAnswerAssignment(assignment)
     setEditingAnswerKey(normalizeAnswerKey(ak))
-    setEditingClassroomId(assignment.classroomId)
     setEditingDomain(assignment.domain ?? '')
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
@@ -447,21 +311,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAnswerKeyModalOpen(false)
     setEditingAnswerAssignment(null)
     setEditingAnswerKey(null)
-    setEditingClassroomId('')
     setEditingDomain('')
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
-    setEditAnswerKeyNotice(null)
     setIsExtractingAnswerKeyEdit(false)
     setIsSavingAnswerKey(false)
   }
 
   const saveAnswerKey = async () => {
     if (!editingAnswerAssignment || !editingAnswerKey) return
-    if (!editingClassroomId) {
-      setEditAnswerKeyError('請選擇班級')
-      return
-    }
     if (!editingDomain) {
       setEditAnswerKeyError('請選擇作業領域')
       return
@@ -470,27 +328,17 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setIsSavingAnswerKey(true)
       await db.assignments.update(editingAnswerAssignment.id, {
         answerKey: editingAnswerKey,
-        domain: editingDomain,
-        classroomId: editingClassroomId
+        domain: editingDomain
       })
-      setAssignments((prev) => {
-        if (selectedClassroomId && editingClassroomId !== selectedClassroomId) {
-          return prev.filter((a) => a.id !== editingAnswerAssignment.id)
-        }
-        return prev.map((a) =>
+      setAssignments((prev) =>
+        prev.map((a) =>
           a.id === editingAnswerAssignment.id
-            ? {
-                ...a,
-                answerKey: editingAnswerKey,
-                domain: editingDomain,
-                classroomId: editingClassroomId
-              }
+            ? { ...a, answerKey: editingAnswerKey, domain: editingDomain }
             : a
         )
-      })
+      )
       setEditingAnswerAssignment({
         ...editingAnswerAssignment,
-        classroomId: editingClassroomId,
         domain: editingDomain,
         answerKey: editingAnswerKey
       })
@@ -510,8 +358,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
     const base = current ?? { questions: [], totalScore: 0 }
     const newQuestion = {
-      id: `${base.questions.length + 1}`,
-      type: 'fill' as QuestionType,
+      id: `q${base.questions.length + 1}`,
       answer: '',
       maxScore: 0
     }
@@ -533,7 +380,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const updateQuestionField = (
     target: 'create' | 'edit',
     index: number,
-    field: 'id' | 'answer' | 'referenceAnswer' | 'type' | 'maxScore',
+    field: 'id' | 'answer' | 'maxScore',
     value: string
   ) => {
     const current = target === 'create' ? answerKey : editingAnswerKey
@@ -541,75 +388,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
     const base = current ?? { questions: [], totalScore: 0 }
     const questions = [...base.questions]
-    const existing = questions[index]
-    const item = {
-      ...existing,
-      id: existing?.id ?? '',
-      type: (existing?.type ?? 'fill') as QuestionType,
-      answer: existing?.answer ?? '',
-      maxScore: existing?.maxScore ?? 0
-    }
+    const item = questions[index] ?? { id: '', answer: '', maxScore: 0 }
 
     if (field === 'maxScore') {
       const num = Math.max(0, parseInt(value || '0', 10) || 0)
-      item.maxScore = num
-      if (isSubjectiveType(item.type)) {
-        item.rubric = normalizeRubric(item.rubric, num)
-      }
-    } else if (field === 'type') {
-      const nextType = value as QuestionType
-      const wasSubjective = isSubjectiveType(item.type)
-      const isSubjective = isSubjectiveType(nextType)
-      item.type = nextType
-
-      if (isSubjective) {
-        if (!item.referenceAnswer) item.referenceAnswer = ''
-        if (item.maxScore <= 0) item.maxScore = 10
-        item.rubric = normalizeRubric(item.rubric, item.maxScore)
-      } else if (wasSubjective) {
-        item.rubric = undefined
-        item.referenceAnswer = item.referenceAnswer ?? ''
-      }
-    } else if (field === 'id') {
-      item.id = sanitizeQuestionId(value, item.id || `${index + 1}`)
-    } else if (field === 'answer') {
-      item.answer = value
-    } else if (field === 'referenceAnswer') {
-      item.referenceAnswer = value
-    }
-
-    questions[index] = item
-    const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
-    setter({ questions, totalScore })
-  }
-
-  const updateRubricLevel = (
-    target: 'create' | 'edit',
-    questionIndex: number,
-    levelIndex: number,
-    field: 'min' | 'max' | 'criteria',
-    value: string
-  ) => {
-    const current = target === 'create' ? answerKey : editingAnswerKey
-    const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
-    if (!current) return
-
-    const questions = [...current.questions]
-    const item = { ...questions[questionIndex] }
-    const rubric = normalizeRubric(item.rubric, item.maxScore || 0)
-    const levels = [...rubric.levels]
-    const level = { ...levels[levelIndex] }
-
-    if (field === 'criteria') {
-      level.criteria = value
+      questions[index] = { ...item, maxScore: num }
     } else {
-      const num = Math.max(0, parseInt(value || '0', 10) || 0)
-      level[field] = num
+      questions[index] = { ...item, [field]: value }
     }
 
-    levels[levelIndex] = level
-    item.rubric = { levels }
-    questions[questionIndex] = item
     const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
     setter({ questions, totalScore })
   }
@@ -916,7 +703,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     htmlFor="totalPages"
                     className="block text-sm font-medium text-gray-700 mb-2"
                   >
-                    拍照或批次分割頁數
+                    總頁數
                   </label>
                   <div className="relative">
                     <input
@@ -963,9 +750,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     disabled={isSubmitting || isExtractingAnswerKey}
                     className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                   />
-                  <p className="text-xs text-gray-500 mt-1">
-                    可多次上傳，題目會合併；重複題號會自動加上後綴。
-                  </p>
                   <button
                     type="button"
                     onClick={handleExtractAnswerKey}
@@ -976,13 +760,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   >
                     {isExtractingAnswerKey
                       ? 'AI 解析中…'
-                      : '使用 AI 解析並合併答案'}
+                      : '使用 AI 從試卷建立答案'}
                   </button>
                   {answerKeyError && (
                     <p className="text-sm text-red-600 mt-1">{answerKeyError}</p>
-                  )}
-                  {answerKeyNotice && (
-                    <p className="text-xs text-amber-600 mt-1">{answerKeyNotice}</p>
                   )}
                 </div>
 
@@ -996,169 +777,58 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                         總分：{answerKey.totalScore}
                       </span>
                     </div>
-                    <div className="space-y-3 max-h-56 overflow-auto pr-1">
-                      {answerKey.questions.map((q, idx) => {
-                        const typeValue = (q.type ?? 'fill') as QuestionType
-                        const isSubjective = isSubjectiveType(typeValue)
-                        const rubric = q.rubric ?? buildDefaultRubric(q.maxScore || 0)
-
-                        return (
-                          <div
-                            key={q.id || idx}
-                            className="space-y-2 text-xs bg-white rounded-lg px-3 py-2 border border-gray-200"
+                    <div className="space-y-2 max-h-48 overflow-auto pr-1">
+                      {answerKey.questions.map((q, idx) => (
+                        <div
+                          key={q.id || idx}
+                          className="grid grid-cols-[auto,1fr,auto,auto] gap-2 items-center text-xs bg-white rounded-lg px-3 py-2 border border-gray-200"
+                        >
+                          <input
+                            className="w-14 px-1 py-1 border border-gray-300 rounded"
+                            value={q.id}
+                            onChange={(e) =>
+                              updateQuestionField(
+                                'create',
+                                idx,
+                                'id',
+                                e.target.value
+                              )
+                            }
+                          />
+                          <input
+                            className="w-full px-2 py-1 border border-gray-300 rounded"
+                            value={q.answer}
+                            onChange={(e) =>
+                              updateQuestionField(
+                                'create',
+                                idx,
+                                'answer',
+                                e.target.value
+                              )
+                            }
+                          />
+                          <input
+                            type="number"
+                            className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
+                            value={q.maxScore}
+                            onChange={(e) =>
+                              updateQuestionField(
+                                'create',
+                                idx,
+                                'maxScore',
+                                e.target.value
+                              )
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeQuestionRow('create', idx)}
+                            className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50"
                           >
-                            <div className="grid grid-cols-[auto,1fr,auto,auto] gap-2 items-center">
-                              <input
-                                className="w-14 px-1 py-1 border border-gray-300 rounded"
-                                value={q.id}
-                                onChange={(e) =>
-                                  updateQuestionField(
-                                    'create',
-                                    idx,
-                                    'id',
-                                    e.target.value
-                                  )
-                                }
-                              />
-                              <select
-                                className="w-full px-2 py-1 border border-gray-300 rounded bg-white"
-                                value={typeValue}
-                                onChange={(e) =>
-                                  updateQuestionField(
-                                    'create',
-                                    idx,
-                                    'type',
-                                    e.target.value
-                                  )
-                                }
-                              >
-                                {questionTypeOptions.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <input
-                                type="number"
-                                className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
-                                value={q.maxScore}
-                                onChange={(e) =>
-                                  updateQuestionField(
-                                    'create',
-                                    idx,
-                                    'maxScore',
-                                    e.target.value
-                                  )
-                                }
-                              />
-                              <button
-                                type="button"
-                                onClick={() => removeQuestionRow('create', idx)}
-                                className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
-                            </div>
-
-                            {!isSubjective && (
-                              <div className="grid grid-cols-[70px_1fr] gap-2 items-center">
-                                <span className="text-[11px] text-gray-500">標準答案</span>
-                                <input
-                                  className="w-full px-2 py-1 border border-gray-300 rounded"
-                                  value={q.answer ?? ''}
-                                  onChange={(e) =>
-                                    updateQuestionField(
-                                      'create',
-                                      idx,
-                                      'answer',
-                                      e.target.value
-                                    )
-                                  }
-                                />
-                              </div>
-                            )}
-
-                            {isSubjective && (
-                              <div className="space-y-2">
-                                <div className="grid grid-cols-[70px_1fr] gap-2 items-start">
-                                  <span className="text-[11px] text-gray-500">參考答案</span>
-                                  <textarea
-                                    rows={2}
-                                    className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
-                                    value={q.referenceAnswer ?? ''}
-                                    onChange={(e) =>
-                                      updateQuestionField(
-                                        'create',
-                                        idx,
-                                        'referenceAnswer',
-                                        e.target.value
-                                      )
-                                    }
-                                  />
-                                </div>
-                                <div>
-                                  <div className="text-[11px] text-gray-500 mb-1">
-                                    基規準（四級）
-                                  </div>
-                                  <div className="space-y-1">
-                                    {rubric.levels.map((level, levelIndex) => (
-                                      <div
-                                        key={level.label}
-                                        className="grid grid-cols-[56px_44px_44px_1fr] gap-2 items-center"
-                                      >
-                                        <span className="text-[11px] text-gray-600">
-                                          {level.label}
-                                        </span>
-                                        <input
-                                          type="number"
-                                          className="px-1 py-1 border border-gray-300 rounded text-right"
-                                          value={level.min}
-                                          onChange={(e) =>
-                                            updateRubricLevel(
-                                              'create',
-                                              idx,
-                                              levelIndex,
-                                              'min',
-                                              e.target.value
-                                            )
-                                          }
-                                        />
-                                        <input
-                                          type="number"
-                                          className="px-1 py-1 border border-gray-300 rounded text-right"
-                                          value={level.max}
-                                          onChange={(e) =>
-                                            updateRubricLevel(
-                                              'create',
-                                              idx,
-                                              levelIndex,
-                                              'max',
-                                              e.target.value
-                                            )
-                                          }
-                                        />
-                                        <input
-                                          className="px-2 py-1 border border-gray-300 rounded"
-                                          value={level.criteria}
-                                          onChange={(e) =>
-                                            updateRubricLevel(
-                                              'create',
-                                              idx,
-                                              levelIndex,
-                                              'criteria',
-                                              e.target.value
-                                            )
-                                          }
-                                        />
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1204,10 +874,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 </h2>
                 <p className="text-xs text-gray-500">
                   {editingAnswerAssignment.title} ·{' '}
-                  {classrooms.find(
-                    (c) =>
-                      c.id === (editingClassroomId || editingAnswerAssignment.classroomId)
-                  )?.name || '未知班級'}
+                  {classrooms.find((c) => c.id === editingAnswerAssignment.classroomId)?.name ||
+                    '未知班級'}
                 </p>
               </div>
               <button
@@ -1220,25 +888,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
             </div>
 
             <div className="flex-1 overflow-auto px-4 py-3 space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  所屬班級
-                </label>
-                <select
-                  value={editingClassroomId}
-                  onChange={(e) => setEditingClassroomId(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all bg-white"
-                  disabled={isSavingAnswerKey}
-                >
-                  <option value="">請選擇</option>
-                  {classrooms.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   作業領域
@@ -1268,14 +917,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   onChange={(e) => {
                     setEditAnswerKeyFile(e.target.files?.[0] || null)
                     setEditAnswerKeyError(null)
-                    setEditAnswerKeyNotice(null)
                   }}
                   disabled={isExtractingAnswerKeyEdit}
                   className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  可多次上傳，題目會合併；重複題號會自動加上後綴。
-                </p>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -1287,7 +932,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   >
                     {isExtractingAnswerKeyEdit
                       ? 'AI 解析中…'
-                      : '使用 AI 解析並合併答案'}
+                      : '使用 AI 重新產生答案'}
                   </button>
                   <button
                     type="button"
@@ -1302,11 +947,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     {editAnswerKeyError}
                   </p>
                 )}
-                {editAnswerKeyNotice && (
-                  <p className="text-xs text-amber-600 mt-1">
-                    {editAnswerKeyNotice}
-                  </p>
-                )}
               </div>
 
               <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
@@ -1318,159 +958,53 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     總分：{editingAnswerKey.totalScore}
                   </span>
                 </div>
-                <div className="space-y-3 max-h-56 overflow-auto pr-1">
-                  {editingAnswerKey.questions.map((q, idx) => {
-                    const typeValue = (q.type ?? 'fill') as QuestionType
-                    const isSubjective = isSubjectiveType(typeValue)
-                    const rubric = q.rubric ?? buildDefaultRubric(q.maxScore || 0)
-
-                    return (
-                      <div
-                        key={q.id || idx}
-                        className="space-y-2 text-xs bg-white rounded-lg px-3 py-2 border border-gray-200"
+                <div className="space-y-2 max-h-56 overflow-auto pr-1">
+                  {editingAnswerKey.questions.map((q, idx) => (
+                    <div
+                      key={q.id || idx}
+                      className="grid grid-cols-[auto,1fr,auto,auto] gap-2 items-center text-xs bg-white rounded-lg px-3 py-2 border border-gray-200"
+                    >
+                      <input
+                        className="w-14 px-1 py-1 border border-gray-300 rounded"
+                        value={q.id}
+                        onChange={(e) =>
+                          updateQuestionField('edit', idx, 'id', e.target.value)
+                        }
+                      />
+                      <input
+                        className="w-full px-2 py-1 border border-gray-300 rounded"
+                        value={q.answer}
+                        onChange={(e) =>
+                          updateQuestionField(
+                            'edit',
+                            idx,
+                            'answer',
+                            e.target.value
+                          )
+                        }
+                      />
+                      <input
+                        type="number"
+                        className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
+                        value={q.maxScore}
+                        onChange={(e) =>
+                          updateQuestionField(
+                            'edit',
+                            idx,
+                            'maxScore',
+                            e.target.value
+                          )
+                        }
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeQuestionRow('edit', idx)}
+                        className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50"
                       >
-                        <div className="grid grid-cols-[auto,1fr,auto,auto] gap-2 items-center">
-                          <input
-                            className="w-14 px-1 py-1 border border-gray-300 rounded"
-                            value={q.id}
-                            onChange={(e) =>
-                              updateQuestionField('edit', idx, 'id', e.target.value)
-                            }
-                          />
-                          <select
-                            className="w-full px-2 py-1 border border-gray-300 rounded bg-white"
-                            value={typeValue}
-                            onChange={(e) =>
-                              updateQuestionField('edit', idx, 'type', e.target.value)
-                            }
-                          >
-                            {questionTypeOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            type="number"
-                            className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
-                            value={q.maxScore}
-                            onChange={(e) =>
-                              updateQuestionField(
-                                'edit',
-                                idx,
-                                'maxScore',
-                                e.target.value
-                              )
-                            }
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeQuestionRow('edit', idx)}
-                            className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-
-                        {!isSubjective && (
-                          <div className="grid grid-cols-[70px_1fr] gap-2 items-center">
-                            <span className="text-[11px] text-gray-500">標準答案</span>
-                            <input
-                              className="w-full px-2 py-1 border border-gray-300 rounded"
-                              value={q.answer ?? ''}
-                              onChange={(e) =>
-                                updateQuestionField(
-                                  'edit',
-                                  idx,
-                                  'answer',
-                                  e.target.value
-                                )
-                              }
-                            />
-                          </div>
-                        )}
-
-                        {isSubjective && (
-                          <div className="space-y-2">
-                            <div className="grid grid-cols-[70px_1fr] gap-2 items-start">
-                              <span className="text-[11px] text-gray-500">參考答案</span>
-                              <textarea
-                                rows={2}
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
-                                value={q.referenceAnswer ?? ''}
-                                onChange={(e) =>
-                                  updateQuestionField(
-                                    'edit',
-                                    idx,
-                                    'referenceAnswer',
-                                    e.target.value
-                                  )
-                                }
-                              />
-                            </div>
-                            <div>
-                              <div className="text-[11px] text-gray-500 mb-1">
-                                基規準（四級）
-                              </div>
-                              <div className="space-y-1">
-                                {rubric.levels.map((level, levelIndex) => (
-                                  <div
-                                    key={level.label}
-                                    className="grid grid-cols-[56px_44px_44px_1fr] gap-2 items-center"
-                                  >
-                                    <span className="text-[11px] text-gray-600">
-                                      {level.label}
-                                    </span>
-                                    <input
-                                      type="number"
-                                      className="px-1 py-1 border border-gray-300 rounded text-right"
-                                      value={level.min}
-                                      onChange={(e) =>
-                                        updateRubricLevel(
-                                          'edit',
-                                          idx,
-                                          levelIndex,
-                                          'min',
-                                          e.target.value
-                                        )
-                                      }
-                                    />
-                                    <input
-                                      type="number"
-                                      className="px-1 py-1 border border-gray-300 rounded text-right"
-                                      value={level.max}
-                                      onChange={(e) =>
-                                        updateRubricLevel(
-                                          'edit',
-                                          idx,
-                                          levelIndex,
-                                          'max',
-                                          e.target.value
-                                        )
-                                      }
-                                    />
-                                    <input
-                                      className="px-2 py-1 border border-gray-300 rounded"
-                                      value={level.criteria}
-                                      onChange={(e) =>
-                                        updateRubricLevel(
-                                          'edit',
-                                          idx,
-                                          levelIndex,
-                                          'criteria',
-                                          e.target.value
-                                        )
-                                      }
-                                    />
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

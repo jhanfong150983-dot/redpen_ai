@@ -99,11 +99,6 @@ export default function AssignmentList({
     return normalizeRubric(undefined, maxScore)
   }
 
-  const sanitizeQuestionId = (value: string | undefined, fallback: string) => {
-    const base = (value ?? '').trim() || fallback
-    return base.replace(/^[qQ](?=\d)/, '')
-  }
-
   const normalizeAnswerKey = (ak: AnswerKey): AnswerKey => {
     const questions = (ak.questions ?? []).map((q, idx) => {
       const maxScore =
@@ -114,7 +109,7 @@ export default function AssignmentList({
 
       if (isSubjectiveType(type)) {
         return {
-          id: sanitizeQuestionId(q.id, `${idx + 1}`),
+          id: q.id ?? `q${idx + 1}`,
           type,
           maxScore,
           referenceAnswer: q.referenceAnswer ?? '',
@@ -124,7 +119,7 @@ export default function AssignmentList({
       }
 
       return {
-        id: sanitizeQuestionId(q.id, `${idx + 1}`),
+        id: q.id ?? `q${idx + 1}`,
         type,
         maxScore,
         answer: q.answer ?? ''
@@ -164,7 +159,7 @@ export default function AssignmentList({
     } else if (field === 'answer') {
       item.answer = value
     } else {
-      item.id = sanitizeQuestionId(value, item.id || `${index + 1}`)
+      item.id = value
     }
 
     questions[index] = item
@@ -515,7 +510,7 @@ export default function AssignmentList({
                     questions: [
                       ...editingAnswerKey.questions,
                       {
-                        id: `${editingAnswerKey.questions.length + 1}`,
+                        id: `q${editingAnswerKey.questions.length + 1}`,
                         type: 'fill',
                         answer: '',
                         maxScore: 1

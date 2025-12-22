@@ -86,7 +86,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [editingAnswerKey, setEditingAnswerKey] = useState<AnswerKey | null>(
     null
   )
-  const [editingClassroomId, setEditingClassroomId] = useState('')
   const [editingDomain, setEditingDomain] = useState('')
   const [isSavingAnswerKey, setIsSavingAnswerKey] = useState(false)
   const [editAnswerKeyFile, setEditAnswerKeyFile] = useState<File | null>(null)
@@ -436,7 +435,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       }
     setEditingAnswerAssignment(assignment)
     setEditingAnswerKey(normalizeAnswerKey(ak))
-    setEditingClassroomId(assignment.classroomId)
     setEditingDomain(assignment.domain ?? '')
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
@@ -447,7 +445,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAnswerKeyModalOpen(false)
     setEditingAnswerAssignment(null)
     setEditingAnswerKey(null)
-    setEditingClassroomId('')
     setEditingDomain('')
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
@@ -458,10 +455,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
   const saveAnswerKey = async () => {
     if (!editingAnswerAssignment || !editingAnswerKey) return
-    if (!editingClassroomId) {
-      setEditAnswerKeyError('請選擇班級')
-      return
-    }
     if (!editingDomain) {
       setEditAnswerKeyError('請選擇作業領域')
       return
@@ -470,27 +463,17 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setIsSavingAnswerKey(true)
       await db.assignments.update(editingAnswerAssignment.id, {
         answerKey: editingAnswerKey,
-        domain: editingDomain,
-        classroomId: editingClassroomId
+        domain: editingDomain
       })
-      setAssignments((prev) => {
-        if (selectedClassroomId && editingClassroomId !== selectedClassroomId) {
-          return prev.filter((a) => a.id !== editingAnswerAssignment.id)
-        }
-        return prev.map((a) =>
+      setAssignments((prev) =>
+        prev.map((a) =>
           a.id === editingAnswerAssignment.id
-            ? {
-                ...a,
-                answerKey: editingAnswerKey,
-                domain: editingDomain,
-                classroomId: editingClassroomId
-              }
+            ? { ...a, answerKey: editingAnswerKey, domain: editingDomain }
             : a
         )
-      })
+      )
       setEditingAnswerAssignment({
         ...editingAnswerAssignment,
-        classroomId: editingClassroomId,
         domain: editingDomain,
         answerKey: editingAnswerKey
       })
@@ -916,7 +899,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     htmlFor="totalPages"
                     className="block text-sm font-medium text-gray-700 mb-2"
                   >
-                    拍照或批次分割頁數
+                    總頁數
                   </label>
                   <div className="relative">
                     <input
@@ -1204,10 +1187,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 </h2>
                 <p className="text-xs text-gray-500">
                   {editingAnswerAssignment.title} ·{' '}
-                  {classrooms.find(
-                    (c) =>
-                      c.id === (editingClassroomId || editingAnswerAssignment.classroomId)
-                  )?.name || '未知班級'}
+                  {classrooms.find((c) => c.id === editingAnswerAssignment.classroomId)?.name ||
+                    '未知班級'}
                 </p>
               </div>
               <button
@@ -1220,25 +1201,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
             </div>
 
             <div className="flex-1 overflow-auto px-4 py-3 space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  所屬班級
-                </label>
-                <select
-                  value={editingClassroomId}
-                  onChange={(e) => setEditingClassroomId(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all bg-white"
-                  disabled={isSavingAnswerKey}
-                >
-                  <option value="">請選擇</option>
-                  {classrooms.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   作業領域
