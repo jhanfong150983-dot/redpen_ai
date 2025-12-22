@@ -22,6 +22,7 @@ import {
   isGeminiAvailable
 } from '@/lib/gemini'
 import { downloadImageFromSupabase } from '@/lib/supabase-download'
+import { getSubmissionImageUrl } from '@/lib/utils'
 
 interface GradingPageProps {
   assignmentId: string
@@ -869,20 +870,23 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
               >
                 <div className="relative">
                   <div className="aspect-[4/3] bg-gray-100 rounded-t-xl overflow-hidden flex items-center justify-center relative">
-                    {submission?.imageBlob ? (
-                      <img
-                        src={URL.createObjectURL(submission.imageBlob)}
-                        alt="作業縮圖"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : submission?.status === 'synced' ? (
-                      <div className="flex flex-col items-center justify-center text-gray-500">
-                        <ImageIcon className="w-10 h-10 text-blue-500" />
-                        <p className="text-xs text-gray-500">已上傳雲端</p>
-                      </div>
-                    ) : (
-                      <ImageIcon className="w-12 h-12 text-gray-400" />
-                    )}
+                    {(() => {
+                      const imageUrl = getSubmissionImageUrl(submission)
+                      return imageUrl ? (
+                        <img
+                          src={imageUrl}
+                          alt="作業縮圖"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : submission?.status === 'synced' ? (
+                        <div className="flex flex-col items-center justify-center text-gray-500">
+                          <ImageIcon className="w-10 h-10 text-blue-500" />
+                          <p className="text-xs text-gray-500">已上傳雲端</p>
+                        </div>
+                      ) : (
+                        <ImageIcon className="w-12 h-12 text-gray-400" />
+                      )
+                    })()}
                     {status === 'graded' && gradingResult && (
                       <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
                         <div
@@ -1013,18 +1017,28 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex-1 bg-gray-100 relative overflow-auto p-4">
-              {selectedSubmission.submission.imageBlob && (
-                <div className="min-w-full">
-                  <p className="text-xs text-gray-500 mb-2">
-                    可上下滑動查看完整作業
-                  </p>
-                  <img
-                    src={URL.createObjectURL(selectedSubmission.submission.imageBlob)}
-                    alt="作業大圖"
-                    className="w-full h-auto shadow-lg"
-                  />
-                </div>
-              )}
+              {(() => {
+                const imageUrl = getSubmissionImageUrl(selectedSubmission.submission)
+                return imageUrl ? (
+                  <div className="min-w-full">
+                    <p className="text-xs text-gray-500 mb-2">
+                      可上下滑動查看完整作業
+                    </p>
+                    <img
+                      src={imageUrl}
+                      alt="作業大圖"
+                      className="w-full h-auto shadow-lg"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center text-gray-500">
+                      <ImageIcon className="w-16 h-16 mx-auto mb-2" />
+                      <p>圖片不可用</p>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
 
             <div className="w-full max-w-md border-l border-gray-200 flex flex-col bg-white">

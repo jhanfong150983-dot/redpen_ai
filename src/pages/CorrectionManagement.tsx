@@ -3,6 +3,7 @@ import { ArrowLeft, Loader, CheckCircle, Download, Columns } from 'lucide-react'
 import { db } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import type { Assignment, Classroom, Submission } from '@/lib/db'
+import { getSubmissionImageUrl } from '@/lib/utils'
 
 interface CorrectionManagementProps {
   assignmentId: string
@@ -84,7 +85,7 @@ export default function CorrectionManagement({
           if (!mistakes.length) return acc
 
           const student = stu.find((st) => st.id === s.studentId)
-          const imageUrl = s.imageBlob ? URL.createObjectURL(s.imageBlob) : undefined
+          const imageUrl = getSubmissionImageUrl(s) || undefined
 
           const items: CorrectionItem[] = mistakes.map((m) => ({
             id: m.id,
