@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import Webcam from 'react-webcam'
-import { Camera, Mic, MicOff, User, CheckCircle, AlertCircle, Upload } from 'lucide-react'
+import { Camera, Mic, MicOff, CheckCircle, AlertCircle, Upload } from 'lucide-react'
 import { useSeatController } from '@/hooks/useSeatController'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
@@ -27,12 +27,12 @@ export default function ScannerPage({
   const [isCapturing, setIsCapturing] = useState(false)
   const [captureSuccess, setCaptureSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [lastCapturedImage, setLastCapturedImage] = useState<string | null>(null)
 
   // 批量模式：暫存所有學生的圖片
   const [capturedImages, setCapturedImages] = useState<Map<string, { blob: Blob; url: string }>>(new Map())
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isLandscape, setIsLandscape] = useState(false)
 
   // 調試：打印接收到的 props
   useEffect(() => {
@@ -41,6 +41,19 @@ export default function ScannerPage({
     console.log(`   assignmentId: ${assignmentId}`)
     console.log(`   maxSeat: ${maxSeat}`)
   }, [classroomId, assignmentId, maxSeat])
+
+  useEffect(() => {
+    const updateLayout = () => {
+      setIsLandscape(window.innerWidth > window.innerHeight)
+    }
+    updateLayout()
+    window.addEventListener('resize', updateLayout)
+    window.addEventListener('orientationchange', updateLayout)
+    return () => {
+      window.removeEventListener('resize', updateLayout)
+      window.removeEventListener('orientationchange', updateLayout)
+    }
+  }, [])
 
   // 使用座號控制器
   const {
@@ -105,9 +118,6 @@ export default function ScannerPage({
       newMap.set(currentStudent.id, { blob: imageBlob, url: previewUrl })
       return newMap
     })
-
-    // 更新預覽圖片
-    setLastCapturedImage(previewUrl)
 
     console.log(`✅ 已暫存 ${currentStudent.name} 的作業`)
 
@@ -430,6 +440,9 @@ export default function ScannerPage({
     )
   }
 
+  const actionBase =
+    'w-14 h-14 rounded-full border border-white/70 text-white flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10'
+
   return (
     <div className="fixed inset-0 bg-black">
       {/* 隱藏的文件輸入 */}
@@ -464,13 +477,13 @@ export default function ScannerPage({
       )}
 
       {/* 頂部狀態欄 */}
-      <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/70 to-transparent p-3 sm:p-4">
+      <div className="absolute top-0 left-0 right-0 p-3 sm:p-4 text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]">
         <div className="flex items-center justify-between text-white">
           <div className="flex items-center gap-2">
             <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
             <span className="text-sm font-medium">掃描中</span>
             {capturedImages.size > 0 && (
-              <span className="ml-2 text-xs text-blue-100 bg-blue-500/30 border border-blue-400/30 px-2 py-0.5 rounded-full">
+              <span className="ml-2 text-xs text-blue-100">
                 已掃描 {capturedImages.size} / {maxSeat}
               </span>
             )}
@@ -480,10 +493,10 @@ export default function ScannerPage({
           {isVoiceSupported && (
             <button
               onClick={isListening ? stopListening : startListening}
-              className={`p-2 rounded-full transition-colors ${
+              className={`p-2 rounded-full border transition-colors ${
                 isListening
-                  ? 'bg-red-500 hover:bg-red-600'
-                  : 'bg-white/20 hover:bg-white/30'
+                  ? 'border-red-400 text-red-100 hover:border-red-300'
+                  : 'border-white/60 text-white hover:border-white'
               }`}
             >
               {isListening ? (
@@ -496,108 +509,75 @@ export default function ScannerPage({
         </div>
       </div>
 
-      {/* 底部控制面板 */}
-      <div className="absolute bottom-0 left-0 right-0 px-3 pb-4 sm:px-6 sm:pb-6">
-        <div className="bg-black/65 border border-white/10 backdrop-blur-md rounded-2xl p-3 sm:p-5 text-white shadow-2xl">
-          {/* 錯誤提示 */}
-          {error && (
-            <div className="mb-3 p-2.5 bg-red-500/20 border border-red-500/40 rounded-lg flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-red-300 flex-shrink-0" />
-              <span className="text-xs text-red-100">{error}</span>
-            </div>
-          )}
-
-          {/* 學生資訊 */}
-          <div className="flex items-center gap-3">
-            <div className="flex-shrink-0 bg-blue-600/90 rounded-xl px-3 py-2 text-center min-w-[72px]">
-              <div className="text-[10px] text-blue-100">座號</div>
-              <div className="text-2xl font-bold">{currentSeat}</div>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] text-gray-300 flex items-center gap-1">
-                <User className="w-3.5 h-3.5" />
-                當前學生
-              </div>
-              <div className="text-base sm:text-lg font-semibold truncate">
-                {currentStudent ? currentStudent.name : '載入中...'}
-              </div>
-              {capturedImages.size > 0 && (
-                <div className="text-[11px] text-blue-100 mt-1">
-                  已掃描 {capturedImages.size} / {maxSeat} 份作業
-                </div>
-              )}
-            </div>
-            {lastCapturedImage && (
-              <div className="hidden sm:flex flex-col items-center gap-1">
-                <span className="text-[10px] text-gray-300">最近上傳</span>
-                <div className="w-16 h-16 rounded-lg overflow-hidden border border-green-300/50">
-                  <img
-                    src={lastCapturedImage}
-                    alt="預覽"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* 操作按鈕 */}
-          <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <button
-              onClick={triggerFileUpload}
-              disabled={isCapturing || !currentStudent}
-              className={`flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-semibold text-sm transition-all ${
-                isCapturing
-                  ? 'bg-gray-600 cursor-not-allowed'
-                  : currentStudent
-                  ? 'bg-purple-600 hover:bg-purple-700 active:scale-95'
-                  : 'bg-gray-600 cursor-not-allowed'
-              }`}
-            >
-              <Upload className="w-4 h-4" />
-              上傳
-            </button>
-            <button
-              onClick={capture}
-              disabled={isCapturing || !currentStudent}
-              className={`col-span-1 sm:col-span-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-semibold text-sm transition-all ${
-                isCapturing
-                  ? 'bg-gray-600 cursor-not-allowed'
-                  : currentStudent
-                  ? 'bg-green-600 hover:bg-green-700 active:scale-95'
-                  : 'bg-gray-600 cursor-not-allowed'
-              }`}
-            >
-              <Camera className="w-4 h-4" />
-              {isCapturing ? '處理中...' : '拍照'}
-            </button>
-            {capturedImages.size > 0 && (
-              <button
-                onClick={() => setShowConfirmation(true)}
-                className="col-span-2 sm:col-span-1 flex items-center justify-center gap-2 px-3 py-3 rounded-xl font-semibold text-sm bg-orange-600 hover:bg-orange-700 active:scale-95"
-              >
-                <CheckCircle className="w-4 h-4" />
-                送出 ({capturedImages.size})
-              </button>
-            )}
-          </div>
-
-          {/* 語音監聽狀態 */}
-          {isListening && (
-            <div className="mt-3 text-center">
-              <div className="inline-flex items-center gap-2 bg-red-500/20 border border-red-500/40 px-3 py-1.5 rounded-full text-xs">
-                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                語音識別中...
-              </div>
-            </div>
-          )}
-
-          {/* 提示資訊 */}
-          <div className="mt-3 text-center text-[11px] text-gray-300 sm:text-right">
-            拍照 (空格) · 上傳圖片/PDF · {isVoiceSupported ? '語音跳轉座號' : '語音不可用'}
-          </div>
+      {/* 座號 / 名稱資訊 */}
+      <div
+        className={`absolute left-3 ${
+          isLandscape ? 'bottom-4' : 'bottom-24 sm:bottom-28'
+        } text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]`}
+      >
+        <div className="text-[11px] text-white/80">座號 {currentSeat}</div>
+        <div className="text-sm font-semibold">
+          {currentStudent ? currentStudent.name : '載入中...'}
         </div>
       </div>
+
+      {/* 錯誤提示 */}
+      {error && (
+        <div className="absolute left-1/2 top-16 -translate-x-1/2 text-xs text-red-200 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)]">
+          <span className="inline-flex items-center gap-1">
+            <AlertCircle className="w-3.5 h-3.5" />
+            {error}
+          </span>
+        </div>
+      )}
+
+      {/* 操作按鈕：直式在下方、橫式在右側 */}
+      <div
+        className={`absolute ${
+          isLandscape
+            ? 'right-4 top-1/2 -translate-y-1/2 flex-col'
+            : 'left-0 right-0 bottom-5 flex-row justify-center'
+        } flex items-center gap-3`}
+      >
+        <button
+          onClick={triggerFileUpload}
+          disabled={isCapturing || !currentStudent}
+          className={actionBase}
+          aria-label="上傳作業"
+          title="上傳"
+        >
+          <Upload className="w-5 h-5" />
+        </button>
+        <button
+          onClick={capture}
+          disabled={isCapturing || !currentStudent}
+          className={`${actionBase} w-16 h-16`}
+          aria-label="拍照"
+          title="拍照"
+        >
+          <Camera className="w-6 h-6" />
+        </button>
+        {capturedImages.size > 0 && (
+          <button
+            onClick={() => setShowConfirmation(true)}
+            className={actionBase}
+            aria-label="送出作業"
+            title="送出"
+          >
+            <CheckCircle className="w-5 h-5" />
+          </button>
+        )}
+      </div>
+
+      {/* 語音監聽狀態 */}
+      {isListening && (
+        <div className="absolute right-3 bottom-3 text-xs text-red-200 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)]">
+          <span className="inline-flex items-center gap-2">
+            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+            語音識別中...
+          </span>
+        </div>
+      )}
     </div>
   )
 }
