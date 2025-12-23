@@ -125,6 +125,9 @@ let currentModelName = 'gemini-2.5-pro'
 
 export interface ExtractAnswerKeyOptions {
   domain?: string
+  priorWeightTypes?: import('./db').QuestionCategoryType[] // Prior Weight：優先級順序
+
+  // @deprecated 已廢棄，請使用 priorWeightTypes 替代
   allowedQuestionTypes?: import('./db').QuestionType[]
 }
 
@@ -148,22 +151,6 @@ export interface GradeSubmissionOptions {
   }
 }
 
-
-const answerKeyDomainHints: Record<string, string> = {
-  '國語': `
-- 以關鍵字、成語或句子重點為主，避免抄全文。
-- 文意題避免主觀推論，只抽取題幹可判斷的詞。`,
-  '數學': `
-- 計算題保留最終數值與必要單位；需公式時留核心公式。
-- 幾何/代數題可列主要結論，避免冗長過程。`,
-  '社會': `
-- 名詞、年代、地點、人物要精確；時間題保留年份或朝代。
-- 請專注於同音異字的錯誤，特別是地名。用字錯誤視為錯誤。例如：九州和九洲。`,
-  '自然': `
-- 保留關鍵名詞、數值、實驗結論；單位必須保留，化學式/符號需完整。`,
-  '英語': `
-- 拼字需精確；大小寫與標點依題幹要求；完形/選擇用正確選項或必要單字短語。`
-}
 
 const gradingDomainHints: Record<string, string> = {
   '國語': `
@@ -204,81 +191,95 @@ async function getRecentAnswerExtractionCorrections(
   }
 }
 
-function buildAnswerKeyPrompt(domain?: string, allowedQuestionTypes?: import('./db').QuestionType[]) {
-  const questionTypeLabels: Record<import('./db').QuestionType, string> = {
-    truefalse: '是非題',
-    choice: '選擇題',
-    fill: '填空/簡答式填寫',
-    calc: '計算題',
-    qa: '問答題',
-    short: '簡答題',
-    short_sentence: '短句題',
-    long: '長句題',
-    essay: '作文'
-  }
-
-  let typeInstruction = `- 題型：請判斷題目類型並填入 type。若不確定，預設填 "fill"。
-  - truefalse：是非題
-  - choice：選擇題
-  - fill：填空/簡答式填寫
-  - calc：計算題
-  - qa：問答題
-  - short：簡答題
-  - short_sentence：短句題
-  - long：長句題
-  - essay：作文`
-
-  if (allowedQuestionTypes && allowedQuestionTypes.length > 0) {
-    const allowedLabels = allowedQuestionTypes.map(t => `${t}（${questionTypeLabels[t]}）`).join('、')
-    typeInstruction = `- 題型：本作業的題型範圍限定為【${allowedLabels}】，請在此範圍內判斷題目類型並填入 type。
-  - 嚴格限制：type 只能從這些類型中選擇：${allowedQuestionTypes.map(t => `"${t}"`).join(' | ')}
-  - 若難以判斷，請選擇最接近的類型`
-  }
-
+function buildAnswerKeyPrompt(domain?: string, priorWeightTypes?: import('./db').QuestionCategoryType[]) {
   const base = `
-你是一位嚴謹的老師，要從一張「標準答案／解答本」圖片整理出可機器批改的標準答案表。
+從標準答案圖片提取可機器批改的答案表。回傳純 JSON（無 Markdown）：
 
-只回傳符合此型別的純 JSON（無 Markdown/解釋/註解）：
-interface AnswerKey {
-  questions: Array<{
-    id: string;      // 題號，如 "1", "1-1"
-    type: "truefalse" | "choice" | "fill" | "calc" | "qa" | "short" | "short_sentence" | "long" | "essay";
-    answer?: string;          // 客觀題：判斷對錯所需的核心字詞/數值
-    referenceAnswer?: string; // 主觀題：範例答案或關鍵要點
-    maxScore: number;         // 該題滿分 > 0
-    
-    detectedType?: 1 | 2 | 3; // 1=精確、2=模糊、3=評價
-    detectionReason?: string; // 判定理由（可選）
-    acceptableAnswers?: string[]; // Type 2 專用：同義詞清單
-    rubricsDimensions?: Array<{   // Type 3 專用：評分維度
-      name: string;     // 維度名稱
-      maxScore: number; // 該維度滿分
-      criteria: string; // 評分標準
-    }>;
-  }>;
-  totalScore: number; // 為所有 maxScore 之和
+{
+  "questions": [{
+    "id": "1",           // 題號
+    "type": 1 | 2 | 3,   // 題型分類（必填）
+    "maxScore": 5,       // 滿分
+
+    // Type 1 專用：標準答案
+    "answer": "正確答案",
+
+    // Type 2 專用：可接受的答案變體
+    "referenceAnswer": "範例答案",
+    "acceptableAnswers": ["同義詞1", "同義詞2"],
+
+    // Type 3 專用：評分規準
+    "referenceAnswer": "評分要點",
+    // 有標準答案+思考過程時：
+    "rubricsDimensions": [
+      {"name": "計算過程", "maxScore": 3, "criteria": "步驟清晰"},
+      {"name": "最終答案", "maxScore": 2, "criteria": "答案正確"}
+    ],
+    // 純評價題時：
+    "rubric": {
+      "levels": [
+        {"label": "優秀", "min": 9, "max": 10, "criteria": "邏輯清晰完整"},
+        {"label": "良好", "min": 7, "max": 8, "criteria": "大致正確"},
+        {"label": "尚可", "min": 5, "max": 6, "criteria": "部分正確"},
+        {"label": "待努力", "min": 1, "max": 4, "criteria": "多處錯誤"}
+      ]
+    },
+
+    // AI偏離提醒
+    "aiDivergedFromPrior": false,
+    "aiOriginalDetection": 1
+  }],
+  "totalScore": 50  // 所有題目滿分總和
 }
 
-規則（嚴禁憑空捏造）：
-- 題號：圖片有題號就用；看不到則依序用 1, 2...，不可跳號或重複。
-${typeInstruction}
-- 客觀題（truefalse/choice）：填 answer，只留能判斷對錯的核心字詞/數值。
-- 模糊題（fill/short/short_sentence）：填 referenceAnswer 與 acceptableAnswers 或簡單評分標準。
-- 主觀題（calc/qa/long/essay）：填 referenceAnswer 與 rubricsDimensions。
-- 配分：圖片有配分直接用；否則估計：選擇題 2-5 分、填充/是非 2-4 分、簡答 5-8 分、申論 8-15 分；不可為 0。
-- totalScore 必須等於所有 maxScore 總和，若不符請重算後回傳。
-- 若完全無法辨識任何題目，回傳 { "questions": [], "totalScore": 0 }。若部分題目模糊，就跳過那些題。
+【題型分類標準】
+- Type 1（唯一答案）：精確匹配，答案唯一且不可替換（如：2+3=5、選擇A）
+- Type 2（多答案可接受）：核心答案固定但允許不同表述（如：「光合作用」vs「植物製造養分」）
+- Type 3（依表現給分）：開放式或計算題，需評分規準
+  · 計算題：用 rubricsDimensions，維度通常包括「計算過程」和「最終答案」
+  · 申論題：有明確答案要點時用 rubricsDimensions（如：「列舉三個優點」）
+            純評價題時用 rubric 4級評價（如：「你對此事的看法」）
 
-【Type 判定（可選，若判定困難可省略）】
-- Type 1（精確）：唯一絕對答案（如 2+3=5），填 answer 即可。例：是非題、選擇題。
-- Type 2（模糊）：核心答案唯一但表述多元（如「玉山」vs「Yushan」），填 acceptableAnswers 同義詞清單。例：填空、簡答、短句。
-- Type 3（評價）：開放式題目或計算題需 rubricsDimensions 多維度評分。
-  - 計算題：維度包括「計算過程」和「最終答案」。
-  - 申論題：維度為相關評分標準（如邏輯、完整性等）。
+【規則】
+- 題號：圖片有就用，無則1, 2, 3...（不可跳號）
+- 配分：圖片有就用，無則估計（是非/選擇2-5分，簡答5-8分，申論8-15分）
+- totalScore = 所有 maxScore 總和
+- 無法辨識時回傳 {"questions": [], "totalScore": 0}
 `.trim()
 
-  const hint = domain ? answerKeyDomainHints[domain] : ''
-  return hint ? `${base}\n\n【${domain} 額外規則】${hint.trim()}` : base
+  // Prior Weight 提示
+  let priorHint = ''
+  if (priorWeightTypes && priorWeightTypes.length > 0) {
+    const typeLabels = priorWeightTypes.map((t, i) => {
+      const priority = i === 0 ? '最優先' : i === 1 ? '次優先' : '最後'
+      const typeName = t === 1 ? 'Type 1（唯一答案）' : t === 2 ? 'Type 2（多答案可接受）' : 'Type 3（依表現給分）'
+      return `${priority}：${typeName}`
+    }).join('、')
+
+    priorHint = `\n\n【Prior Weight - 教師指定題型偏好】
+教師指定此作業的題型優先級：${typeLabels}
+
+請優先按此順序判斷，但若遇到強烈證據顯示不符時（例如明顯的申論題但教師優先Type 1），可偏離並設定：
+- "aiDivergedFromPrior": true
+- "aiOriginalDetection": <你的判斷類型>
+
+注意：只在強烈證據時才偏離，一般情況應遵循教師的Prior Weight。`
+  }
+
+  // 領域提示（精簡版）
+  const domainHints: Record<string, string> = {
+    '國語': '關鍵字優先，避免抄全文',
+    '數學': '數值+單位完整，公式需核心部分',
+    '社會': '專注同音異字（如：九州≠九洲）',
+    '自然': '名詞/數值/單位必須完整',
+    '英語': '拼字/大小寫需精確'
+  }
+
+  const domainHint = domain && domainHints[domain]
+    ? `\n\n【${domain}提示】${domainHints[domain]}`
+    : ''
+
+  return base + priorHint + domainHint
 }
 
 /**
@@ -742,7 +743,17 @@ export async function extractAnswerKeyFromImage(
   console.log('🧾 開始從答案卷圖片抽取 AnswerKey...')
   const imageBase64 = await blobToBase64(answerSheetImage)
 
-  const prompt = buildAnswerKeyPrompt(opts?.domain, opts?.allowedQuestionTypes)
+  // 向後兼容：如果有 allowedQuestionTypes，遷移為 priorWeightTypes
+  let priorWeightTypes = opts?.priorWeightTypes
+  if (!priorWeightTypes && opts?.allowedQuestionTypes && opts.allowedQuestionTypes.length > 0) {
+    const { migrateLegacyQuestionType } = await import('./db')
+    priorWeightTypes = Array.from(
+      new Set(opts.allowedQuestionTypes.map(migrateLegacyQuestionType))
+    ).sort() as import('./db').QuestionCategoryType[]
+    console.log('📦 已自動遷移 allowedQuestionTypes 為 priorWeightTypes:', priorWeightTypes)
+  }
+
+  const prompt = buildAnswerKeyPrompt(opts?.domain, priorWeightTypes)
 
   const text = (await generateGeminiText(currentModelName, [
     prompt,
@@ -752,6 +763,51 @@ export async function extractAnswerKeyFromImage(
     .trim()
 
   return JSON.parse(text) as AnswerKey
+}
+
+/**
+ * 重新分析被標記的題目
+ * 只針對 needsReanalysis === true 的題目重新分析
+ */
+export async function reanalyzeQuestions(
+  answerSheetImage: Blob,
+  markedQuestions: import('./db').AnswerKeyQuestion[],
+  domain?: string,
+  priorWeightTypes?: import('./db').QuestionCategoryType[]
+): Promise<import('./db').AnswerKeyQuestion[]> {
+  if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
+
+  if (markedQuestions.length === 0) {
+    return []
+  }
+
+  console.log(`🔄 重新分析 ${markedQuestions.length} 題...`)
+
+  const imageBase64 = await blobToBase64(answerSheetImage)
+
+  // 特殊 Prompt：只針對指定題號重新分析
+  const questionIds = markedQuestions.map(q => q.id).join(', ')
+  const basePrompt = buildAnswerKeyPrompt(domain, priorWeightTypes)
+
+  const reanalyzePrompt = `${basePrompt}
+
+【重新分析模式】
+只重新分析以下題號：${questionIds}
+其他題目請忽略，不要輸出。
+
+請仔細辨識這些題目的內容，重新判斷類型並提取答案。`
+
+  const text = (await generateGeminiText(currentModelName, [
+    reanalyzePrompt,
+    { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } }
+  ]))
+    .replace(/```json|```/g, '')
+    .trim()
+
+  const result = JSON.parse(text) as import('./db').AnswerKey
+  console.log(`✅ 重新分析完成，共 ${result.questions.length} 題`)
+
+  return result.questions
 }
 
 

@@ -7,7 +7,9 @@ import {
   ArrowLeft,
   AlertCircle,
   X,
-  Loader
+  Loader,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react'
 import { NumericInput } from '@/components/NumericInput'
 import {
@@ -17,11 +19,14 @@ import {
   type Assignment,
   type Classroom,
   type QuestionType,
-  type Rubric
+  type QuestionCategoryType,
+  type AnswerKeyQuestion,
+  type Rubric,
+  type RubricDimension
 } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
-import { extractAnswerKeyFromImage } from '@/lib/gemini'
+import { extractAnswerKeyFromImage, reanalyzeQuestions } from '@/lib/gemini'
 import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
 import { compressImageFile } from '@/lib/imageCompression'
 
@@ -37,46 +42,18 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [assignmentTitle, setAssignmentTitle] = useState('')
   const [totalPages, setTotalPages] = useState(1)
   const [assignmentDomain, setAssignmentDomain] = useState('')
-  const [allowedQuestionTypes, setAllowedQuestionTypes] = useState<QuestionType[]>([])
+
+  // Prior Weight：整份作業大部分題目屬性（優先級順序）
+  const [priorWeightTypes, setPriorWeightTypes] = useState<QuestionCategoryType[]>([])
+
   const domainOptions = ['國語', '數學', '社會', '自然', '英語', '其他']
 
-  interface QuestionTypeOption {
-    value: QuestionType
-    label: string
-    category: 1 | 2 | 3
-    categoryLabel: string
-    description: string
-  }
-
-  const questionTypeOptions: QuestionTypeOption[] = [
-    // Type 1：精確匹配
-    { value: 'truefalse', label: '是非', category: 1, categoryLabel: '客觀題（精確）', description: '單一絕對答案' },
-    { value: 'choice', label: '選擇', category: 1, categoryLabel: '客觀題（精確）', description: '單一絕對答案' },
-    // Type 2：模糊匹配
-    { value: 'fill', label: '填空', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
-    { value: 'short', label: '簡答', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
-    { value: 'short_sentence', label: '短句', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
-    // Type 3：評價
-    { value: 'calc', label: '計算', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
-    { value: 'qa', label: '問答', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
-    { value: 'long', label: '長句', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
-    { value: 'essay', label: '作文', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' }
-  ]
   const rubricLabels: Rubric['levels'][number]['label'][] = [
     '優秀',
     '良好',
     '尚可',
     '待努力'
   ]
-  const subjectiveTypes = new Set<QuestionType>([
-    'calc',
-    'qa',
-    'long',
-    'essay'
-  ])
-  const isSubjectiveType = (type?: QuestionType) =>
-    type ? subjectiveTypes.has(type) : false
-
   const [answerKey, setAnswerKey] = useState<AnswerKey | null>(null)
   const [answerKeyFile, setAnswerKeyFile] = useState<File | null>(null)
   const [isExtractingAnswerKey, setIsExtractingAnswerKey] = useState(false)
@@ -100,9 +77,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   )
   const [editingClassroomId, setEditingClassroomId] = useState('')
   const [editingDomain, setEditingDomain] = useState('')
-  const [editingAllowedQuestionTypes, setEditingAllowedQuestionTypes] = useState<QuestionType[]>([])
+  const [editingPriorWeightTypes, setEditingPriorWeightTypes] = useState<QuestionCategoryType[]>([])
   const [isSavingAnswerKey, setIsSavingAnswerKey] = useState(false)
+  const [isReanalyzing, setIsReanalyzing] = useState(false)
   const [editAnswerKeyFile, setEditAnswerKeyFile] = useState<File | null>(null)
+  const [editAnswerSheetImage, setEditAnswerSheetImage] = useState<Blob | null>(null)
   const [isExtractingAnswerKeyEdit, setIsExtractingAnswerKeyEdit] =
     useState(false)
   const [editAnswerKeyError, setEditAnswerKeyError] = useState<string | null>(
@@ -162,11 +141,40 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAssignmentTitle('')
     setTotalPages(1)
     setAssignmentDomain('')
-    setAllowedQuestionTypes([])
+    setPriorWeightTypes([])
     setAnswerKey(null)
     setAnswerKeyFile(null)
     setAnswerKeyError(null)
     setAnswerKeyNotice(null)
+  }
+
+  // Prior Weight 管理函數
+  const togglePriorWeight = (type: QuestionCategoryType) => {
+    setPriorWeightTypes(prev => {
+      if (prev.includes(type)) {
+        return prev.filter(t => t !== type)
+      } else {
+        return [...prev, type]
+      }
+    })
+  }
+
+  const removePriorWeight = (type: QuestionCategoryType) => {
+    setPriorWeightTypes(prev => prev.filter(t => t !== type))
+  }
+
+  const toggleEditingPriorWeight = (type: QuestionCategoryType) => {
+    setEditingPriorWeightTypes(prev => {
+      if (prev.includes(type)) {
+        return prev.filter(t => t !== type)
+      } else {
+        return [...prev, type]
+      }
+    })
+  }
+
+  const removeEditingPriorWeight = (type: QuestionCategoryType) => {
+    setEditingPriorWeightTypes(prev => prev.filter(t => t !== type))
   }
 
   const buildRubricRanges = (maxScore: number) => {
@@ -216,25 +224,38 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         typeof q.maxScore === 'number' && Number.isFinite(q.maxScore)
           ? q.maxScore
           : 0
-      const type = (q.type ?? 'fill') as QuestionType
 
-      if (isSubjectiveType(type)) {
-        return {
-          id: sanitizeQuestionId(q.id, `${idx + 1}`),
-          type,
-          maxScore,
-          referenceAnswer: q.referenceAnswer ?? '',
-          rubric: normalizeRubric(q.rubric, maxScore),
-          answer: q.answer ?? ''
+      // Convert old QuestionType to QuestionCategoryType if needed
+      const questionType = typeof q.type === 'number'
+        ? q.type
+        : q.type === 'truefalse' || q.type === 'choice'
+          ? 1
+          : q.type === 'fill' || q.type === 'short' || q.type === 'short_sentence'
+            ? 2
+            : 3
+
+      const baseQuestion: AnswerKeyQuestion = {
+        id: sanitizeQuestionId(q.id, `${idx + 1}`),
+        type: questionType as QuestionCategoryType,
+        maxScore
+      }
+
+      // Add type-specific fields
+      if (questionType === 1) {
+        baseQuestion.answer = q.answer ?? ''
+      } else if (questionType === 2) {
+        baseQuestion.referenceAnswer = q.referenceAnswer ?? ''
+        baseQuestion.acceptableAnswers = q.acceptableAnswers ?? []
+      } else if (questionType === 3) {
+        baseQuestion.referenceAnswer = q.referenceAnswer ?? ''
+        if (q.rubricsDimensions) {
+          baseQuestion.rubricsDimensions = q.rubricsDimensions
+        } else {
+          baseQuestion.rubric = normalizeRubric(q.rubric, maxScore)
         }
       }
 
-      return {
-        id: sanitizeQuestionId(q.id, `${idx + 1}`),
-        type,
-        maxScore,
-        answer: q.answer ?? ''
-      }
+      return baseQuestion
     })
     const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
     return { questions, totalScore }
@@ -277,9 +298,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setErr: (msg: string | null) => void,
     setNotice: (msg: string | null) => void,
     domain?: string,
-    allowedTypes?: QuestionType[]
+    priorWeights?: QuestionCategoryType[],
+    onImageBlobReady?: (blob: Blob) => void
   ) => {
-    console.log('📋 開始提取標準答案...', { fileName: file.name, domain, allowedTypes })
+    console.log('📋 開始提取標準答案...', { fileName: file.name, domain, priorWeights })
     
     const fileType = getFileType(file)
     if (fileType !== 'image' && fileType !== 'pdf') {
@@ -341,10 +363,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
       }
 
+      // Save image blob for re-analysis if callback provided
+      if (onImageBlobReady) {
+        onImageBlobReady(imageBlob)
+      }
+
       console.log('🧠 呼叫 Gemini API 提取標準答案...')
       const extracted = await extractAnswerKeyFromImage(imageBlob, {
         domain,
-        allowedQuestionTypes: allowedTypes
+        priorWeightTypes: priorWeights
       })
       console.log('✅ AI 提取完成', { questionCount: extracted.questions.length, totalScore: extracted.totalScore })
       
@@ -380,6 +407,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setError('頁數需介於 1-100')
       return
     }
+    if (priorWeightTypes.length === 0) {
+      setError('請至少選擇一種題型屬性（Prior Weight）')
+      return
+    }
 
     setIsSubmitting(true)
     try {
@@ -389,7 +420,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         title: assignmentTitle.trim(),
         totalPages,
         domain: assignmentDomain,
-        allowedQuestionTypes: allowedQuestionTypes.length > 0 ? allowedQuestionTypes : undefined,
+        priorWeightTypes,
         answerKey: answerKey || undefined
       }
       await db.assignments.add(assignment)
@@ -425,7 +456,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setAnswerKeyError,
       setAnswerKeyNotice,
       assignmentDomain,
-      allowedQuestionTypes
+      priorWeightTypes
     )
   }
 
@@ -442,8 +473,57 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setEditAnswerKeyError,
       setEditAnswerKeyNotice,
       editingDomain,
-      editingAllowedQuestionTypes
+      editingPriorWeightTypes,
+      (blob) => setEditAnswerSheetImage(blob)
     )
+  }
+
+  const handleReanalyzeMarkedQuestions = async () => {
+    if (!editingAnswerKey || !editAnswerSheetImage) return
+
+    const markedQuestions = editingAnswerKey.questions.filter(q => q.needsReanalysis)
+    if (markedQuestions.length === 0) return
+
+    const confirmed = window.confirm(
+      `確定要重新分析 ${markedQuestions.length} 題嗎？\n` +
+      `題號：${markedQuestions.map(q => q.id).join(', ')}\n\n` +
+      `重新分析後將覆蓋現有答案內容。`
+    )
+
+    if (!confirmed) return
+
+    setIsReanalyzing(true)
+    setEditAnswerKeyError(null)
+
+    try {
+      const reanalyzedQuestions = await reanalyzeQuestions(
+        editAnswerSheetImage,
+        markedQuestions,
+        editingDomain,
+        editingPriorWeightTypes
+      )
+
+      // Merge reanalyzed questions back into editingAnswerKey
+      const updatedQuestions = editingAnswerKey.questions.map(q => {
+        const reanalyzed = reanalyzedQuestions.find(rq => rq.id === q.id)
+        if (reanalyzed) {
+          // Clear needsReanalysis flag
+          return { ...reanalyzed, needsReanalysis: false }
+        }
+        return q
+      })
+
+      const totalScore = updatedQuestions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
+      setEditingAnswerKey({ questions: updatedQuestions, totalScore })
+      setEditAnswerKeyNotice(`已重新分析 ${reanalyzedQuestions.length} 題`)
+    } catch (err) {
+      console.error('重新分析失敗', err)
+      setEditAnswerKeyError(
+        err instanceof Error ? `重新分析失敗：${err.message}` : '重新分析失敗，請稍後再試'
+      )
+    } finally {
+      setIsReanalyzing(false)
+    }
   }
 
   const startEditTitle = (assignment: Assignment) => {
@@ -504,7 +584,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setEditingAnswerKey(normalizeAnswerKey(ak))
     setEditingClassroomId(assignment.classroomId)
     setEditingDomain(assignment.domain ?? '')
-    setEditingAllowedQuestionTypes(assignment.allowedQuestionTypes ?? [])
+    setEditingPriorWeightTypes(assignment.priorWeightTypes ?? [])
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
     setAnswerKeyModalOpen(true)
@@ -516,7 +596,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setEditingAnswerKey(null)
     setEditingClassroomId('')
     setEditingDomain('')
-    setEditingAllowedQuestionTypes([])
+    setEditingPriorWeightTypes([])
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
     setEditAnswerKeyNotice(null)
@@ -534,13 +614,17 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setEditAnswerKeyError('請選擇作業領域')
       return
     }
+    if (editingPriorWeightTypes.length === 0) {
+      setEditAnswerKeyError('請至少選擇一種題型屬性（Prior Weight）')
+      return
+    }
     try {
       setIsSavingAnswerKey(true)
       await db.assignments.update(editingAnswerAssignment.id, {
         answerKey: editingAnswerKey,
         domain: editingDomain,
         classroomId: editingClassroomId,
-        allowedQuestionTypes: editingAllowedQuestionTypes.length > 0 ? editingAllowedQuestionTypes : undefined
+        priorWeightTypes: editingPriorWeightTypes
       })
       setAssignments((prev) => {
         if (selectedClassroomId && editingClassroomId !== selectedClassroomId) {
@@ -553,7 +637,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 answerKey: editingAnswerKey,
                 domain: editingDomain,
                 classroomId: editingClassroomId,
-                allowedQuestionTypes: editingAllowedQuestionTypes.length > 0 ? editingAllowedQuestionTypes : undefined
+                priorWeightTypes: editingPriorWeightTypes.length > 0 ? editingPriorWeightTypes : undefined
               }
             : a
         )
@@ -562,7 +646,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         ...editingAnswerAssignment,
         classroomId: editingClassroomId,
         domain: editingDomain,
-        allowedQuestionTypes: editingAllowedQuestionTypes.length > 0 ? editingAllowedQuestionTypes : undefined,
+        priorWeightTypes: editingPriorWeightTypes.length > 0 ? editingPriorWeightTypes : undefined,
         answerKey: editingAnswerKey
       })
       requestSync()
@@ -580,10 +664,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
 
     const base = current ?? { questions: [], totalScore: 0 }
-    const newQuestion = {
+    const newQuestion: AnswerKeyQuestion = {
       id: `${base.questions.length + 1}`,
-      type: 'fill' as QuestionType,
-      answer: '',
+      type: 2, // Default to Type 2 (multi-answer acceptable)
+      referenceAnswer: '',
+      acceptableAnswers: [],
       maxScore: 0
     }
     const questions = [...base.questions, newQuestion]
@@ -613,33 +698,59 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     const base = current ?? { questions: [], totalScore: 0 }
     const questions = [...base.questions]
     const existing = questions[index]
-    const item = {
+
+    // Support both old QuestionType and new QuestionCategoryType
+    const currentType = typeof existing?.type === 'number'
+      ? existing.type
+      : existing?.type
+        ? (existing.type === 'truefalse' || existing.type === 'choice' ? 1
+          : existing.type === 'fill' || existing.type === 'short' || existing.type === 'short_sentence' ? 2
+          : 3)
+        : 2
+
+    const item: AnswerKeyQuestion = {
       ...existing,
       id: existing?.id ?? '',
-      type: (existing?.type ?? 'fill') as QuestionType,
-      answer: existing?.answer ?? '',
+      type: currentType as QuestionCategoryType,
       maxScore: existing?.maxScore ?? 0
     }
 
     if (field === 'maxScore') {
       const num = Math.max(0, parseInt(value || '0', 10) || 0)
       item.maxScore = num
-      if (isSubjectiveType(item.type)) {
+      if (item.type === 3 && item.rubric) {
         item.rubric = normalizeRubric(item.rubric, num)
       }
     } else if (field === 'type') {
-      const nextType = value as QuestionType
-      const wasSubjective = isSubjectiveType(item.type)
-      const isSubjective = isSubjectiveType(nextType)
-      item.type = nextType
+      const nextType = parseInt(value, 10) as QuestionCategoryType
+      const oldType = item.type
 
-      if (isSubjective) {
-        if (!item.referenceAnswer) item.referenceAnswer = ''
-        if (item.maxScore <= 0) item.maxScore = 10
-        item.rubric = normalizeRubric(item.rubric, item.maxScore)
-      } else if (wasSubjective) {
+      // When teacher manually changes type, clear content and mark for re-analysis
+      if (oldType !== nextType) {
+        item.type = nextType
+        item.needsReanalysis = true
+
+        // Clear all answer-related fields
+        item.answer = undefined
+        item.referenceAnswer = undefined
+        item.acceptableAnswers = undefined
         item.rubric = undefined
-        item.referenceAnswer = item.referenceAnswer ?? ''
+        item.rubricsDimensions = undefined
+
+        // Set default values for new type
+        if (nextType === 1) {
+          // Type 1: standard answer
+          item.answer = ''
+        } else if (nextType === 2) {
+          // Type 2: reference answer + acceptable answers
+          item.referenceAnswer = ''
+          item.acceptableAnswers = []
+        } else if (nextType === 3) {
+          // Type 3: reference answer + rubric (default to 4-level)
+          item.referenceAnswer = ''
+          if (item.maxScore <= 0) item.maxScore = 10
+          item.rubric = buildDefaultRubric(item.maxScore)
+        }
       }
     } else if (field === 'id') {
       item.id = sanitizeQuestionId(value, item.id || `${index + 1}`)
@@ -652,6 +763,144 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     questions[index] = item
     const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
     setter({ questions, totalScore })
+  }
+
+  // Type 2: Acceptable Answers Management
+  const addAcceptableAnswer = (target: 'create' | 'edit', index: number) => {
+    const current = target === 'create' ? answerKey : editingAnswerKey
+    const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
+    if (!current) return
+
+    const questions = [...current.questions]
+    const item = { ...questions[index] }
+    const acceptableAnswers = item.acceptableAnswers ?? []
+    item.acceptableAnswers = [...acceptableAnswers, '']
+    questions[index] = item
+    setter({ ...current, questions })
+  }
+
+  const removeAcceptableAnswer = (
+    target: 'create' | 'edit',
+    index: number,
+    ansIdx: number
+  ) => {
+    const current = target === 'create' ? answerKey : editingAnswerKey
+    const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
+    if (!current) return
+
+    const questions = [...current.questions]
+    const item = { ...questions[index] }
+    const acceptableAnswers = item.acceptableAnswers ?? []
+    item.acceptableAnswers = acceptableAnswers.filter((_, i) => i !== ansIdx)
+    questions[index] = item
+    setter({ ...current, questions })
+  }
+
+  const updateAcceptableAnswer = (
+    target: 'create' | 'edit',
+    index: number,
+    ansIdx: number,
+    value: string
+  ) => {
+    const current = target === 'create' ? answerKey : editingAnswerKey
+    const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
+    if (!current) return
+
+    const questions = [...current.questions]
+    const item = { ...questions[index] }
+    const acceptableAnswers = [...(item.acceptableAnswers ?? [])]
+    acceptableAnswers[ansIdx] = value
+    item.acceptableAnswers = acceptableAnswers
+    questions[index] = item
+    setter({ ...current, questions })
+  }
+
+  // Type 3: Rubric Dimensions Management
+  const addRubricDimension = (target: 'create' | 'edit', index: number) => {
+    const current = target === 'create' ? answerKey : editingAnswerKey
+    const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
+    if (!current) return
+
+    const questions = [...current.questions]
+    const item = { ...questions[index] }
+    const dimensions = item.rubricsDimensions ?? []
+    item.rubricsDimensions = [
+      ...dimensions,
+      { name: '', maxScore: 0, criteria: '' }
+    ]
+    questions[index] = item
+    setter({ ...current, questions })
+  }
+
+  const removeRubricDimension = (
+    target: 'create' | 'edit',
+    index: number,
+    dimIdx: number
+  ) => {
+    const current = target === 'create' ? answerKey : editingAnswerKey
+    const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
+    if (!current) return
+
+    const questions = [...current.questions]
+    const item = { ...questions[index] }
+    const dimensions = item.rubricsDimensions ?? []
+    item.rubricsDimensions = dimensions.filter((_, i) => i !== dimIdx)
+    questions[index] = item
+    setter({ ...current, questions })
+  }
+
+  const updateRubricDimension = (
+    target: 'create' | 'edit',
+    index: number,
+    dimIdx: number,
+    field: 'name' | 'maxScore' | 'criteria',
+    value: string
+  ) => {
+    const current = target === 'create' ? answerKey : editingAnswerKey
+    const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
+    if (!current) return
+
+    const questions = [...current.questions]
+    const item = { ...questions[index] }
+    const dimensions = [...(item.rubricsDimensions ?? [])]
+    const dimension = { ...dimensions[dimIdx] }
+
+    if (field === 'maxScore') {
+      dimension.maxScore = Math.max(0, parseInt(value || '0', 10) || 0)
+    } else {
+      dimension[field] = value
+    }
+
+    dimensions[dimIdx] = dimension
+    item.rubricsDimensions = dimensions
+    questions[index] = item
+    setter({ ...current, questions })
+  }
+
+  const switchRubricType = (
+    target: 'create' | 'edit',
+    index: number,
+    toType: 'multi-dimension' | '4-level'
+  ) => {
+    const current = target === 'create' ? answerKey : editingAnswerKey
+    const setter = target === 'create' ? setAnswerKey : setEditingAnswerKey
+    if (!current) return
+
+    const questions = [...current.questions]
+    const item = { ...questions[index] }
+
+    if (toType === 'multi-dimension') {
+      item.rubric = undefined
+      item.rubricsDimensions = item.rubricsDimensions ?? [
+        { name: '', maxScore: 0, criteria: '' }
+      ]
+    } else {
+      item.rubricsDimensions = undefined
+      item.rubric = normalizeRubric(item.rubric, item.maxScore || 0)
+    }
+
+    questions[index] = item
+    setter({ ...current, questions })
   }
 
   const updateRubricLevel = (
@@ -984,118 +1233,91 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    題型範圍（選填）
+                    整份作業大部分題目屬性是？（可複選，必填）
+                    <span className="text-red-500 ml-1">*</span>
                   </label>
                   <p className="text-xs text-gray-500 mb-3">
-                    選擇這份作業包含的題型，可幫助 AI 更準確判斷題目類型。可複選，包括跨分類複選。
+                    請選擇這份作業主要的題型分類。可複選，先選的優先級較高。AI會根據您的選擇進行判斷，但遇到明顯證據時可能偏離並提醒您。
                   </p>
-                  
-                  {/* Type 1: 精確 */}
-                  <div className="mb-4">
-                    <div className="text-xs font-semibold text-blue-600 mb-2">
-                      Type 1 - 客觀題（精確匹配）
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 mb-3">
-                      {questionTypeOptions.filter(o => o.category === 1).map((option) => {
-                        const isSelected = allowedQuestionTypes.includes(option.value)
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => {
-                              if (isSelected) {
-                                setAllowedQuestionTypes((prev) =>
-                                  prev.filter((t) => t !== option.value)
-                                )
-                              } else {
-                                setAllowedQuestionTypes((prev) => [...prev, option.value])
-                              }
-                            }}
-                            className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                              isSelected
-                                ? 'bg-blue-100 text-blue-700 border-2 border-blue-500'
-                                : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
-                            }`}
-                            disabled={isSubmitting}
-                            title={option.description}
-                          >
-                            {option.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
 
-                  {/* Type 2: 模糊 */}
-                  <div className="mb-4">
-                    <div className="text-xs font-semibold text-amber-600 mb-2">
-                      Type 2 - 半客觀題（模糊匹配）
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 mb-3">
-                      {questionTypeOptions.filter(o => o.category === 2).map((option) => {
-                        const isSelected = allowedQuestionTypes.includes(option.value)
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => {
-                              if (isSelected) {
-                                setAllowedQuestionTypes((prev) =>
-                                  prev.filter((t) => t !== option.value)
-                                )
-                              } else {
-                                setAllowedQuestionTypes((prev) => [...prev, option.value])
-                              }
-                            }}
-                            className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                              isSelected
-                                ? 'bg-amber-100 text-amber-700 border-2 border-amber-500'
-                                : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
-                            }`}
-                            disabled={isSubmitting}
-                            title={option.description}
-                          >
-                            {option.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
+                  {/* 優先級順序顯示 */}
+                  {priorWeightTypes.length > 0 && (
+                    <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="text-xs font-semibold text-blue-700 mb-2">
+                        已選擇的優先級順序（先選優先級較高）：
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {priorWeightTypes.map((type, index) => {
+                          const config = [
+                            { type: 1, label: 'Type 1 - 唯一答案' },
+                            { type: 2, label: 'Type 2 - 多答案可接受' },
+                            { type: 3, label: 'Type 3 - 依表現給分' }
+                          ].find(c => c.type === type)!
 
-                  {/* Type 3: 評價 */}
-                  <div className="mb-4">
-                    <div className="text-xs font-semibold text-purple-600 mb-2">
-                      Type 3 - 主觀題（評價標準）
+                          // 優先級顏色：#1深藍、#2中藍、#3淺藍
+                          const colors = [
+                            { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700' },
+                            { bg: 'bg-blue-400', text: 'text-white', border: 'border-blue-500' },
+                            { bg: 'bg-blue-200', text: 'text-blue-800', border: 'border-blue-300' }
+                          ][index] || { bg: 'bg-blue-200', text: 'text-blue-800', border: 'border-blue-300' }
+
+                          return (
+                            <div key={type} className={`flex items-center gap-2 px-3 py-1.5 ${colors.bg} ${colors.text} border-2 ${colors.border} rounded-lg`}>
+                              <span className="text-xs font-bold">#{index + 1}</span>
+                              <span className="text-sm font-semibold">{config.label}</span>
+                              <button
+                                type="button"
+                                onClick={() => removePriorWeight(type)}
+                                className="ml-1 hover:opacity-75"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {questionTypeOptions.filter(o => o.category === 3).map((option) => {
-                        const isSelected = allowedQuestionTypes.includes(option.value)
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => {
-                              if (isSelected) {
-                                setAllowedQuestionTypes((prev) =>
-                                  prev.filter((t) => t !== option.value)
-                                )
-                              } else {
-                                setAllowedQuestionTypes((prev) => [...prev, option.value])
-                              }
-                            }}
-                            className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                              isSelected
-                                ? 'bg-purple-100 text-purple-700 border-2 border-purple-500'
-                                : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
-                            }`}
-                            disabled={isSubmitting}
-                            title={option.description}
-                          >
-                            {option.label}
-                          </button>
-                        )
-                      })}
-                    </div>
+                  )}
+
+                  {/* Type 選擇按鈕 */}
+                  <div className="grid grid-cols-1 gap-3">
+                    {[
+                      { type: 1 as const, label: 'Type 1 - 唯一答案（精確匹配）', description: '題目有唯一絕對正確的答案', examples: '是非題、選擇題、填空題（單一答案）', bgActive: 'bg-blue-500', textActive: 'text-white', borderActive: 'border-blue-600' },
+                      { type: 2 as const, label: 'Type 2 - 多答案可接受（模糊匹配）', description: '核心答案唯一但允許不同表述方式', examples: '簡答題、短句題、名詞解釋', bgActive: 'bg-amber-500', textActive: 'text-white', borderActive: 'border-amber-600' },
+                      { type: 3 as const, label: 'Type 3 - 依表現給分（評價標準）', description: '開放式題目，需要評分規準', examples: '申論題、作文、計算題（需看過程）', bgActive: 'bg-purple-500', textActive: 'text-white', borderActive: 'border-purple-600' }
+                    ].map((config) => {
+                      const isSelected = priorWeightTypes.includes(config.type)
+                      const priority = isSelected ? priorWeightTypes.indexOf(config.type) + 1 : null
+
+                      return (
+                        <button
+                          key={config.type}
+                          type="button"
+                          onClick={() => togglePriorWeight(config.type)}
+                          className={`relative px-4 py-3 rounded-lg text-left transition-all ${
+                            isSelected
+                              ? `${config.bgActive} ${config.textActive} border-2 ${config.borderActive} shadow-md`
+                              : `bg-gray-50 text-gray-700 border border-gray-300 hover:bg-gray-100`
+                          }`}
+                          disabled={isSubmitting}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="font-semibold text-sm mb-1">{config.label}</div>
+                              <div className="text-xs opacity-90">{config.description}</div>
+                              <div className="text-xs mt-1 opacity-75">
+                                範例：{config.examples}
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <div className={`flex items-center justify-center w-8 h-8 rounded-full bg-white ${config.type === 1 ? 'text-blue-600' : config.type === 2 ? 'text-amber-600' : 'text-purple-600'} font-bold text-sm`}>
+                                {priority}
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
 
@@ -1183,8 +1405,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     </div>
                     <div className="space-y-3 max-h-56 overflow-auto pr-1">
                       {answerKey.questions.map((q, idx) => {
-                        const typeValue = (q.type ?? 'fill') as QuestionType
-                        const isSubjective = isSubjectiveType(typeValue)
+                        const questionType = typeof q.type === 'number' ? q.type : 2
                         const rubric = q.rubric ?? buildDefaultRubric(q.maxScore || 0)
 
                         return (
@@ -1205,24 +1426,33 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                                   )
                                 }
                               />
-                              <select
-                                className="w-full px-2 py-1 border border-gray-300 rounded bg-white"
-                                value={typeValue}
-                                onChange={(e) =>
-                                  updateQuestionField(
-                                    'create',
-                                    idx,
-                                    'type',
-                                    e.target.value
-                                  )
-                                }
-                              >
-                                {questionTypeOptions.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="flex items-center gap-1">
+                                <select
+                                  className="flex-1 px-2 py-1 border border-gray-300 rounded bg-white"
+                                  value={questionType}
+                                  onChange={(e) =>
+                                    updateQuestionField(
+                                      'create',
+                                      idx,
+                                      'type',
+                                      e.target.value
+                                    )
+                                  }
+                                >
+                                  <option value={1}>Type 1 - 唯一答案</option>
+                                  <option value={2}>Type 2 - 多答案可接受</option>
+                                  <option value={3}>Type 3 - 依表現給分</option>
+                                </select>
+                                {q.aiDivergedFromPrior && (
+                                  <div className="relative group">
+                                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                                    <div className="absolute bottom-full mb-1 right-0 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
+                                      AI 判斷與 Prior Weight 不同
+                                      {q.aiOriginalDetection && ` (AI判斷: Type ${q.aiOriginalDetection})`}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                               <NumericInput
                                 className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
                                 value={q.maxScore}
@@ -1244,7 +1474,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                               </button>
                             </div>
 
-                            {!isSubjective && (
+                            {/* Type 1: Standard Answer */}
+                            {questionType === 1 && (
                               <div className="grid grid-cols-[70px_1fr] gap-2 items-center">
                                 <span className="text-[11px] text-gray-500">標準答案</span>
                                 <input
@@ -1262,7 +1493,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                               </div>
                             )}
 
-                            {isSubjective && (
+                            {/* Type 2: Reference Answer + Acceptable Answers */}
+                            {questionType === 2 && (
                               <div className="space-y-2">
                                 <div className="grid grid-cols-[70px_1fr] gap-2 items-start">
                                   <span className="text-[11px] text-gray-500">參考答案</span>
@@ -1281,61 +1513,193 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                                   />
                                 </div>
                                 <div>
-                                  <div className="text-[11px] text-gray-500 mb-1">
-                                    基規準（四級）
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[11px] text-gray-500">可接受答案變體</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => addAcceptableAnswer('create', idx)}
+                                      className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
+                                    >
+                                      + 新增
+                                    </button>
                                   </div>
-                                  <div className="space-y-1">
-                                    {rubric.levels.map((level, levelIndex) => (
-                                      <div
-                                        key={level.label}
-                                        className="grid grid-cols-[56px_44px_44px_1fr] gap-2 items-center"
+                                  {(q.acceptableAnswers ?? []).map((ans, ansIdx) => (
+                                    <div key={ansIdx} className="flex items-center gap-2 mb-1">
+                                      <input
+                                        className="flex-1 px-2 py-1 border border-gray-300 rounded"
+                                        value={ans}
+                                        onChange={(e) =>
+                                          updateAcceptableAnswer('create', idx, ansIdx, e.target.value)
+                                        }
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => removeAcceptableAnswer('create', idx, ansIdx)}
+                                        className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50"
                                       >
-                                        <span className="text-[11px] text-gray-600">
-                                          {level.label}
-                                        </span>
-                                        <NumericInput
-                                          className="px-1 py-1 border border-gray-300 rounded text-right"
-                                          value={level.min}
-                                          onChange={(v) =>
-                                            updateRubricLevel(
-                                              'create',
-                                              idx,
-                                              levelIndex,
-                                              'min',
-                                              String(v)
-                                            )
-                                          }
-                                        />
-                                        <NumericInput
-                                          className="px-1 py-1 border border-gray-300 rounded text-right"
-                                          value={level.max}
-                                          onChange={(v) =>
-                                            updateRubricLevel(
-                                              'create',
-                                              idx,
-                                              levelIndex,
-                                              'max',
-                                              String(v)
-                                            )
-                                          }
-                                        />
-                                        <input
-                                          className="px-2 py-1 border border-gray-300 rounded"
-                                          value={level.criteria}
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Type 3: Reference Answer + Rubric */}
+                            {questionType === 3 && (
+                              <div className="space-y-2">
+                                <div className="grid grid-cols-[70px_1fr] gap-2 items-start">
+                                  <span className="text-[11px] text-gray-500">參考答案</span>
+                                  <textarea
+                                    rows={2}
+                                    className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                                    value={q.referenceAnswer ?? ''}
+                                    onChange={(e) =>
+                                      updateQuestionField(
+                                        'create',
+                                        idx,
+                                        'referenceAnswer',
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </div>
+
+                                {/* Rubric Type Toggle */}
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] text-gray-500">基規準類型：</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => switchRubricType('create', idx, 'multi-dimension')}
+                                    className={`text-xs px-2 py-1 rounded ${
+                                      q.rubricsDimensions ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+                                    }`}
+                                  >
+                                    多維度評分
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => switchRubricType('create', idx, '4-level')}
+                                    className={`text-xs px-2 py-1 rounded ${
+                                      q.rubric ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+                                    }`}
+                                  >
+                                    4級評價
+                                  </button>
+                                </div>
+
+                                {/* Multi-dimension Rubric */}
+                                {q.rubricsDimensions && (
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[11px] text-gray-500">評分維度</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => addRubricDimension('create', idx)}
+                                        className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
+                                      >
+                                        + 新增維度
+                                      </button>
+                                    </div>
+                                    {q.rubricsDimensions.map((dim, dimIdx) => (
+                                      <div key={dimIdx} className="mb-2 p-2 bg-gray-50 rounded border border-gray-200">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <input
+                                            placeholder="維度名稱"
+                                            className="flex-1 px-2 py-1 border border-gray-300 rounded"
+                                            value={dim.name}
+                                            onChange={(e) =>
+                                              updateRubricDimension('create', idx, dimIdx, 'name', e.target.value)
+                                            }
+                                          />
+                                          <NumericInput
+                                            className="w-16 px-2 py-1 border border-gray-300 rounded text-right"
+                                            value={dim.maxScore}
+                                            onChange={(v) =>
+                                              updateRubricDimension('create', idx, dimIdx, 'maxScore', String(v))
+                                            }
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => removeRubricDimension('create', idx, dimIdx)}
+                                            className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                        <textarea
+                                          rows={2}
+                                          placeholder="評分標準"
+                                          className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                                          value={dim.criteria}
                                           onChange={(e) =>
-                                            updateRubricLevel(
-                                              'create',
-                                              idx,
-                                              levelIndex,
-                                              'criteria',
-                                              e.target.value
-                                            )
+                                            updateRubricDimension('create', idx, dimIdx, 'criteria', e.target.value)
                                           }
                                         />
                                       </div>
                                     ))}
                                   </div>
-                                </div>
+                                )}
+
+                                {/* 4-Level Rubric */}
+                                {q.rubric && (
+                                  <div>
+                                    <div className="text-[11px] text-gray-500 mb-1">
+                                      基規準（四級）
+                                    </div>
+                                    <div className="space-y-1">
+                                      {rubric.levels.map((level, levelIndex) => (
+                                        <div
+                                          key={level.label}
+                                          className="grid grid-cols-[56px_44px_44px_1fr] gap-2 items-center"
+                                        >
+                                          <span className="text-[11px] text-gray-600">
+                                            {level.label}
+                                          </span>
+                                          <NumericInput
+                                            className="px-1 py-1 border border-gray-300 rounded text-right"
+                                            value={level.min}
+                                            onChange={(v) =>
+                                              updateRubricLevel(
+                                                'create',
+                                                idx,
+                                                levelIndex,
+                                                'min',
+                                                String(v)
+                                              )
+                                            }
+                                          />
+                                          <NumericInput
+                                            className="px-1 py-1 border border-gray-300 rounded text-right"
+                                            value={level.max}
+                                            onChange={(v) =>
+                                              updateRubricLevel(
+                                                'create',
+                                                idx,
+                                                levelIndex,
+                                                'max',
+                                                String(v)
+                                              )
+                                            }
+                                          />
+                                          <input
+                                            className="px-2 py-1 border border-gray-300 rounded"
+                                            value={level.criteria}
+                                            onChange={(e) =>
+                                              updateRubricLevel(
+                                                'create',
+                                                idx,
+                                                levelIndex,
+                                                'criteria',
+                                                e.target.value
+                                              )
+                                            }
+                                          />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1442,35 +1806,96 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  題型範圍（選填）
+                  整份作業大部分題目屬性是？（可複選，必填）
+                  <span className="text-red-500 ml-1">*</span>
                 </label>
-                <p className="text-xs text-gray-500 mb-2">
-                  選擇這份作業包含的題型，可幫助 AI 更準確判斷題目類型
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  {questionTypeOptions.map((option) => {
-                    const isSelected = editingAllowedQuestionTypes.includes(option.value)
+
+                {/* Priority indicator with color depth */}
+                {editingPriorWeightTypes.length > 0 && (
+                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex flex-wrap gap-2">
+                      {editingPriorWeightTypes.map((type, index) => {
+                        const config = [
+                          { type: 1 as const, label: 'Type 1 - 唯一答案' },
+                          { type: 2 as const, label: 'Type 2 - 多答案可接受' },
+                          { type: 3 as const, label: 'Type 3 - 依表現給分' }
+                        ].find(c => c.type === type)!
+
+                        const colors = [
+                          { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700' },
+                          { bg: 'bg-blue-400', text: 'text-white', border: 'border-blue-500' },
+                          { bg: 'bg-blue-200', text: 'text-blue-800', border: 'border-blue-300' }
+                        ][index]
+
+                        return (
+                          <div
+                            key={type}
+                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${colors.bg} ${colors.text} border-2 ${colors.border}`}
+                          >
+                            <span className="text-xs font-bold">#{index + 1}</span>
+                            <span className="text-xs font-medium">{config.label}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeEditingPriorWeight(type)}
+                              className="ml-1 hover:opacity-70"
+                              disabled={isSavingAnswerKey}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Type selection buttons */}
+                <div className="grid grid-cols-1 gap-3">
+                  {[
+                    {
+                      type: 1 as const,
+                      label: 'Type 1 - 唯一答案（精確匹配）',
+                      desc: '答案唯一且不可替換',
+                      examples: '如：是非題、選擇題'
+                    },
+                    {
+                      type: 2 as const,
+                      label: 'Type 2 - 多答案可接受（模糊匹配）',
+                      desc: '核心答案固定但允許不同表述',
+                      examples: '如：填空題、簡答題'
+                    },
+                    {
+                      type: 3 as const,
+                      label: 'Type 3 - 依表現給分（評價標準）',
+                      desc: '開放式或計算題，需評分規準',
+                      examples: '如：計算題、申論題、作文'
+                    }
+                  ].map((config) => {
+                    const isSelected = editingPriorWeightTypes.includes(config.type)
+                    const priority = isSelected ? editingPriorWeightTypes.indexOf(config.type) + 1 : null
+
                     return (
                       <button
-                        key={option.value}
+                        key={config.type}
                         type="button"
-                        onClick={() => {
-                          if (isSelected) {
-                            setEditingAllowedQuestionTypes((prev) =>
-                              prev.filter((t) => t !== option.value)
-                            )
-                          } else {
-                            setEditingAllowedQuestionTypes((prev) => [...prev, option.value])
-                          }
-                        }}
-                        className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          isSelected
-                            ? 'bg-green-100 text-green-700 border-2 border-green-500'
-                            : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
-                        }`}
+                        onClick={() => toggleEditingPriorWeight(config.type)}
                         disabled={isSavingAnswerKey}
+                        className={`relative text-left p-4 rounded-xl border-2 transition-all ${
+                          isSelected
+                            ? 'bg-blue-50 border-blue-500 shadow-md'
+                            : 'bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50/50'
+                        }`}
                       >
-                        {option.label}
+                        {isSelected && (
+                          <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                            {priority}
+                          </div>
+                        )}
+                        <div className="text-sm font-semibold text-gray-900 mb-1">
+                          {config.label}
+                        </div>
+                        <div className="text-xs text-gray-600 mb-1">{config.desc}</div>
+                        <div className="text-xs text-gray-500">{config.examples}</div>
                       </button>
                     )
                   })}
@@ -1515,6 +1940,19 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   >
                     手動新增一題
                   </button>
+                  {editingAnswerKey && editingAnswerKey.questions.some(q => q.needsReanalysis) && (
+                    <button
+                      type="button"
+                      onClick={handleReanalyzeMarkedQuestions}
+                      disabled={isReanalyzing}
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isReanalyzing ? 'animate-spin' : ''}`} />
+                      {isReanalyzing
+                        ? '重新分析中…'
+                        : `重新分析 (${editingAnswerKey.questions.filter(q => q.needsReanalysis).length} 題)`}
+                    </button>
+                  )}
                 </div>
                 {editAnswerKeyError && (
                   <p className="text-sm text-red-600 mt-1">
@@ -1539,8 +1977,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 </div>
                 <div className="space-y-3 max-h-56 overflow-auto pr-1">
                   {editingAnswerKey.questions.map((q, idx) => {
-                    const typeValue = (q.type ?? 'fill') as QuestionType
-                    const isSubjective = isSubjectiveType(typeValue)
+                    const questionType = typeof q.type === 'number' ? q.type : 2
                     const rubric = q.rubric ?? buildDefaultRubric(q.maxScore || 0)
 
                     return (
@@ -1556,19 +1993,28 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                               updateQuestionField('edit', idx, 'id', e.target.value)
                             }
                           />
-                          <select
-                            className="w-full px-2 py-1 border border-gray-300 rounded bg-white"
-                            value={typeValue}
-                            onChange={(e) =>
-                              updateQuestionField('edit', idx, 'type', e.target.value)
-                            }
-                          >
-                            {questionTypeOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
+                          <div className="flex items-center gap-1">
+                            <select
+                              className="flex-1 px-2 py-1 border border-gray-300 rounded bg-white"
+                              value={questionType}
+                              onChange={(e) =>
+                                updateQuestionField('edit', idx, 'type', e.target.value)
+                              }
+                            >
+                              <option value={1}>Type 1 - 唯一答案</option>
+                              <option value={2}>Type 2 - 多答案可接受</option>
+                              <option value={3}>Type 3 - 依表現給分</option>
+                            </select>
+                            {q.aiDivergedFromPrior && (
+                              <div className="relative group">
+                                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                                <div className="absolute bottom-full mb-1 right-0 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
+                                  AI 判斷與 Prior Weight 不同
+                                  {q.aiOriginalDetection && ` (AI判斷: Type ${q.aiOriginalDetection})`}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                           <NumericInput
                             className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
                             value={q.maxScore}
@@ -1590,7 +2036,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                           </button>
                         </div>
 
-                        {!isSubjective && (
+                        {/* Type 1: Standard Answer */}
+                        {questionType === 1 && (
                           <div className="grid grid-cols-[70px_1fr] gap-2 items-center">
                             <span className="text-[11px] text-gray-500">標準答案</span>
                             <input
@@ -1608,7 +2055,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                           </div>
                         )}
 
-                        {isSubjective && (
+                        {/* Type 2: Reference Answer + Acceptable Answers */}
+                        {questionType === 2 && (
                           <div className="space-y-2">
                             <div className="grid grid-cols-[70px_1fr] gap-2 items-start">
                               <span className="text-[11px] text-gray-500">參考答案</span>
@@ -1627,61 +2075,193 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                               />
                             </div>
                             <div>
-                              <div className="text-[11px] text-gray-500 mb-1">
-                                基規準（四級）
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[11px] text-gray-500">可接受答案變體</span>
+                                <button
+                                  type="button"
+                                  onClick={() => addAcceptableAnswer('edit', idx)}
+                                  className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
+                                >
+                                  + 新增
+                                </button>
                               </div>
-                              <div className="space-y-1">
-                                {rubric.levels.map((level, levelIndex) => (
-                                  <div
-                                    key={level.label}
-                                    className="grid grid-cols-[56px_44px_44px_1fr] gap-2 items-center"
+                              {(q.acceptableAnswers ?? []).map((ans, ansIdx) => (
+                                <div key={ansIdx} className="flex items-center gap-2 mb-1">
+                                  <input
+                                    className="flex-1 px-2 py-1 border border-gray-300 rounded"
+                                    value={ans}
+                                    onChange={(e) =>
+                                      updateAcceptableAnswer('edit', idx, ansIdx, e.target.value)
+                                    }
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => removeAcceptableAnswer('edit', idx, ansIdx)}
+                                    className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50"
                                   >
-                                    <span className="text-[11px] text-gray-600">
-                                      {level.label}
-                                    </span>
-                                    <NumericInput
-                                      className="px-1 py-1 border border-gray-300 rounded text-right"
-                                      value={level.min}
-                                      onChange={(v) =>
-                                        updateRubricLevel(
-                                          'edit',
-                                          idx,
-                                          levelIndex,
-                                          'min',
-                                          String(v)
-                                        )
-                                      }
-                                    />
-                                    <NumericInput
-                                      className="px-1 py-1 border border-gray-300 rounded text-right"
-                                      value={level.max}
-                                      onChange={(v) =>
-                                        updateRubricLevel(
-                                          'edit',
-                                          idx,
-                                          levelIndex,
-                                          'max',
-                                          String(v)
-                                        )
-                                      }
-                                    />
-                                    <input
-                                      className="px-2 py-1 border border-gray-300 rounded"
-                                      value={level.criteria}
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Type 3: Reference Answer + Rubric */}
+                        {questionType === 3 && (
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-[70px_1fr] gap-2 items-start">
+                              <span className="text-[11px] text-gray-500">參考答案</span>
+                              <textarea
+                                rows={2}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                                value={q.referenceAnswer ?? ''}
+                                onChange={(e) =>
+                                  updateQuestionField(
+                                    'edit',
+                                    idx,
+                                    'referenceAnswer',
+                                    e.target.value
+                                  )
+                                }
+                              />
+                            </div>
+
+                            {/* Rubric Type Toggle */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-gray-500">基規準類型：</span>
+                              <button
+                                type="button"
+                                onClick={() => switchRubricType('edit', idx, 'multi-dimension')}
+                                className={`text-xs px-2 py-1 rounded ${
+                                  q.rubricsDimensions ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+                                }`}
+                              >
+                                多維度評分
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => switchRubricType('edit', idx, '4-level')}
+                                className={`text-xs px-2 py-1 rounded ${
+                                  q.rubric ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+                                }`}
+                              >
+                                4級評價
+                              </button>
+                            </div>
+
+                            {/* Multi-dimension Rubric */}
+                            {q.rubricsDimensions && (
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[11px] text-gray-500">評分維度</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => addRubricDimension('edit', idx)}
+                                    className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
+                                  >
+                                    + 新增維度
+                                  </button>
+                                </div>
+                                {q.rubricsDimensions.map((dim, dimIdx) => (
+                                  <div key={dimIdx} className="mb-2 p-2 bg-gray-50 rounded border border-gray-200">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <input
+                                        placeholder="維度名稱"
+                                        className="flex-1 px-2 py-1 border border-gray-300 rounded"
+                                        value={dim.name}
+                                        onChange={(e) =>
+                                          updateRubricDimension('edit', idx, dimIdx, 'name', e.target.value)
+                                        }
+                                      />
+                                      <NumericInput
+                                        className="w-16 px-2 py-1 border border-gray-300 rounded text-right"
+                                        value={dim.maxScore}
+                                        onChange={(v) =>
+                                          updateRubricDimension('edit', idx, dimIdx, 'maxScore', String(v))
+                                        }
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => removeRubricDimension('edit', idx, dimIdx)}
+                                        className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                    <textarea
+                                      rows={2}
+                                      placeholder="評分標準"
+                                      className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                                      value={dim.criteria}
                                       onChange={(e) =>
-                                        updateRubricLevel(
-                                          'edit',
-                                          idx,
-                                          levelIndex,
-                                          'criteria',
-                                          e.target.value
-                                        )
+                                        updateRubricDimension('edit', idx, dimIdx, 'criteria', e.target.value)
                                       }
                                     />
                                   </div>
                                 ))}
                               </div>
-                            </div>
+                            )}
+
+                            {/* 4-Level Rubric */}
+                            {q.rubric && (
+                              <div>
+                                <div className="text-[11px] text-gray-500 mb-1">
+                                  基規準（四級）
+                                </div>
+                                <div className="space-y-1">
+                                  {rubric.levels.map((level, levelIndex) => (
+                                    <div
+                                      key={level.label}
+                                      className="grid grid-cols-[56px_44px_44px_1fr] gap-2 items-center"
+                                    >
+                                      <span className="text-[11px] text-gray-600">
+                                        {level.label}
+                                      </span>
+                                      <NumericInput
+                                        className="px-1 py-1 border border-gray-300 rounded text-right"
+                                        value={level.min}
+                                        onChange={(v) =>
+                                          updateRubricLevel(
+                                            'edit',
+                                            idx,
+                                            levelIndex,
+                                            'min',
+                                            String(v)
+                                          )
+                                        }
+                                      />
+                                      <NumericInput
+                                        className="px-1 py-1 border border-gray-300 rounded text-right"
+                                        value={level.max}
+                                        onChange={(v) =>
+                                          updateRubricLevel(
+                                            'edit',
+                                            idx,
+                                            levelIndex,
+                                            'max',
+                                            String(v)
+                                          )
+                                        }
+                                      />
+                                      <input
+                                        className="px-2 py-1 border border-gray-300 rounded"
+                                        value={level.criteria}
+                                        onChange={(e) =>
+                                          updateRubricLevel(
+                                            'edit',
+                                            idx,
+                                            levelIndex,
+                                            'criteria',
+                                            e.target.value
+                                          )
+                                        }
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

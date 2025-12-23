@@ -2,6 +2,8 @@ import Dexie, { type EntityTable } from 'dexie'
 
 /**
  * 標準答案資料結構
+ * @deprecated 此類型已廢棄，請使用 QuestionCategoryType (1|2|3) 替代
+ * 保留此類型僅用於向後兼容和數據遷移
  */
 export type QuestionType =
   | 'truefalse'
@@ -35,16 +37,33 @@ export interface RubricDimension {
 
 export interface AnswerKeyQuestion {
   id: string // 例如 "1", "1-1"
-  type?: QuestionType
+
+  // 題型分類：1=唯一答案(精確), 2=多答案可接受(模糊), 3=依表現給分(評價)
+  type: QuestionCategoryType
+
+  // Type 1 專用：標準答案（精確匹配）
   answer?: string
+
+  // Type 2/3 共用：參考答案
   referenceAnswer?: string
-  rubric?: Rubric
+
+  // Type 2 專用：可接受的答案變體（同義詞清單）
+  acceptableAnswers?: string[]
+
+  // Type 3 專用：評分規準
+  rubric?: Rubric // 4級評價（純評價題）
+  rubricsDimensions?: RubricDimension[] // 多維度評分（有標準答案+思考過程）
+
   maxScore: number
-  // 新增：AI 判定欄位
-  detectedType?: QuestionCategoryType // 1=Type 1 (精確), 2=Type 2 (模糊), 3=Type 3 (評價)
-  detectionReason?: string // AI 判定理由（給教師參考）
-  acceptableAnswers?: string[] // Type 2 專用：同義詞清單
-  rubricsDimensions?: RubricDimension[] // Type 3 專用：評分維度
+
+  // AI 偏離 Prior Weight 提醒
+  needsReanalysis?: boolean // 教師修改題型後標記為true，需要重新分析
+  aiDivergedFromPrior?: boolean // AI判斷與教師prior weight不同時為true
+  aiOriginalDetection?: QuestionCategoryType // AI最初判斷的類型（用於顯示ICON）
+
+  // @deprecated 已廢棄的欄位（保留向後兼容）
+  detectedType?: QuestionCategoryType // 已合併到 type
+  detectionReason?: string // 已改用 aiOriginalDetection
 }
 
 export interface AnswerKey {
@@ -81,9 +100,17 @@ export interface Assignment {
   title: string
   totalPages: number
   domain?: string // 國語、數學、社會、自然、英語、其他
-  allowedQuestionTypes?: QuestionType[] // 這份作業允許的題型範圍，用於限制 AI 判斷題型
+
+  // Prior Weight：整份作業大部分題目屬性
+  // 陣列順序表示優先級（index 0 = 最高優先級）
+  // 例如：[2, 1, 3] 表示優先 Type 2，其次 Type 1，最後 Type 3
+  priorWeightTypes?: QuestionCategoryType[]
+
   answerKey?: AnswerKey
   updatedAt?: number
+
+  // @deprecated 已廢棄，請使用 priorWeightTypes 替代
+  allowedQuestionTypes?: QuestionType[]
 }
 
 export type SubmissionStatus = 'missing' | 'scanned' | 'synced' | 'graded'
@@ -275,4 +302,79 @@ export function generateId(): string {
 
 export function getCurrentTimestamp(): number {
   return Date.now()
+}
+
+/**
+ * 數據遷移：將舊的 QuestionType 轉換為 QuestionCategoryType
+ */
+export function migrateLegacyQuestionType(oldType: QuestionType): QuestionCategoryType {
+  const mapping: Record<QuestionType, QuestionCategoryType> = {
+    'truefalse': 1,
+    'choice': 1,
+    'fill': 2,
+    'short': 2,
+    'short_sentence': 2,
+    'calc': 3,
+    'qa': 3,
+    'long': 3,
+    'essay': 3
+  }
+  return mapping[oldType]
+}
+
+/**
+ * 數據遷移：將舊作業的 allowedQuestionTypes 轉換為 priorWeightTypes
+ */
+export function migrateAssignmentPriorWeights(assignment: Assignment): Assignment {
+  // 如果已經有 priorWeightTypes，不需要遷移
+  if (assignment.priorWeightTypes && assignment.priorWeightTypes.length > 0) {
+    return assignment
+  }
+
+  // 如果沒有 allowedQuestionTypes，返回原樣
+  if (!assignment.allowedQuestionTypes || assignment.allowedQuestionTypes.length === 0) {
+    return assignment
+  }
+
+  // 將 allowedQuestionTypes 映射為 priorWeightTypes 並去重排序
+  const priorWeightTypes = Array.from(
+    new Set(assignment.allowedQuestionTypes.map(migrateLegacyQuestionType))
+  ).sort() as QuestionCategoryType[]
+
+  return {
+    ...assignment,
+    priorWeightTypes
+  }
+}
+
+/**
+ * 數據遷移：將舊題目的 type 從 QuestionType 轉換為 QuestionCategoryType
+ */
+export function migrateAnswerKeyQuestion(question: any): AnswerKeyQuestion {
+  // 如果 type 已經是數字（QuestionCategoryType），不需要遷移
+  if (typeof question.type === 'number') {
+    return question as AnswerKeyQuestion
+  }
+
+  // 如果沒有 type，嘗試從 detectedType 讀取
+  if (!question.type && question.detectedType) {
+    return {
+      ...question,
+      type: question.detectedType
+    } as AnswerKeyQuestion
+  }
+
+  // 如果有舊的 QuestionType（字串），轉換為 QuestionCategoryType
+  if (question.type && typeof question.type === 'string') {
+    return {
+      ...question,
+      type: migrateLegacyQuestionType(question.type as QuestionType)
+    } as AnswerKeyQuestion
+  }
+
+  // 如果都沒有，預設為 Type 2（最常見）
+  return {
+    ...question,
+    type: 2
+  } as AnswerKeyQuestion
 }
