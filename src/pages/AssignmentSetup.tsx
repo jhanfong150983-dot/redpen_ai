@@ -54,11 +54,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     { value: 'choice', label: '選擇', category: 1, categoryLabel: '客觀題（精確）', description: '單一絕對答案' },
     // Type 2：模糊匹配
     { value: 'fill', label: '填空', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
-    { value: 'calc', label: '計算', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
+    { value: 'short', label: '簡答', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
+    { value: 'short_sentence', label: '短句', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
     // Type 3：評價
+    { value: 'calc', label: '計算', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
     { value: 'qa', label: '問答', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
-    { value: 'short', label: '簡答', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
-    { value: 'short_sentence', label: '短句', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
     { value: 'long', label: '長句', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
     { value: 'essay', label: '作文', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' }
   ]
@@ -71,8 +71,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const subjectiveTypes = new Set<QuestionType>([
     'calc',
     'qa',
-    'short',
-    'short_sentence',
     'long',
     'essay'
   ])

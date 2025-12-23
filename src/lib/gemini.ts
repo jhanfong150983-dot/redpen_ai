@@ -262,18 +262,19 @@ interface AnswerKey {
 規則（嚴禁憑空捏造）：
 - 題號：圖片有題號就用；看不到則依序用 1, 2...，不可跳號或重複。
 ${typeInstruction}
-- 客觀題（truefalse/choice/fill）：填 answer，只留能判斷對錯的核心字詞/數值。
-- 主觀題（calc/qa/short/short_sentence/long/essay）：填 referenceAnswer 與 rubricsDimensions。
-  - rubricsDimensions 列出 2-4 個評分維度，每個維度 0-5 分。
-  - 若無法確定評分維度，使用 4 級標準（優秀/良好/尚可/待努力）。
+- 客觀題（truefalse/choice）：填 answer，只留能判斷對錯的核心字詞/數值。
+- 模糊題（fill/short/short_sentence）：填 referenceAnswer 與 acceptableAnswers 或簡單評分標準。
+- 主觀題（calc/qa/long/essay）：填 referenceAnswer 與 rubricsDimensions。
 - 配分：圖片有配分直接用；否則估計：選擇題 2-5 分、填充/是非 2-4 分、簡答 5-8 分、申論 8-15 分；不可為 0。
 - totalScore 必須等於所有 maxScore 總和，若不符請重算後回傳。
 - 若完全無法辨識任何題目，回傳 { "questions": [], "totalScore": 0 }。若部分題目模糊，就跳過那些題。
 
 【Type 判定（可選，若判定困難可省略）】
-- Type 1：唯一絕對答案（如 2+3=?)，填 answer 即可。
-- Type 2：核心答案唯一但表述多元（如「玉山」vs「Yushan」），填 acceptableAnswers 同義詞清單。
-- Type 3：開放式題目需 rubricsDimensions 多維度評分（如作文、申論）。
+- Type 1（精確）：唯一絕對答案（如 2+3=5），填 answer 即可。例：是非題、選擇題。
+- Type 2（模糊）：核心答案唯一但表述多元（如「玉山」vs「Yushan」），填 acceptableAnswers 同義詞清單。例：填空、簡答、短句。
+- Type 3（評價）：開放式題目或計算題需 rubricsDimensions 多維度評分。
+  - 計算題：維度包括「計算過程」和「最終答案」。
+  - 申論題：維度為相關評分標準（如邏輯、完整性等）。
 `.trim()
 
   const hint = domain ? answerKeyDomainHints[domain] : ''
