@@ -58,8 +58,16 @@ export async function compressImage(
       canvas.toBlob(
         (blob) => {
           if (blob) {
-            console.log(`✅ 图片压缩完成: ${(blob.size / 1024).toFixed(2)} KB`)
-            resolve(blob)
+            console.log(`✅ 图片压缩完成: ${(blob.size / 1024).toFixed(2)} KB, 類型: ${blob.type}`)
+
+            // 確保 Blob 有正確的 type 屬性
+            if (!blob.type || blob.type === '') {
+              console.warn('⚠️ Blob 類型為空，手動設定為', format)
+              const fixedBlob = new Blob([blob], { type: format })
+              resolve(fixedBlob)
+            } else {
+              resolve(blob)
+            }
           } else {
             reject(new Error('图片压缩失败'))
           }

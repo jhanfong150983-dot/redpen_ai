@@ -686,14 +686,20 @@ export async function gradeMultipleSubmissions(
     onProgress(i + 1, submissions.length)
 
     try {
-      if (!sub.imageBlob) continue
+      if (!sub.imageBlob) {
+        console.warn(`跳過沒有 imageBlob 的作業: ${sub.id}`)
+        failCount++
+        continue
+      }
       const result = await gradeSubmission(sub.imageBlob, answerKeyBlob, answerKey, options)
 
+      // 重要：保留 imageBlob，確保批改後仍可預覽
       await db.submissions.update(sub.id!, {
         status: 'graded',
         score: result.totalScore,
         gradingResult: result,
-        gradedAt: Date.now()
+        gradedAt: Date.now(),
+        imageBlob: sub.imageBlob  // 保留圖片
       })
 
       if (result.totalScore === 0) {
@@ -702,6 +708,7 @@ export async function gradeMultipleSubmissions(
         successCount++
       }
     } catch (e) {
+      console.error(`批改作業 ${sub.id} 失敗:`, e)
       failCount++
     }
 
