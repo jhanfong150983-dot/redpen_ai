@@ -230,9 +230,9 @@ function buildAnswerKeyPrompt(domain?: string, allowedQuestionTypes?: import('./
 
   if (allowedQuestionTypes && allowedQuestionTypes.length > 0) {
     const allowedLabels = allowedQuestionTypes.map(t => `${t}（${questionTypeLabels[t]}）`).join('、')
-    typeInstruction = `- 題型：本作業的題型範圍限定為【${allowedLabels}】，請優先在此範圍內判斷題目類型並填入 type。
+    typeInstruction = `- 題型：本作業的題型範圍限定為【${allowedLabels}】，請在此範圍內判斷題目類型並填入 type。
   - 嚴格限制：type 只能從這些類型中選擇：${allowedQuestionTypes.map(t => `"${t}"`).join(' | ')}
-  - 若難以判斷，請選擇最接近的類型，不可使用範圍外的題型`
+  - 若難以判斷，請選擇最接近的類型`
   }
 
   const base = `
@@ -243,16 +243,15 @@ interface AnswerKey {
   questions: Array<{
     id: string;      // 題號，如 "1", "1-1"
     type: "truefalse" | "choice" | "fill" | "calc" | "qa" | "short" | "short_sentence" | "long" | "essay";
-    answer?: string;          // Type 1/2 題：判斷對錯所需的核心字詞/數值
-    referenceAnswer?: string; // Type 2/3 題：範例答案或關鍵要點
+    answer?: string;          // 客觀題：判斷對錯所需的核心字詞/數值
+    referenceAnswer?: string; // 主觀題：範例答案或關鍵要點
     maxScore: number;         // 該題滿分 > 0
     
-    // 【新增：Type 判定欄位】
-    detectedType: 1 | 2 | 3;  // 1=精確、2=模糊、3=評價
-    detectionReason: string;  // 判定理由（簡短說明）
-    acceptableAnswers?: string[]; // Type 2 專用：列出 2-5 個同義詞（包括標準答案）
+    detectedType?: 1 | 2 | 3; // 1=精確、2=模糊、3=評價
+    detectionReason?: string; // 判定理由（可選）
+    acceptableAnswers?: string[]; // Type 2 專用：同義詞清單
     rubricsDimensions?: Array<{   // Type 3 專用：評分維度
-      name: string;     // 維度名稱（如「論述清晰」）
+      name: string;     // 維度名稱
       maxScore: number; // 該維度滿分
       criteria: string; // 評分標準
     }>;
@@ -263,33 +262,18 @@ interface AnswerKey {
 規則（嚴禁憑空捏造）：
 - 題號：圖片有題號就用；看不到則依序用 1, 2...，不可跳號或重複。
 ${typeInstruction}
-
-【Type 判定邏輯】
-- Type 1（精確）：題目只有唯一絕對答案，如 2+3=? 或是非題「地球自轉」對不對？
-  - answer 填唯一正確答案
-  - detectedType = 1
-  - detectionReason = "只有單一絕對答案"
-  - 不需要 acceptableAnswers / rubricsDimensions
-  
-- Type 2（模糊）：題目有唯一核心答案，但表述方式可以多樣化，如「台灣最高峰？」(玉山/Yushan/Yueh Shan)
-  - answer 填最標準的答案
-  - referenceAnswer 可填完整解釋
-  - acceptableAnswers 列出 2-5 個同義詞（必須包括 answer 本身）
-  - detectedType = 2
-  - detectionReason = "有標準答案，但允許多種表述"
-  - 不需要 rubricsDimensions
-  
-- Type 3（評價）：開放式問題需要按評分標準判斷，如「說明全球暖化的成因」或「作文」
-  - referenceAnswer 填示例答案或評分要點
-  - rubricsDimensions 列出 3-5 個評分維度（每個維度 0-5 分）
-  - 各維度 maxScore 的總和 ≤ maxScore
-  - detectedType = 3
-  - detectionReason = "開放式題目需依評分標準判斷"
-  - 不需要 answer / acceptableAnswers
-
-- 配分規則：圖片有配分直接用；否則估計：選擇題 2-5 分、填充/是非 2-4 分、簡答 5-8 分、申論 8-15 分；不可為 0。
+- 客觀題（truefalse/choice/fill）：填 answer，只留能判斷對錯的核心字詞/數值。
+- 主觀題（calc/qa/short/short_sentence/long/essay）：填 referenceAnswer 與 rubricsDimensions。
+  - rubricsDimensions 列出 2-4 個評分維度，每個維度 0-5 分。
+  - 若無法確定評分維度，使用 4 級標準（優秀/良好/尚可/待努力）。
+- 配分：圖片有配分直接用；否則估計：選擇題 2-5 分、填充/是非 2-4 分、簡答 5-8 分、申論 8-15 分；不可為 0。
 - totalScore 必須等於所有 maxScore 總和，若不符請重算後回傳。
-- 若完全無法辨識任何題目，回傳 { "questions": [], "totalScore": 0 }。若部分題目模糊，就跳過那些題，不要猜。
+- 若完全無法辨識任何題目，回傳 { "questions": [], "totalScore": 0 }。若部分題目模糊，就跳過那些題。
+
+【Type 判定（可選，若判定困難可省略）】
+- Type 1：唯一絕對答案（如 2+3=?)，填 answer 即可。
+- Type 2：核心答案唯一但表述多元（如「玉山」vs「Yushan」），填 acceptableAnswers 同義詞清單。
+- Type 3：開放式題目需 rubricsDimensions 多維度評分（如作文、申論）。
 `.trim()
 
   const hint = domain ? answerKeyDomainHints[domain] : ''
@@ -380,36 +364,10 @@ ${JSON.stringify(answerKey)}
 - 題號 id 以 AnswerKey 中的 "id" 為主（例如 "1", "1-1"）。
 
 【分層評分規則】
-
-【Type 1 - 精確匹配】
-- 使用 answer 字段進行嚴格對比
-- 評分邏輯：完全相符 → 滿分；不符 → 0分
-- 允許的容差：符號變體（如 ○/O、✓/√）、微小格式差異（如前後空白）
-- reason 範例：「符合標準答案 '玉山'」或「與標準答案不符，寫了 'A' 但應為 'B'」
-- matchingDetails 記錄：matchedAnswer 設為 answer，matchType = "exact"
-
-【Type 2 - 模糊匹配】
-- 使用 answer 或 acceptableAnswers 進行語義匹配
-- 評分邏輯：
-  - 完全匹配 → 滿分
-  - 語義同義 → 滿分（如「玉山」vs「Yushan」「台灣最高峰」）
-  - 部分匹配（關鍵字正確但不完整） → 部分分
-  - 不符 → 0分
-- acceptableAnswers 若已設定，優先用此列表判斷；若無，使用 answer 本身
-- reason 範例：「符合同義詞 'Yushan'」或「部分正確，包含關鍵數值但單位有誤」
-- matchingDetails 記錄：matchedAnswer 設為匹配到的同義詞，matchType = "exact"/"synonym"/"keyword"
-
-【Type 3 - 評價標準】
-- 使用 rubricsDimensions 的多維度評分
-- 評分邏輯：逐個評估每個維度，累計總分
-- 若無 rubricsDimensions，改用舊 rubric 的 4 級標準（優秀/良好/尚可/待努力）
-- reason 範例：「論述清晰度：4/5（清楚但有小瑕疵）；邏輯完整性：3/5（基本完整）；整體評分 7/10」
-- matchedLevel 記錄：综合等級如「良好」
-- rubricScores 記錄：各維度分數細節
-
-【通用規則】
-- 學生答案只要清楚寫出關鍵字/數值，即使字跡不完美也視為正確
-- 相同錯誤答案出現在不同題目時，要分別根據各題題意判斷
+- Type 1（精確）：使用 answer 字段進行嚴格對比。完全相符 → 滿分；不符 → 0分。
+- Type 2（模糊）：使用 acceptableAnswers 進行語義匹配。完全/語義相符 → 滿分；部分 → 部分分。
+- Type 3（評價）：使用 rubricsDimensions 多維度評分，逐維度評估後累計總分。若無維度，用 4 級標準（優秀/良好/尚可/待努力）。
+- 學生答案只要清楚寫出關鍵字/數值，即使字跡不完美也視為正確。
 `.trim()
     } else if (answerKeyImage) {
       // 情境 2：沒有結構化 AnswerKey，但有答案卷圖片
@@ -458,12 +416,9 @@ ${domainHint}
       prompt += `
 
 【再次批改模式】
-- 只重新擷取與批改以下題號：${questionIds.join(', ')}。
-- 這些題目的「上一次學生答案」已確認錯誤，不可以再輸出完全相同的 studentAnswer（除非題號在「強制無法辨識清單」）。
-- 其他題目請維持原結果，不要改動。
-- 請根據未變更題目 + 重新批改題目，更新 mistakes/weaknesses/suggestions 與 totalScore。
-- 以下為目前完整批改 details（未標記題目請維持不變）：
-${JSON.stringify(previousDetails)}
+- 只重新擷取與批改：${questionIds.join(', ')}。
+- 其他題目維持不變。
+- 目前批改 details：${JSON.stringify(previousDetails)}
 `.trim()
 
       if (previousAnswerLines) {
@@ -477,9 +432,7 @@ ${previousAnswerLines}
       if (forcedIds.length > 0) {
         prompt += `
 
-強制無法辨識清單：
-- 下列題號已由教師標記為「AI無法辨識」，請直接將 studentAnswer 設為 "AI無法辨識"，score=0，isCorrect=false，reason 說明無法辨識。
-${forcedIds.map((id) => `- ${id}`).join('\n')}
+強制無法辨識清單：${forcedIds.map((id) => `${id}`).join(', ')}
 `.trim()
       }
     }
@@ -499,10 +452,6 @@ ${forcedIds.map((id) => `- ${id}`).join('\n')}
       prompt += `
 
 【近期 AI 擷取錯誤參考】
-以下為教師標記的「AI 擷取錯誤 → 正確答案」對照。請在開始批改前先檢討並校正這些錯誤，避免重蹈覆轍。
-請先在內部整理成 3-5 條「避免重犯的辨識原則」，再開始擷取學生答案；原則僅供內部使用，禁止輸出。
-完成擷取前，請逐題對照最近錯誤清單做自我檢查。
-這些對照是高優先規則，必須優先遵守；僅用於提醒辨識細節，不得推論：
 ${lines}
 `.trim()
     }
@@ -545,51 +494,26 @@ ${lines}
     // 要求輸出統一的 JSON 結構（所有科目通用）
     prompt += `
 
-請務必回傳「純 JSON」，不要加上 Markdown 標記，結構如下：
-
+回傳純 JSON：
 {
-  "totalScore": 整數（0 到本份作業總分。若沒有 AnswerKey，可用 0-100）,
+  "totalScore": 整數,
   "details": [
     {
-      "questionId": "題號（如 1, 1-1）",
-      "detectedType": 1|2|3（AI從AnswerKey判定的題型分類），
-      "studentAnswer": "完整還原學生實際寫的內容，包括錯字或無法辨識的部分",
-      "isCorrect": true 或 false,
-      "score": 已給分數,
-      "maxScore": 該題滿分,
-      "reason": "為什麼判定對或錯（簡短說明，著重在概念與規則；Type 2/3需說明依據）",
-      "matchedLevel": "主觀題可選：優秀/良好/尚可/待努力",
-      "confidence": 0-100（擷取學生答案時的猶豫程度）,
-      
-      // 【Type 2 專用】
-      "matchingDetails": {
-        "matchedAnswer": "匹配到的參考答案",
-        "matchType": "exact|synonym|keyword（精確/同義詞/關鍵字）"
-      },
-      
-      // 【Type 3 專用】
-      "rubricScores": [
-        {
-          "dimension": "維度名稱（如論述清晰度）",
-          "score": 該維度得分,
-          "maxScore": 該維度滿分
-        }
-      ]
+      "questionId": 題號,
+      "detectedType": 1|2|3,
+      "studentAnswer": 學生答案,
+      "isCorrect": true/false,
+      "score": 得分,
+      "maxScore": 滿分,
+      "reason": 簡短理由,
+      "confidence": 0-100,
+      "matchingDetails": {Type 2: {matchedAnswer, matchType: exact|synonym|keyword}},
+      "rubricScores": {Type 3: [{dimension, score, maxScore}]}
     }
   ],
-  "mistakes": [
-    {
-      "id": "題號",
-      "question": "題目簡要說明",
-      "reason": "錯在哪裡（例如：誤把寒流寫成暖流、分數通分錯誤、文意理解錯誤等）"
-    }
-  ],
-  "weaknesses": [
-    "需要加強的概念（例如：海流與氣候、分數四則運算、主被動語態、文意理解等）"
-  ],
-  "suggestions": [
-    "針對上述弱點的具體練習建議（例如：重看課本某一節、多做哪一類題型）"
-  ]
+  "mistakes": [{id, question, reason}],
+  "weaknesses": [概念],
+  "suggestions": [建議]
 }
 
 若為「再次批改模式」，details 請只回傳被要求重新批改的題號。
