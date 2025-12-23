@@ -155,7 +155,8 @@ export interface GradeSubmissionOptions {
 const gradingDomainHints: Record<string, string> = {
   '國語': `
 - 以關鍵字、成語或句子重點為主，避免抄全文。
-- 文意題避免主觀推論，只抽取題幹可判斷的詞。`,
+- 文意題避免主觀推論，只抽取題幹可判斷的詞。
+- 字音造詞題：檢查學生答案的讀音是否與題目要求一致（如：ㄋㄨㄥˋ 可答「弄瓦」，不可答「巷弄(ㄌㄨㄥˋ)」），讀音錯誤直接 0 分。`,
   '數學': `
 - 計算題保留最終數值與必要單位；需公式時留核心公式。
 - 幾何/代數題可列主要結論，避免冗長過程。`,
@@ -233,12 +234,23 @@ function buildAnswerKeyPrompt(domain?: string, priorWeightTypes?: import('./db')
 }
 
 【題型分類標準】
-- Type 1（唯一答案）：精確匹配，答案唯一且不可替換（如：2+3=5、選擇A）
-- Type 2（多答案可接受）：核心答案固定但允許不同表述（如：「光合作用」vs「植物製造養分」）
+- Type 1（唯一答案）：精確匹配，答案唯一且不可替換
+  例：是非題(O/X)、選擇題(A/B/C)、計算結果(2+3=5)
+
+- Type 2（多答案可接受）：核心答案固定但允許不同表述
+  例：詞義解釋「光合作用」vs「植物製造養分」
+      字音造詞「ㄋㄨㄥˋ：弄瓦、弄璋」（須記錄讀音於referenceAnswer）
+
 - Type 3（依表現給分）：開放式或計算題，需評分規準
   · 計算題：用 rubricsDimensions，維度通常包括「計算過程」和「最終答案」
   · 申論題：有明確答案要點時用 rubricsDimensions（如：「列舉三個優點」）
             純評價題時用 rubric 4級評價（如：「你對此事的看法」）
+
+【特殊題型處理】
+字音辨別造詞題（含注音符號，如：ㄋㄨㄥˋ：___）：
+- 判斷為 Type 2
+- referenceAnswer: "ㄋㄨㄥˋ讀音的詞語"（必須包含讀音說明）
+- acceptableAnswers: 列出標準答案中的所有範例詞
 
 【規則】
 - 題號：圖片有就用，無則1, 2, 3...（不可跳號）
@@ -268,7 +280,7 @@ function buildAnswerKeyPrompt(domain?: string, priorWeightTypes?: import('./db')
 
   // 領域提示（精簡版）
   const domainHints: Record<string, string> = {
-    '國語': '關鍵字優先，避免抄全文',
+    '國語': '字音造詞題(含注音)須在referenceAnswer記錄讀音，如「ㄋㄨㄥˋ讀音的詞語」',
     '數學': '數值+單位完整，公式需核心部分',
     '社會': '專注同音異字（如：九州≠九洲）',
     '自然': '名詞/數值/單位必須完整',
@@ -368,6 +380,7 @@ ${JSON.stringify(answerKey)}
 【分層評分規則】
 - Type 1（精確）：使用 answer 字段進行嚴格對比。完全相符 → 滿分；不符 → 0分。
 - Type 2（模糊）：使用 acceptableAnswers 進行語義匹配。完全/語義相符 → 滿分；部分 → 部分分。
+  · 字音造詞題：若 referenceAnswer 包含讀音說明（如「ㄋㄨㄥˋ讀音」），學生答案必須符合該讀音，讀音錯誤直接 0 分。
 - Type 3（評價）：使用 rubricsDimensions 多維度評分，逐維度評估後累計總分。若無維度，用 4 級標準（優秀/良好/尚可/待努力）。
 - 學生答案只要清楚寫出關鍵字/數值，即使字跡不完美也視為正確。
 `.trim()
