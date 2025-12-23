@@ -78,7 +78,18 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
 
       const submissionsData = await db.submissions.where('assignmentId').equals(assignmentId).toArray()
       const map = new Map<string, Submission>()
-      submissionsData.forEach((sub) => map.set(sub.studentId, sub))
+      submissionsData.forEach((sub) => {
+        // 診斷 Blob 狀態
+        console.log(`📊 載入作業 ${sub.id}:`, {
+          studentId: sub.studentId,
+          status: sub.status,
+          hasBlob: !!sub.imageBlob,
+          blobSize: sub.imageBlob?.size,
+          blobType: sub.imageBlob?.type,
+          imageUrl: sub.imageUrl
+        })
+        map.set(sub.studentId, sub)
+      })
       setSubmissions(map)
     } catch (err) {
       console.error('載入失敗', err)

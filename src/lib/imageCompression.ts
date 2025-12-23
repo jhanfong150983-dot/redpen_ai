@@ -9,6 +9,15 @@ interface CompressImageOptions {
 }
 
 /**
+ * 檢測是否為 Safari 瀏覽器
+ */
+function isSafari(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent.toLowerCase()
+  return ua.includes('safari') && !ua.includes('chrome') && !ua.includes('android')
+}
+
+/**
  * 压缩图片
  * @param dataUrl - Base64 格式的图片数据
  * @param options - 压缩选项
@@ -18,11 +27,16 @@ export async function compressImage(
   dataUrl: string,
   options: CompressImageOptions = {}
 ): Promise<Blob> {
+  // Safari 對 WebP 支援不佳，改用 JPEG
+  const defaultFormat = isSafari() ? 'image/jpeg' : 'image/webp'
+
   const {
     maxWidth = 1024,
     quality = 0.8,
-    format = 'image/webp'
+    format = defaultFormat
   } = options
+
+  console.log(`🔧 壓縮設定: format=${format}, isSafari=${isSafari()}`)
 
   return new Promise((resolve, reject) => {
     const img = new Image()

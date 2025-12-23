@@ -12,6 +12,15 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).toString()
 
 /**
+ * 檢測是否為 Safari 瀏覽器
+ */
+function isSafari(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent.toLowerCase()
+  return ua.includes('safari') && !ua.includes('chrome') && !ua.includes('android')
+}
+
+/**
  * 將 PDF 檔的「第一頁」轉成單張圖片 Blob
  * @param file PDF 檔
  * @param options 轉換選項
@@ -24,9 +33,12 @@ export async function convertPdfToImage(
     quality?: number
   } = {}
 ): Promise<Blob> {
+  // Safari 對 WebP 支援不佳，改用 JPEG
+  const defaultFormat = isSafari() ? 'image/jpeg' : 'image/webp'
+
   const {
     scale = 2,
-    format = 'image/webp',
+    format = defaultFormat,
     quality = 0.8
   } = options
 

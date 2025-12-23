@@ -221,8 +221,8 @@ export default function ScannerPage({
       console.log('🔄 開始壓縮圖片...')
       const compressedBlob = await compressImage(imageSrc, {
         maxWidth: 1024,
-        quality: 0.8,
-        format: 'image/webp'
+        quality: 0.8
+        // format 會根據瀏覽器自動選擇（Safari 用 JPEG，其他用 WebP）
       })
 
       console.log(`✅ 壓縮完成: ${(compressedBlob.size / 1024).toFixed(2)} KB`)
@@ -258,7 +258,7 @@ export default function ScannerPage({
 
       if (fileType === 'image') {
         // 處理圖片文件
-        console.log('🖼️ 處理圖片文件...')
+        console.log('🖼️ 處理圖片文件...', { fileName: file.name, fileSize: file.size, fileType: file.type })
 
         // 讀取圖片並壓縮
         const reader = new FileReader()
@@ -274,14 +274,16 @@ export default function ScannerPage({
           reader.readAsDataURL(file)
         })
 
+        console.log('✅ 圖片讀取完成，開始壓縮...')
+
         // 壓縮圖片
         imageBlob = await compressImage(dataUrl, {
           maxWidth: 1024,
-          quality: 0.8,
-          format: 'image/webp'
+          quality: 0.8
+          // format 會根據瀏覽器自動選擇（Safari 用 JPEG，其他用 WebP）
         })
 
-        console.log(`✅ 圖片壓縮完成: ${(imageBlob.size / 1024).toFixed(2)} KB`)
+        console.log(`✅ 圖片壓縮完成: ${(imageBlob.size / 1024).toFixed(2)} KB, type: ${imageBlob.type}`)
 
       } else if (fileType === 'pdf') {
         // 處理 PDF 文件
@@ -290,11 +292,11 @@ export default function ScannerPage({
         // 將 PDF 第一頁轉換為圖片
         imageBlob = await convertPdfToImage(file, {
           scale: 2,
-          format: 'image/webp',
           quality: 0.8
+          // format 會根據瀏覽器自動選擇（Safari 用 JPEG，其他用 WebP）
         })
 
-        console.log(`✅ PDF 轉換完成: ${(imageBlob.size / 1024).toFixed(2)} KB`)
+        console.log(`✅ PDF 轉換完成: ${(imageBlob.size / 1024).toFixed(2)} KB, type: ${imageBlob.type}`)
 
       } else {
         throw new Error('不支援的文件格式，請上傳圖片或 PDF 文件')
@@ -364,6 +366,13 @@ export default function ScannerPage({
             ? imageData.blobs[0]
             : await mergePageBlobs(imageData.blobs)
 
+        console.log(`📦 準備保存 Blob:`, {
+          studentId,
+          blobSize: mergedBlob.size,
+          blobType: mergedBlob.type,
+          blobCount: imageData.blobs.length
+        })
+
         // 創建新提交
         const submission: Submission = {
           id: generateId(),
@@ -376,6 +385,15 @@ export default function ScannerPage({
 
         console.log(`💾 保存作業: studentId=${studentId}, assignmentId=${assignmentId}, submissionId=${submission.id}`)
         await db.submissions.add(submission)
+
+        // 驗證保存的 Blob
+        const saved = await db.submissions.get(submission.id)
+        console.log(`✅ 驗證保存結果:`, {
+          submissionId: submission.id,
+          hasBlobAfterSave: !!saved?.imageBlob,
+          blobSizeAfterSave: saved?.imageBlob?.size,
+          blobTypeAfterSave: saved?.imageBlob?.type
+        })
         successCount++
       }
 
