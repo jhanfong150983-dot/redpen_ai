@@ -280,6 +280,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     domain?: string,
     allowedTypes?: QuestionType[]
   ) => {
+    console.log('📋 開始提取標準答案...', { fileName: file.name, domain, allowedTypes })
+    
     const fileType = getFileType(file)
     if (fileType !== 'image' && fileType !== 'pdf') {
       setErr('不支援的檔案格式，請改用圖片或 PDF')
@@ -292,25 +294,33 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
       let imageBlob: Blob
       if (fileType === 'image') {
+        console.log('🖼️ 處理圖片檔案', { size: file.size, type: file.type })
         imageBlob = await fileToBlob(file)
+        console.log('✅ 圖片轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
       } else {
+        console.log('📄 處理 PDF 檔案', { size: file.size })
         imageBlob = await convertPdfToImage(file, {
           scale: 2,
           format: 'image/webp',
           quality: 0.8
         })
+        console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
       }
 
+      console.log('🧠 呼叫 Gemini API 提取標準答案...')
       const extracted = await extractAnswerKeyFromImage(imageBlob, {
         domain,
         allowedQuestionTypes: allowedTypes
       })
+      console.log('✅ AI 提取完成', { questionCount: extracted.questions.length, totalScore: extracted.totalScore })
+      
       const { merged, notice } = mergeAnswerKeys(currentKey, extracted)
       onSet(merged)
       setNotice(notice)
     } catch (err) {
-      console.error('AI 讀取標準答案失敗', err)
-      setErr('AI 讀取失敗，請確認檔案或稍後再試')
+      console.error('❌ AI 讀取標準答案失敗', err)
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      setErr(`AI 讀取失敗：${errorMsg}`)
     } finally {
       setBusy(false)
     }
