@@ -266,7 +266,8 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         score: result.totalScore,
         feedback: '',
         gradingResult: result,
-        gradedAt: Date.now()
+        gradedAt: Date.now(),
+        imageBlob: submission.imageBlob  // 保留圖片
       })
       requestSync()
 
@@ -384,7 +385,8 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         score: newTotal,
         feedback: '',
         gradingResult: newGradingResult,
-        gradedAt: Date.now()
+        gradedAt: Date.now(),
+        imageBlob: submission.imageBlob  // 保留圖片
       })
       requestSync()
 
@@ -449,6 +451,8 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       const needDownload = candidates.filter(
         (s) => !s.imageBlob && (s.status === 'synced' || s.status === 'graded')
       )
+      const downloadErrors: string[] = []
+
       if (needDownload.length > 0) {
         setIsDownloading(true)
         for (let i = 0; i < needDownload.length; i++) {
@@ -460,9 +464,21 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             sub.imageBlob = blob
           } catch (err) {
             console.error('下載失敗', err)
+            const student = students.find(s => s.id === sub.studentId)
+            const studentInfo = student ? `${student.seatNumber}號 ${student.name}` : `ID: ${sub.studentId}`
+            downloadErrors.push(studentInfo)
           }
         }
         setIsDownloading(false)
+
+        // 如果有下載失敗，詢問是否繼續
+        if (downloadErrors.length > 0) {
+          const errorMsg = `以下 ${downloadErrors.length} 份作業下載失敗，將無法批改：\n${downloadErrors.join('\n')}\n\n是否繼續批改其他作業？`
+          if (!window.confirm(errorMsg)) {
+            setIsGrading(false)
+            return
+          }
+        }
       }
 
       const toGrade = candidates.filter((s) => s.imageBlob)
@@ -470,6 +486,12 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         alert('沒有可批改的影像')
         setIsGrading(false)
         return
+      }
+
+      // 顯示將要批改的數量
+      if (toGrade.length < candidates.length) {
+        const skipCount = candidates.length - toGrade.length
+        console.warn(`將跳過 ${skipCount} 份沒有影像的作業`)
       }
 
       const results = await gradeMultipleSubmissions(

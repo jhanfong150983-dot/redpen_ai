@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import Webcam from 'react-webcam'
-import { Camera, Mic, MicOff, CheckCircle, AlertCircle, Upload } from 'lucide-react'
+import { Camera, Mic, MicOff, CheckCircle, AlertCircle, Upload, X, ShoppingCart } from 'lucide-react'
 import { useSeatController } from '@/hooks/useSeatController'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
@@ -409,6 +409,30 @@ export default function ScannerPage({
   }, [capturedImages, assignmentId, requiredPages, students])
 
   /**
+   * 刪除指定學生的作業
+   */
+  const handleDeleteStudentImages = useCallback((studentId: string) => {
+    setCapturedImages(prev => {
+      const newMap = new Map(prev)
+      const imageData = newMap.get(studentId)
+
+      // 清理 URL
+      if (imageData) {
+        imageData.urls.forEach(url => URL.revokeObjectURL(url))
+      }
+
+      newMap.delete(studentId)
+      return newMap
+    })
+
+    // 如果刪除的是當前預覽的學生，切換到第一個
+    if (previewStudentId === studentId) {
+      const remaining = Array.from(capturedImages.keys()).filter(id => id !== studentId)
+      setPreviewStudentId(remaining[0] ?? null)
+    }
+  }, [capturedImages, previewStudentId])
+
+  /**
    * 觸發文件選擇
    */
   const triggerFileUpload = useCallback(() => {
@@ -551,34 +575,49 @@ export default function ScannerPage({
                   const coverUrl = imageData.urls[0]
                   const isActive = studentId === previewEntry?.[0]
                   return (
-                    <button
-                      key={studentId}
-                      type="button"
-                      onClick={() => setPreviewStudentId(studentId)}
-                      className={`rounded-lg border text-left transition ${
-                        isActive
-                          ? 'border-indigo-400 bg-indigo-50'
-                          : 'border-gray-200 bg-white hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="aspect-square relative overflow-hidden rounded-t-lg">
-                        {coverUrl && (
-                          <img
-                            src={coverUrl}
-                            alt={`${student?.name} 的作業`}
-                            className="w-full h-full object-cover"
-                          />
-                        )}
-                        {imageData.urls.length > 1 && (
-                          <span className="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/60 text-white">
-                            {imageData.urls.length}
-                          </span>
-                        )}
-                      </div>
-                      <div className="px-2 py-1.5 text-[11px] text-gray-700">
-                        {student?.seatNumber}號 {student?.name}
-                      </div>
-                    </button>
+                    <div key={studentId} className="relative group">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewStudentId(studentId)}
+                        className={`w-full rounded-lg border text-left transition ${
+                          isActive
+                            ? 'border-indigo-400 bg-indigo-50'
+                            : 'border-gray-200 bg-white hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="aspect-square relative overflow-hidden rounded-t-lg">
+                          {coverUrl && (
+                            <img
+                              src={coverUrl}
+                              alt={`${student?.name} 的作業`}
+                              className="w-full h-full object-cover"
+                            />
+                          )}
+                          {imageData.urls.length > 1 && (
+                            <span className="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/60 text-white">
+                              {imageData.urls.length}
+                            </span>
+                          )}
+                        </div>
+                        <div className="px-2 py-1.5 text-[11px] text-gray-700">
+                          {student?.seatNumber}號 {student?.name}
+                        </div>
+                      </button>
+                      {/* 刪除按鈕 */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (window.confirm(`確定要刪除 ${student?.seatNumber}號 ${student?.name} 的作業嗎？`)) {
+                            handleDeleteStudentImages(studentId)
+                          }
+                        }}
+                        className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                        title="刪除此作業"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   )
                 })}
               </div>
@@ -639,13 +678,28 @@ export default function ScannerPage({
         className="absolute inset-0 w-full h-full object-cover"
       />
 
-      {/* 成功提示動畫 */}
+      {/* 成功提示動畫 - 作業飛入收集籃 */}
       {captureSuccess && (
-        <div className="absolute inset-0 bg-green-500 bg-opacity-30 flex items-center justify-center animate-pulse z-10">
-          <div className="bg-white rounded-full p-6">
-            <CheckCircle className="w-16 h-16 text-green-600" />
+        <>
+          {/* 背景閃爍 */}
+          <div className="absolute inset-0 bg-green-500 bg-opacity-20 animate-pulse z-10" />
+
+          {/* 飛行的作業圖示 */}
+          <div className={`absolute ${
+            isLandscape
+              ? 'right-4 top-1/2 -translate-y-1/2'
+              : 'bottom-5 left-1/2 -translate-x-1/2'
+          } z-20`}>
+            <div className="relative">
+              <div className="absolute w-12 h-12 bg-white rounded-lg shadow-lg flex items-center justify-center animate-ping">
+                <Camera className="w-6 h-6 text-green-600" />
+              </div>
+              <div className="w-12 h-12 bg-white rounded-lg shadow-lg flex items-center justify-center">
+                <CheckCircle className="w-6 h-6 text-green-600" />
+              </div>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* 頂部狀態欄 */}
@@ -726,22 +780,28 @@ export default function ScannerPage({
         <button
           onClick={capture}
           disabled={isCapturing || !currentStudent}
-          className={`${actionBase} w-16 h-16`}
+          className={`${actionBase} w-16 h-16 ${isCapturing ? 'scale-95' : 'hover:scale-105'}`}
           aria-label="拍照"
-          title="拍照"
+          title="拍照 (Space)"
         >
           <Camera className="w-6 h-6" />
         </button>
-        {completedCount > 0 && (
-          <button
-            onClick={() => setShowConfirmation(true)}
-            className={actionBase}
-            aria-label="送出作業"
-            title="送出"
-          >
-            <CheckCircle className="w-5 h-5" />
-          </button>
-        )}
+        {/* 收集籃按鈕 - 始終顯示，有動態計數 */}
+        <button
+          onClick={() => setShowConfirmation(true)}
+          disabled={completedCount === 0}
+          className={`${actionBase} relative ${completedCount > 0 ? 'bg-green-500/20 border-green-400' : ''}`}
+          aria-label="查看收集籃"
+          title="查看已拍攝作業"
+        >
+          <ShoppingCart className="w-5 h-5" />
+          {/* 數量徽章 */}
+          {completedCount > 0 && (
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-white animate-bounce">
+              {completedCount}
+            </div>
+          )}
+        </button>
       </div>
 
       {/* 語音監聽狀態 */}
