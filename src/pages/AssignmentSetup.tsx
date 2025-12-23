@@ -39,16 +39,27 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [allowedQuestionTypes, setAllowedQuestionTypes] = useState<QuestionType[]>([])
   const domainOptions = ['國語', '數學', '社會', '自然', '英語', '其他']
 
-  const questionTypeOptions: Array<{ value: QuestionType; label: string }> = [
-    { value: 'truefalse', label: '是非' },
-    { value: 'choice', label: '選擇' },
-    { value: 'fill', label: '填空' },
-    { value: 'calc', label: '計算' },
-    { value: 'qa', label: '問答' },
-    { value: 'short', label: '簡答' },
-    { value: 'short_sentence', label: '短句' },
-    { value: 'long', label: '長句' },
-    { value: 'essay', label: '作文' }
+  interface QuestionTypeOption {
+    value: QuestionType
+    label: string
+    category: 1 | 2 | 3
+    categoryLabel: string
+    description: string
+  }
+
+  const questionTypeOptions: QuestionTypeOption[] = [
+    // Type 1：精確匹配
+    { value: 'truefalse', label: '是非', category: 1, categoryLabel: '客觀題（精確）', description: '單一絕對答案' },
+    { value: 'choice', label: '選擇', category: 1, categoryLabel: '客觀題（精確）', description: '單一絕對答案' },
+    // Type 2：模糊匹配
+    { value: 'fill', label: '填空', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
+    { value: 'calc', label: '計算', category: 2, categoryLabel: '半客觀題（模糊）', description: '允許多種表述' },
+    // Type 3：評價
+    { value: 'qa', label: '問答', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
+    { value: 'short', label: '簡答', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
+    { value: 'short_sentence', label: '短句', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
+    { value: 'long', label: '長句', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' },
+    { value: 'essay', label: '作文', category: 3, categoryLabel: '主觀題（評價）', description: '需要評分標準' }
   ]
   const rubricLabels: Rubric['levels'][number]['label'][] = [
     '優秀',
@@ -931,36 +942,116 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     題型範圍（選填）
                   </label>
-                  <p className="text-xs text-gray-500 mb-2">
-                    選擇這份作業包含的題型，可幫助 AI 更準確判斷題目類型
+                  <p className="text-xs text-gray-500 mb-3">
+                    選擇這份作業包含的題型，可幫助 AI 更準確判斷題目類型。可複選，包括跨分類複選。
                   </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {questionTypeOptions.map((option) => {
-                      const isSelected = allowedQuestionTypes.includes(option.value)
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => {
-                            if (isSelected) {
-                              setAllowedQuestionTypes((prev) =>
-                                prev.filter((t) => t !== option.value)
-                              )
-                            } else {
-                              setAllowedQuestionTypes((prev) => [...prev, option.value])
-                            }
-                          }}
-                          className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                            isSelected
-                              ? 'bg-green-100 text-green-700 border-2 border-green-500'
-                              : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
-                          }`}
-                          disabled={isSubmitting}
-                        >
-                          {option.label}
-                        </button>
-                      )
-                    })}
+                  
+                  {/* Type 1: 精確 */}
+                  <div className="mb-4">
+                    <div className="text-xs font-semibold text-blue-600 mb-2">
+                      Type 1 - 客觀題（精確匹配）
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 mb-3">
+                      {questionTypeOptions.filter(o => o.category === 1).map((option) => {
+                        const isSelected = allowedQuestionTypes.includes(option.value)
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setAllowedQuestionTypes((prev) =>
+                                  prev.filter((t) => t !== option.value)
+                                )
+                              } else {
+                                setAllowedQuestionTypes((prev) => [...prev, option.value])
+                              }
+                            }}
+                            className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                              isSelected
+                                ? 'bg-blue-100 text-blue-700 border-2 border-blue-500'
+                                : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
+                            }`}
+                            disabled={isSubmitting}
+                            title={option.description}
+                          >
+                            {option.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Type 2: 模糊 */}
+                  <div className="mb-4">
+                    <div className="text-xs font-semibold text-amber-600 mb-2">
+                      Type 2 - 半客觀題（模糊匹配）
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 mb-3">
+                      {questionTypeOptions.filter(o => o.category === 2).map((option) => {
+                        const isSelected = allowedQuestionTypes.includes(option.value)
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setAllowedQuestionTypes((prev) =>
+                                  prev.filter((t) => t !== option.value)
+                                )
+                              } else {
+                                setAllowedQuestionTypes((prev) => [...prev, option.value])
+                              }
+                            }}
+                            className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                              isSelected
+                                ? 'bg-amber-100 text-amber-700 border-2 border-amber-500'
+                                : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
+                            }`}
+                            disabled={isSubmitting}
+                            title={option.description}
+                          >
+                            {option.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Type 3: 評價 */}
+                  <div className="mb-4">
+                    <div className="text-xs font-semibold text-purple-600 mb-2">
+                      Type 3 - 主觀題（評價標準）
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {questionTypeOptions.filter(o => o.category === 3).map((option) => {
+                        const isSelected = allowedQuestionTypes.includes(option.value)
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setAllowedQuestionTypes((prev) =>
+                                  prev.filter((t) => t !== option.value)
+                                )
+                              } else {
+                                setAllowedQuestionTypes((prev) => [...prev, option.value])
+                              }
+                            }}
+                            className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                              isSelected
+                                ? 'bg-purple-100 text-purple-700 border-2 border-purple-500'
+                                : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
+                            }`}
+                            disabled={isSubmitting}
+                            title={option.description}
+                          >
+                            {option.label}
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
                 </div>
 

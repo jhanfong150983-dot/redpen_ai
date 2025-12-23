@@ -25,6 +25,14 @@ export interface Rubric {
   levels: RubricLevel[]
 }
 
+export type QuestionCategoryType = 1 | 2 | 3
+
+export interface RubricDimension {
+  name: string
+  maxScore: number
+  criteria: string
+}
+
 export interface AnswerKeyQuestion {
   id: string // 例如 "1", "1-1"
   type?: QuestionType
@@ -32,6 +40,11 @@ export interface AnswerKeyQuestion {
   referenceAnswer?: string
   rubric?: Rubric
   maxScore: number
+  // 新增：AI 判定欄位
+  detectedType?: QuestionCategoryType // 1=Type 1 (精確), 2=Type 2 (模糊), 3=Type 3 (評價)
+  detectionReason?: string // AI 判定理由（給教師參考）
+  acceptableAnswers?: string[] // Type 2 專用：同義詞清單
+  rubricsDimensions?: RubricDimension[] // Type 3 專用：評分維度
 }
 
 export interface AnswerKey {
@@ -80,6 +93,7 @@ export type SubmissionStatus = 'missing' | 'scanned' | 'synced' | 'graded'
  */
 export interface GradingDetail {
   questionId: string
+  detectedType?: QuestionCategoryType // 記錄此題的 Type 判定
   studentAnswer?: string
   score: number
   maxScore: number
@@ -88,6 +102,17 @@ export interface GradingDetail {
   comment?: string
   confidence?: number
   matchedLevel?: string
+  // Type 2 專用：匹配詳情
+  matchingDetails?: {
+    matchedAnswer: string // 匹配到的參考答案
+    matchType: 'exact' | 'synonym' | 'keyword' // 匹配方式
+  }
+  // Type 3 專用：各維度分數
+  rubricScores?: Array<{
+    dimension: string
+    score: number
+    maxScore: number
+  }>
 }
 
 /**

@@ -217,6 +217,19 @@ function buildAnswerKeyPrompt(domain?: string, allowedQuestionTypes?: import('./
     essay: '作文'
   }
 
+  // 題型分類（新增）
+  const typeCategory: Record<import('./db').QuestionType, 1 | 2 | 3> = {
+    truefalse: 1,  // Type 1: 精確
+    choice: 1,     // Type 1: 精確
+    fill: 2,       // Type 2: 模糊
+    calc: 2,       // Type 2: 模糊
+    qa: 3,         // Type 3: 評價
+    short: 3,      // Type 3: 評價
+    short_sentence: 3,  // Type 3: 評價
+    long: 3,       // Type 3: 評價
+    essay: 3       // Type 3: 評價
+  }
+
   let typeInstruction = `- 題型：請判斷題目類型並填入 type。若不確定，預設填 "fill"。
   - truefalse：是非題
   - choice：選擇題
@@ -230,7 +243,7 @@ function buildAnswerKeyPrompt(domain?: string, allowedQuestionTypes?: import('./
 
   if (allowedQuestionTypes && allowedQuestionTypes.length > 0) {
     const allowedLabels = allowedQuestionTypes.map(t => `${t}（${questionTypeLabels[t]}）`).join('、')
-    typeInstruction = `- 題型：本作業的題型範圍限定為【${allowedLabels}】，請在此範圍內判斷題目類型並填入 type。
+    typeInstruction = `- 題型：本作業的題型範圍限定為【${allowedLabels}】，請優先在此範圍內判斷題目類型並填入 type。
   - 嚴格限制：type 只能從這些類型中選擇：${allowedQuestionTypes.map(t => `"${t}"`).join(' | ')}
   - 若難以判斷，請選擇最接近的類型，不可使用範圍外的題型`
   }
@@ -243,17 +256,19 @@ interface AnswerKey {
   questions: Array<{
     id: string;      // 題號，如 "1", "1-1"
     type: "truefalse" | "choice" | "fill" | "calc" | "qa" | "short" | "short_sentence" | "long" | "essay";
-    answer?: string;          // 客觀題：判斷對錯所需的核心字詞/數值
-    referenceAnswer?: string; // 主觀題：範例答案或關鍵要點
-    rubric?: {
-      levels: Array<{
-        label: "優秀" | "良好" | "尚可" | "待努力";
-        min: number;
-        max: number;
-        criteria: string;
-      }>;
-    };
-    maxScore: number;// 該題滿分 > 0
+    answer?: string;          // Type 1/2 題：判斷對錯所需的核心字詞/數值
+    referenceAnswer?: string; // Type 2/3 題：範例答案或關鍵要點
+    maxScore: number;         // 該題滿分 > 0
+    
+    // 【新增：Type 判定欄位】
+    detectedType: 1 | 2 | 3;  // 1=精確、2=模糊、3=評價
+    detectionReason: string;  // 判定理由（簡短說明）
+    acceptableAnswers?: string[]; // Type 2 專用：列出 2-5 個同義詞（包括標準答案）
+    rubricsDimensions?: Array<{   // Type 3 專用：評分維度
+      name: string;     // 維度名稱（如「論述清晰」）
+      maxScore: number; // 該維度滿分
+      criteria: string; // 評分標準
+    }>;
   }>;
   totalScore: number; // 為所有 maxScore 之和
 }
@@ -261,11 +276,31 @@ interface AnswerKey {
 規則（嚴禁憑空捏造）：
 - 題號：圖片有題號就用；看不到則依序用 1, 2...，不可跳號或重複。
 ${typeInstruction}
-- 客觀題（truefalse/choice/fill）：填 answer，只留能判斷對錯的核心字詞/數值。
-- 主觀題（calc/qa/short/short_sentence/long/essay）：填 referenceAnswer 與 rubric。
-  - rubric 固定 4 級（優秀/良好/尚可/待努力），分數範圍需落在 1~maxScore。
-  - criteria 請依題目與 referenceAnswer 擬定，簡潔且可判分。
-- 配分：圖片有配分直接用；否則估計：選擇題 2-5 分、填充/是非 2-4 分、簡答 5-8 分、申論 8-15 分；不可為 0。
+
+【Type 判定邏輯】
+- Type 1（精確）：題目只有唯一絕對答案，如 2+3=? 或是非題「地球自轉」對不對？
+  - answer 填唯一正確答案
+  - detectedType = 1
+  - detectionReason = "只有單一絕對答案"
+  - 不需要 acceptableAnswers / rubricsDimensions
+  
+- Type 2（模糊）：題目有唯一核心答案，但表述方式可以多樣化，如「台灣最高峰？」(玉山/Yushan/Yueh Shan)
+  - answer 填最標準的答案
+  - referenceAnswer 可填完整解釋
+  - acceptableAnswers 列出 2-5 個同義詞（必須包括 answer 本身）
+  - detectedType = 2
+  - detectionReason = "有標準答案，但允許多種表述"
+  - 不需要 rubricsDimensions
+  
+- Type 3（評價）：開放式問題需要按評分標準判斷，如「說明全球暖化的成因」或「作文」
+  - referenceAnswer 填示例答案或評分要點
+  - rubricsDimensions 列出 3-5 個評分維度（每個維度 0-5 分）
+  - 各維度 maxScore 的總和 ≤ maxScore
+  - detectedType = 3
+  - detectionReason = "開放式題目需依評分標準判斷"
+  - 不需要 answer / acceptableAnswers
+
+- 配分規則：圖片有配分直接用；否則估計：選擇題 2-5 分、填充/是非 2-4 分、簡答 5-8 分、申論 8-15 分；不可為 0。
 - totalScore 必須等於所有 maxScore 總和，若不符請重算後回傳。
 - 若完全無法辨識任何題目，回傳 { "questions": [], "totalScore": 0 }。若部分題目模糊，就跳過那些題，不要猜。
 `.trim()
@@ -350,21 +385,44 @@ export async function gradeSubmission(
 下面是本次作業的標準答案與配分（JSON 格式）：
 ${JSON.stringify(answerKey)}
 
-請嚴格依照這份 AnswerKey 逐題批改：
+【批改流程】
+請嚴格依照這份 AnswerKey 逐題批改，根據「detectedType」採用分層評分邏輯：
+
 - **必須輸出所有題號**：${questionIds}（共 ${answerKey.questions.length} 題）
-- 即使學生未作答、空白、或答案完全無法辨識，也必須為該題輸出一條記錄：
-  * studentAnswer 填 "未作答" 或 "無法辨識"
-  * score = 0
-  * isCorrect = false
-  * confidence 可設為 100（因為確實沒寫或確實看不清）
-- 每一題都要輸出是否正確與得分。
+- 即使學生未作答、空白、或答案完全無法辨識，也必須為該題輸出一條記錄。
 - 題號 id 以 AnswerKey 中的 "id" 為主（例如 "1", "1-1"）。
-- 客觀題（truefalse/choice/fill）使用 answer 判斷對錯。
-- 主觀題（calc/qa/short/short_sentence/long/essay）使用 referenceAnswer 與 rubric 判分：
-  - 分數需落在 rubric 對應等級的 min~max 區間。
-  - reason 請寫出「符合哪個等級」與對應 criteria。
-- 學生答案只要清楚寫出關鍵字（例如「黑潮」「黃海」「6/7」等），即使字跡不完美也視為正確。
-- 相同的錯誤答案出現在不同題目時，要分別根據各題題意判斷是否錯誤。
+
+【分層評分規則】
+
+【Type 1 - 精確匹配】
+- 使用 answer 字段進行嚴格對比
+- 評分邏輯：完全相符 → 滿分；不符 → 0分
+- 允許的容差：符號變體（如 ○/O、✓/√）、微小格式差異（如前後空白）
+- reason 範例：「符合標準答案 '玉山'」或「與標準答案不符，寫了 'A' 但應為 'B'」
+- matchingDetails 記錄：matchedAnswer 設為 answer，matchType = "exact"
+
+【Type 2 - 模糊匹配】
+- 使用 answer 或 acceptableAnswers 進行語義匹配
+- 評分邏輯：
+  - 完全匹配 → 滿分
+  - 語義同義 → 滿分（如「玉山」vs「Yushan」「台灣最高峰」）
+  - 部分匹配（關鍵字正確但不完整） → 部分分
+  - 不符 → 0分
+- acceptableAnswers 若已設定，優先用此列表判斷；若無，使用 answer 本身
+- reason 範例：「符合同義詞 'Yushan'」或「部分正確，包含關鍵數值但單位有誤」
+- matchingDetails 記錄：matchedAnswer 設為匹配到的同義詞，matchType = "exact"/"synonym"/"keyword"
+
+【Type 3 - 評價標準】
+- 使用 rubricsDimensions 的多維度評分
+- 評分邏輯：逐個評估每個維度，累計總分
+- 若無 rubricsDimensions，改用舊 rubric 的 4 級標準（優秀/良好/尚可/待努力）
+- reason 範例：「論述清晰度：4/5（清楚但有小瑕疵）；邏輯完整性：3/5（基本完整）；整體評分 7/10」
+- matchedLevel 記錄：综合等級如「良好」
+- rubricScores 記錄：各維度分數細節
+
+【通用規則】
+- 學生答案只要清楚寫出關鍵字/數值，即使字跡不完美也視為正確
+- 相同錯誤答案出現在不同題目時，要分別根據各題題意判斷
 `.trim()
     } else if (answerKeyImage) {
       // 情境 2：沒有結構化 AnswerKey，但有答案卷圖片
@@ -507,13 +565,29 @@ ${lines}
   "details": [
     {
       "questionId": "題號（如 1, 1-1）",
+      "detectedType": 1|2|3（AI從AnswerKey判定的題型分類），
       "studentAnswer": "完整還原學生實際寫的內容，包括錯字或無法辨識的部分",
       "isCorrect": true 或 false,
       "score": 已給分數,
       "maxScore": 該題滿分,
-      "reason": "為什麼判定對或錯（簡短說明，著重在概念與規則；主觀題需對應 rubric）",
+      "reason": "為什麼判定對或錯（簡短說明，著重在概念與規則；Type 2/3需說明依據）",
       "matchedLevel": "主觀題可選：優秀/良好/尚可/待努力",
-      "confidence": 0-100（擷取學生答案時的猶豫程度）
+      "confidence": 0-100（擷取學生答案時的猶豫程度）,
+      
+      // 【Type 2 專用】
+      "matchingDetails": {
+        "matchedAnswer": "匹配到的參考答案",
+        "matchType": "exact|synonym|keyword（精確/同義詞/關鍵字）"
+      },
+      
+      // 【Type 3 專用】
+      "rubricScores": [
+        {
+          "dimension": "維度名稱（如論述清晰度）",
+          "score": 該維度得分,
+          "maxScore": 該維度滿分
+        }
+      ]
     }
   ],
   "mistakes": [
