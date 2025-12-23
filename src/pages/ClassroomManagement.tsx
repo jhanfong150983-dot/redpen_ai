@@ -8,6 +8,7 @@ import {
   Layers,
   Loader
 } from 'lucide-react'
+import { NumericInput } from '@/components/NumericInput'
 import { db, generateId } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
@@ -302,7 +303,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
   const handleStudentRowChange = (
     tempId: string,
     field: 'seatNumber' | 'name',
-    value: string
+    value: string | number
   ) => {
     setStudentRows((prev) =>
       prev.map((row) =>
@@ -625,18 +626,11 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                     學生人數（自動產生）
                   </label>
                   <div className="relative">
-                    <input
-                      type="number"
+                    <NumericInput
                       min={1}
                       max={100}
                       value={newStudentCount}
-                      onChange={(e) =>
-                        setNewStudentCount(
-                          Number.isNaN(Number.parseInt(e.target.value, 10))
-                            ? 1
-                            : Number.parseInt(e.target.value, 10)
-                        )
-                      }
+                      onChange={(v) => setNewStudentCount(typeof v === 'number' ? v : 1)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       disabled={isCreating}
                     />
@@ -752,12 +746,11 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
               <div className="space-y-2 max-h-[45vh] overflow-auto">
                 {studentRows.map((row) => (
                   <div key={row.tempId} className="grid grid-cols-[90px_1fr] gap-2">
-                    <input
-                      type="number"
+                    <NumericInput
                       min={1}
                       value={row.seatNumber}
-                      onChange={(e) =>
-                        handleStudentRowChange(row.tempId, 'seatNumber', e.target.value)
+                      onChange={(v) =>
+                        handleStudentRowChange(row.tempId, 'seatNumber', v)
                       }
                       className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       disabled={isStudentSaving}

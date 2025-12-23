@@ -125,6 +125,7 @@ let currentModelName = 'gemini-2.5-pro'
 
 export interface ExtractAnswerKeyOptions {
   domain?: string
+  allowedQuestionTypes?: import('./db').QuestionType[]
 }
 
 export interface GradeSubmissionOptions {
@@ -203,7 +204,37 @@ async function getRecentAnswerExtractionCorrections(
   }
 }
 
-function buildAnswerKeyPrompt(domain?: string) {
+function buildAnswerKeyPrompt(domain?: string, allowedQuestionTypes?: import('./db').QuestionType[]) {
+  const questionTypeLabels: Record<import('./db').QuestionType, string> = {
+    truefalse: '是非題',
+    choice: '選擇題',
+    fill: '填空/簡答式填寫',
+    calc: '計算題',
+    qa: '問答題',
+    short: '簡答題',
+    short_sentence: '短句題',
+    long: '長句題',
+    essay: '作文'
+  }
+
+  let typeInstruction = `- 題型：請判斷題目類型並填入 type。若不確定，預設填 "fill"。
+  - truefalse：是非題
+  - choice：選擇題
+  - fill：填空/簡答式填寫
+  - calc：計算題
+  - qa：問答題
+  - short：簡答題
+  - short_sentence：短句題
+  - long：長句題
+  - essay：作文`
+
+  if (allowedQuestionTypes && allowedQuestionTypes.length > 0) {
+    const allowedLabels = allowedQuestionTypes.map(t => `${t}（${questionTypeLabels[t]}）`).join('、')
+    typeInstruction = `- 題型：本作業的題型範圍限定為【${allowedLabels}】，請在此範圍內判斷題目類型並填入 type。
+  - 嚴格限制：type 只能從這些類型中選擇：${allowedQuestionTypes.map(t => `"${t}"`).join(' | ')}
+  - 若難以判斷，請選擇最接近的類型，不可使用範圍外的題型`
+  }
+
   const base = `
 你是一位嚴謹的老師，要從一張「標準答案／解答本」圖片整理出可機器批改的標準答案表。
 
@@ -229,16 +260,7 @@ interface AnswerKey {
 
 規則（嚴禁憑空捏造）：
 - 題號：圖片有題號就用；看不到則依序用 1, 2...，不可跳號或重複。
-- 題型：請判斷題目類型並填入 type。若不確定，預設填 "fill"。
-  - truefalse：是非題
-  - choice：選擇題
-  - fill：填空/簡答式填寫
-  - calc：計算題
-  - qa：問答題
-  - short：簡答題
-  - short_sentence：短句題
-  - long：長句題
-  - essay：作文
+${typeInstruction}
 - 客觀題（truefalse/choice/fill）：填 answer，只留能判斷對錯的核心字詞/數值。
 - 主觀題（calc/qa/short/short_sentence/long/essay）：填 referenceAnswer 與 rubric。
   - rubric 固定 4 級（優秀/良好/尚可/待努力），分數範圍需落在 1~maxScore。
@@ -734,7 +756,7 @@ export async function extractAnswerKeyFromImage(
   console.log('🧾 開始從答案卷圖片抽取 AnswerKey...')
   const imageBase64 = await blobToBase64(answerSheetImage)
 
-  const prompt = buildAnswerKeyPrompt(opts?.domain)
+  const prompt = buildAnswerKeyPrompt(opts?.domain, opts?.allowedQuestionTypes)
 
   const text = (await generateGeminiText(currentModelName, [
     prompt,

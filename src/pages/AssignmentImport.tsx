@@ -8,6 +8,7 @@ import {
   Users,
   X
 } from 'lucide-react'
+import { NumericInput } from '@/components/NumericInput'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
@@ -428,18 +429,11 @@ export default function AssignmentImport({
                   <label className="block text-[11px] font-medium text-gray-600 mb-1">
                     每位學生頁數
                   </label>
-                  <input
-                    type="number"
+                  <NumericInput
                     min={1}
                     max={4}
                     value={pagesPerStudent}
-                    onChange={(e) =>
-                      setPagesPerStudent(
-                        Number.isNaN(Number.parseInt(e.target.value, 10))
-                          ? 1
-                          : Number.parseInt(e.target.value, 10)
-                      )
-                    }
+                    onChange={(v) => setPagesPerStudent(typeof v === 'number' ? v : 1)}
                     className="w-full px-2 py-1 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   />
                 </div>
@@ -447,18 +441,11 @@ export default function AssignmentImport({
                   <label className="block text-[11px] font-medium text-gray-600 mb-1">
                     起始座號
                   </label>
-                  <input
-                    type="number"
+                  <NumericInput
                     min={1}
                     max={200}
                     value={startSeat}
-                    onChange={(e) =>
-                      setStartSeat(
-                        Number.isNaN(Number.parseInt(e.target.value, 10))
-                          ? 1
-                          : Number.parseInt(e.target.value, 10)
-                      )
-                    }
+                    onChange={(v) => setStartSeat(typeof v === 'number' ? v : 1)}
                     className="w-full px-2 py-1 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   />
                 </div>

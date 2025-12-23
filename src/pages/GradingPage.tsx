@@ -78,7 +78,8 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
 
       const submissionsData = await db.submissions.where('assignmentId').equals(assignmentId).toArray()
       const map = new Map<string, Submission>()
-      submissionsData.forEach((sub) => {
+
+      for (const sub of submissionsData) {
         // 診斷 Blob 狀態
         console.log(`📊 載入作業 ${sub.id}:`, {
           studentId: sub.studentId,
@@ -86,10 +87,49 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
           hasBlob: !!sub.imageBlob,
           blobSize: sub.imageBlob?.size,
           blobType: sub.imageBlob?.type,
+          hasBase64: !!sub.imageBase64,
           imageUrl: sub.imageUrl
         })
+
+        // 修復 Blob：如果 Blob 存在但沒有 type 或大小為 0，嘗試修復
+        if (sub.imageBlob) {
+          if (sub.imageBlob.size === 0 || !sub.imageBlob.type) {
+            console.warn(`⚠️ 作業 ${sub.id} 的 Blob 有問題 (size=${sub.imageBlob.size}, type="${sub.imageBlob.type}")`)
+
+            // 嘗試從 Base64 重建 Blob
+            if (sub.imageBase64) {
+              try {
+                console.log(`🔧 嘗試從 Base64 重建 Blob`)
+                const base64Data = sub.imageBase64.split(',')[1]
+                const mimeMatch = sub.imageBase64.match(/data:([^;]+);/)
+                const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
+                const byteString = atob(base64Data)
+                const arrayBuffer = new ArrayBuffer(byteString.length)
+                const uint8Array = new Uint8Array(arrayBuffer)
+                for (let i = 0; i < byteString.length; i++) {
+                  uint8Array[i] = byteString.charCodeAt(i)
+                }
+                sub.imageBlob = new Blob([arrayBuffer], { type: mimeType })
+                console.log(`✅ 從 Base64 重建 Blob 成功: size=${sub.imageBlob.size}, type=${sub.imageBlob.type}`)
+              } catch (error) {
+                console.error(`❌ 從 Base64 重建 Blob 失敗:`, error)
+                sub.imageBlob = undefined
+              }
+            } else {
+              // 沒有 Base64 備份，清除無效 Blob
+              console.warn(`⚠️ 無 Base64 備份，清除 Blob`)
+              sub.imageBlob = undefined
+            }
+          } else if (sub.imageBlob.type === '') {
+            // 如果只是 type 為空字串，嘗試修復
+            console.log(`🔧 修復作業 ${sub.id} 的 Blob type`)
+            sub.imageBlob = new Blob([sub.imageBlob], { type: 'image/jpeg' })
+          }
+        }
+
         map.set(sub.studentId, sub)
-      })
+      }
+
       setSubmissions(map)
     } catch (err) {
       console.error('載入失敗', err)
@@ -1166,16 +1206,25 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
                               >
                                 <span>{isCorrect ? '正確' : '錯誤'}</span>
                                 <input
-                                  type="number"
-                                  className="w-14 px-1 py-0.5 rounded border border-white/60 bg-white/70 text-gray-800 text-[10px]"
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  className="w-14 px-1 py-0.5 rounded border border-white/60 bg-white/70 text-gray-800 text-[10px] text-center"
                                   value={d.score ?? ''}
+                                  onFocus={(e) => {
+                                    // 點擊時自動選取全部文字，方便清除
+                                    e.target.select()
+                                  }}
                                   onChange={(e) => {
                                     const v = e.target.value
-                                    setEditableDetails((prev) => {
-                                      const next = [...prev]
-                                      next[i] = { ...next[i], score: v === '' ? '' : Number(v) }
-                                      return next
-                                    })
+                                    // 只允許數字
+                                    if (v === '' || /^\d+$/.test(v)) {
+                                      setEditableDetails((prev) => {
+                                        const next = [...prev]
+                                        next[i] = { ...next[i], score: v === '' ? '' : Number(v) }
+                                        return next
+                                      })
+                                    }
                                   }}
                                   onBlur={(e) => {
                                     const num = Number(e.target.value)

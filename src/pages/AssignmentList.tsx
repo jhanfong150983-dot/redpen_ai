@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BookOpen, ArrowLeft, Loader, X, Plus } from 'lucide-react'
+import { NumericInput } from '@/components/NumericInput'
 import { db } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import type {
@@ -409,12 +410,11 @@ export default function AssignmentList({
                             </option>
                           ))}
                         </select>
-                        <input
-                          type="number"
+                        <NumericInput
                           className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
                           value={q.maxScore}
-                          onChange={(e) =>
-                            updateQuestionField(idx, 'maxScore', e.target.value)
+                          onChange={(v) =>
+                            updateQuestionField(idx, 'maxScore', String(v))
                           }
                         />
                       </div>
@@ -446,29 +446,27 @@ export default function AssignmentList({
                                 <span className="text-[11px] text-gray-600">
                                   {level.label}
                                 </span>
-                                <input
-                                  type="number"
+                                <NumericInput
                                   className="w-14 px-1 py-1 border border-gray-300 rounded text-right"
                                   value={level.min}
-                                  onChange={(e) =>
+                                  onChange={(v) =>
                                     updateRubricLevel(
                                       idx,
                                       levelIndex,
                                       'min',
-                                      e.target.value
+                                      String(v)
                                     )
                                   }
                                 />
-                                <input
-                                  type="number"
+                                <NumericInput
                                   className="w-14 px-1 py-1 border border-gray-300 rounded text-right"
                                   value={level.max}
-                                  onChange={(e) =>
+                                  onChange={(v) =>
                                     updateRubricLevel(
                                       idx,
                                       levelIndex,
                                       'max',
-                                      e.target.value
+                                      String(v)
                                     )
                                   }
                                 />

@@ -9,6 +9,7 @@ import {
   X,
   Loader
 } from 'lucide-react'
+import { NumericInput } from '@/components/NumericInput'
 import {
   db,
   generateId,
@@ -35,6 +36,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [assignmentTitle, setAssignmentTitle] = useState('')
   const [totalPages, setTotalPages] = useState(1)
   const [assignmentDomain, setAssignmentDomain] = useState('')
+  const [allowedQuestionTypes, setAllowedQuestionTypes] = useState<QuestionType[]>([])
   const domainOptions = ['國語', '數學', '社會', '自然', '英語', '其他']
 
   const questionTypeOptions: Array<{ value: QuestionType; label: string }> = [
@@ -88,6 +90,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   )
   const [editingClassroomId, setEditingClassroomId] = useState('')
   const [editingDomain, setEditingDomain] = useState('')
+  const [editingAllowedQuestionTypes, setEditingAllowedQuestionTypes] = useState<QuestionType[]>([])
   const [isSavingAnswerKey, setIsSavingAnswerKey] = useState(false)
   const [editAnswerKeyFile, setEditAnswerKeyFile] = useState<File | null>(null)
   const [isExtractingAnswerKeyEdit, setIsExtractingAnswerKeyEdit] =
@@ -149,6 +152,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAssignmentTitle('')
     setTotalPages(1)
     setAssignmentDomain('')
+    setAllowedQuestionTypes([])
     setAnswerKey(null)
     setAnswerKeyFile(null)
     setAnswerKeyError(null)
@@ -262,7 +266,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setBusy: (busy: boolean) => void,
     setErr: (msg: string | null) => void,
     setNotice: (msg: string | null) => void,
-    domain?: string
+    domain?: string,
+    allowedTypes?: QuestionType[]
   ) => {
     const fileType = getFileType(file)
     if (fileType !== 'image' && fileType !== 'pdf') {
@@ -285,7 +290,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         })
       }
 
-      const extracted = await extractAnswerKeyFromImage(imageBlob, { domain })
+      const extracted = await extractAnswerKeyFromImage(imageBlob, {
+        domain,
+        allowedQuestionTypes: allowedTypes
+      })
       const { merged, notice } = mergeAnswerKeys(currentKey, extracted)
       onSet(merged)
       setNotice(notice)
@@ -326,6 +334,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         title: assignmentTitle.trim(),
         totalPages,
         domain: assignmentDomain,
+        allowedQuestionTypes: allowedQuestionTypes.length > 0 ? allowedQuestionTypes : undefined,
         answerKey: answerKey || undefined
       }
       await db.assignments.add(assignment)
@@ -360,7 +369,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setIsExtractingAnswerKey,
       setAnswerKeyError,
       setAnswerKeyNotice,
-      assignmentDomain
+      assignmentDomain,
+      allowedQuestionTypes
     )
   }
 
@@ -376,7 +386,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setIsExtractingAnswerKeyEdit,
       setEditAnswerKeyError,
       setEditAnswerKeyNotice,
-      editingDomain
+      editingDomain,
+      editingAllowedQuestionTypes
     )
   }
 
@@ -438,6 +449,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setEditingAnswerKey(normalizeAnswerKey(ak))
     setEditingClassroomId(assignment.classroomId)
     setEditingDomain(assignment.domain ?? '')
+    setEditingAllowedQuestionTypes(assignment.allowedQuestionTypes ?? [])
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
     setAnswerKeyModalOpen(true)
@@ -449,6 +461,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setEditingAnswerKey(null)
     setEditingClassroomId('')
     setEditingDomain('')
+    setEditingAllowedQuestionTypes([])
     setEditAnswerKeyFile(null)
     setEditAnswerKeyError(null)
     setEditAnswerKeyNotice(null)
@@ -471,7 +484,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       await db.assignments.update(editingAnswerAssignment.id, {
         answerKey: editingAnswerKey,
         domain: editingDomain,
-        classroomId: editingClassroomId
+        classroomId: editingClassroomId,
+        allowedQuestionTypes: editingAllowedQuestionTypes.length > 0 ? editingAllowedQuestionTypes : undefined
       })
       setAssignments((prev) => {
         if (selectedClassroomId && editingClassroomId !== selectedClassroomId) {
@@ -483,7 +497,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 ...a,
                 answerKey: editingAnswerKey,
                 domain: editingDomain,
-                classroomId: editingClassroomId
+                classroomId: editingClassroomId,
+                allowedQuestionTypes: editingAllowedQuestionTypes.length > 0 ? editingAllowedQuestionTypes : undefined
               }
             : a
         )
@@ -492,6 +507,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         ...editingAnswerAssignment,
         classroomId: editingClassroomId,
         domain: editingDomain,
+        allowedQuestionTypes: editingAllowedQuestionTypes.length > 0 ? editingAllowedQuestionTypes : undefined,
         answerKey: editingAnswerKey
       })
       requestSync()
@@ -912,6 +928,43 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    題型範圍（選填）
+                  </label>
+                  <p className="text-xs text-gray-500 mb-2">
+                    選擇這份作業包含的題型，可幫助 AI 更準確判斷題目類型
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {questionTypeOptions.map((option) => {
+                      const isSelected = allowedQuestionTypes.includes(option.value)
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setAllowedQuestionTypes((prev) =>
+                                prev.filter((t) => t !== option.value)
+                              )
+                            } else {
+                              setAllowedQuestionTypes((prev) => [...prev, option.value])
+                            }
+                          }}
+                          className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                            isSelected
+                              ? 'bg-green-100 text-green-700 border-2 border-green-500'
+                              : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
+                          }`}
+                          disabled={isSubmitting}
+                        >
+                          {option.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div>
                   <label
                     htmlFor="totalPages"
                     className="block text-sm font-medium text-gray-700 mb-2"
@@ -919,15 +972,12 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     拍照或批次分割頁數
                   </label>
                   <div className="relative">
-                    <input
+                    <NumericInput
                       id="totalPages"
-                      type="number"
-                      min="1"
-                      max="100"
+                      min={1}
+                      max={100}
                       value={totalPages}
-                      onChange={(e) =>
-                        setTotalPages(parseInt(e.target.value || '1', 10) || 1)
-                      }
+                      onChange={(v) => setTotalPages(typeof v === 'number' ? v : 1)}
                       className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all"
                       disabled={isSubmitting}
                     />
@@ -1038,16 +1088,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                                   </option>
                                 ))}
                               </select>
-                              <input
-                                type="number"
+                              <NumericInput
                                 className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
                                 value={q.maxScore}
-                                onChange={(e) =>
+                                onChange={(v) =>
                                   updateQuestionField(
                                     'create',
                                     idx,
                                     'maxScore',
-                                    e.target.value
+                                    String(v)
                                   )
                                 }
                               />
@@ -1109,31 +1158,29 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                                         <span className="text-[11px] text-gray-600">
                                           {level.label}
                                         </span>
-                                        <input
-                                          type="number"
+                                        <NumericInput
                                           className="px-1 py-1 border border-gray-300 rounded text-right"
                                           value={level.min}
-                                          onChange={(e) =>
+                                          onChange={(v) =>
                                             updateRubricLevel(
                                               'create',
                                               idx,
                                               levelIndex,
                                               'min',
-                                              e.target.value
+                                              String(v)
                                             )
                                           }
                                         />
-                                        <input
-                                          type="number"
+                                        <NumericInput
                                           className="px-1 py-1 border border-gray-300 rounded text-right"
                                           value={level.max}
-                                          onChange={(e) =>
+                                          onChange={(v) =>
                                             updateRubricLevel(
                                               'create',
                                               idx,
                                               levelIndex,
                                               'max',
-                                              e.target.value
+                                              String(v)
                                             )
                                           }
                                         />
@@ -1258,6 +1305,43 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  題型範圍（選填）
+                </label>
+                <p className="text-xs text-gray-500 mb-2">
+                  選擇這份作業包含的題型，可幫助 AI 更準確判斷題目類型
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {questionTypeOptions.map((option) => {
+                    const isSelected = editingAllowedQuestionTypes.includes(option.value)
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setEditingAllowedQuestionTypes((prev) =>
+                              prev.filter((t) => t !== option.value)
+                            )
+                          } else {
+                            setEditingAllowedQuestionTypes((prev) => [...prev, option.value])
+                          }
+                        }}
+                        className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          isSelected
+                            ? 'bg-green-100 text-green-700 border-2 border-green-500'
+                            : 'bg-gray-50 text-gray-600 border border-gray-300 hover:bg-gray-100'
+                        }`}
+                        disabled={isSavingAnswerKey}
+                      >
+                        {option.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-gray-700">
                   重新上傳答案卷（可選 PDF 或圖片）
@@ -1350,16 +1434,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                               </option>
                             ))}
                           </select>
-                          <input
-                            type="number"
+                          <NumericInput
                             className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
                             value={q.maxScore}
-                            onChange={(e) =>
+                            onChange={(v) =>
                               updateQuestionField(
                                 'edit',
                                 idx,
                                 'maxScore',
-                                e.target.value
+                                String(v)
                               )
                             }
                           />
@@ -1421,31 +1504,29 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                                     <span className="text-[11px] text-gray-600">
                                       {level.label}
                                     </span>
-                                    <input
-                                      type="number"
+                                    <NumericInput
                                       className="px-1 py-1 border border-gray-300 rounded text-right"
                                       value={level.min}
-                                      onChange={(e) =>
+                                      onChange={(v) =>
                                         updateRubricLevel(
                                           'edit',
                                           idx,
                                           levelIndex,
                                           'min',
-                                          e.target.value
+                                          String(v)
                                         )
                                       }
                                     />
-                                    <input
-                                      type="number"
+                                    <NumericInput
                                       className="px-1 py-1 border border-gray-300 rounded text-right"
                                       value={level.max}
-                                      onChange={(e) =>
+                                      onChange={(v) =>
                                         updateRubricLevel(
                                           'edit',
                                           idx,
                                           levelIndex,
                                           'max',
-                                          e.target.value
+                                          String(v)
                                         )
                                       }
                                     />

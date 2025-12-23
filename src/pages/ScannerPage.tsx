@@ -5,7 +5,7 @@ import { useSeatController } from '@/hooks/useSeatController'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
-import { compressImage } from '@/lib/imageCompression'
+import { compressImage, blobToBase64 } from '@/lib/imageCompression'
 import { convertPdfToImage, getFileType } from '@/lib/pdfToImage'
 import type { Student, Submission } from '@/lib/db'
 
@@ -373,6 +373,10 @@ export default function ScannerPage({
           blobCount: imageData.blobs.length
         })
 
+        // 轉換為 Base64（Safari 備用）
+        const imageBase64 = await blobToBase64(mergedBlob)
+        console.log(`📝 Base64 轉換完成: ${(imageBase64.length / 1024).toFixed(2)} KB`)
+
         // 創建新提交
         const submission: Submission = {
           id: generateId(),
@@ -380,19 +384,22 @@ export default function ScannerPage({
           studentId: studentId,
           status: 'scanned',
           imageBlob: mergedBlob,
+          imageBase64: imageBase64,  // Safari 備用
           createdAt: getCurrentTimestamp()
         }
 
         console.log(`💾 保存作業: studentId=${studentId}, assignmentId=${assignmentId}, submissionId=${submission.id}`)
         await db.submissions.add(submission)
 
-        // 驗證保存的 Blob
+        // 驗證保存的 Blob 和 Base64
         const saved = await db.submissions.get(submission.id)
         console.log(`✅ 驗證保存結果:`, {
           submissionId: submission.id,
           hasBlobAfterSave: !!saved?.imageBlob,
           blobSizeAfterSave: saved?.imageBlob?.size,
-          blobTypeAfterSave: saved?.imageBlob?.type
+          blobTypeAfterSave: saved?.imageBlob?.type,
+          hasBase64AfterSave: !!saved?.imageBase64,
+          base64SizeAfterSave: saved?.imageBase64 ? `${(saved.imageBase64.length / 1024).toFixed(2)} KB` : 'N/A'
         })
         successCount++
       }

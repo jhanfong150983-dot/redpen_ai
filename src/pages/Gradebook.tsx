@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ArrowLeft, Download, Info } from 'lucide-react'
+import { NumericInput } from '@/components/NumericInput'
 import { db } from '@/lib/db'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
 
@@ -253,12 +254,11 @@ export default function Gradebook({ onBack }: GradebookProps) {
                       <div className="font-semibold text-gray-900">{a.title}</div>
                       <div className="text-xs text-gray-500 flex items-center justify-center gap-1 mt-1">
                         權重
-                        <input
-                          type="number"
-                          step="0.1"
+                        <NumericInput
+                          allowDecimal={true}
                           min={0}
                           value={weights[a.id] ?? 1}
-                          onChange={(e) => handleWeightChange(a.id, Number(e.target.value))}
+                          onChange={(v) => handleWeightChange(a.id, typeof v === 'number' ? v : Number(v) || 0)}
                           className="w-16 px-2 py-1 border border-gray-300 rounded text-xs text-gray-700"
                         />
                       </div>

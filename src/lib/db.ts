@@ -68,6 +68,7 @@ export interface Assignment {
   title: string
   totalPages: number
   domain?: string // 國語、數學、社會、自然、英語、其他
+  allowedQuestionTypes?: QuestionType[] // 這份作業允許的題型範圍，用於限制 AI 判斷題型
   answerKey?: AnswerKey
   updatedAt?: number
 }
@@ -128,6 +129,7 @@ export interface Submission {
   studentId: string
   status: SubmissionStatus
   imageBlob?: Blob
+  imageBase64?: string  // Safari 備用：Base64 格式的圖片（包含 data URL prefix）
   imageUrl?: string
   createdAt: number
   updatedAt?: number
