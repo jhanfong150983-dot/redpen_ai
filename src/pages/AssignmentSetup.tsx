@@ -23,6 +23,7 @@ import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { extractAnswerKeyFromImage } from '@/lib/gemini'
 import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
+import { compressImageFile } from '@/lib/imageCompression'
 
 interface AssignmentSetupProps {
   onBack?: () => void
@@ -296,13 +297,25 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       if (fileType === 'image') {
         console.log('🖼️ 處理圖片檔案', { size: file.size, type: file.type })
         imageBlob = await fileToBlob(file)
-        console.log('✅ 圖片轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
+        
+        // 如果圖片太大，進行額外壓縮
+        if (imageBlob.size > 2 * 1024 * 1024) { // 大於 2MB
+          console.log('⚠️ 圖片過大，進行壓縮...', { originalSize: imageBlob.size })
+          imageBlob = await compressImageFile(imageBlob, {
+            maxWidth: 2000,
+            quality: 0.7,
+            format: 'image/webp'
+          })
+          console.log('✅ 圖片壓縮完成', { compressedSize: imageBlob.size })
+        } else {
+          console.log('✅ 圖片轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
+        }
       } else {
         console.log('📄 處理 PDF 檔案', { size: file.size })
         imageBlob = await convertPdfToImage(file, {
-          scale: 2,
+          scale: 1.5,  // 降低 scale 以減少大小
           format: 'image/webp',
-          quality: 0.8
+          quality: 0.65  // 降低品質以減少大小
         })
         console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
       }
