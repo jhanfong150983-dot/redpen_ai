@@ -18,11 +18,9 @@ import {
   type AnswerKey,
   type Assignment,
   type Classroom,
-  type QuestionType,
   type QuestionCategoryType,
   type AnswerKeyQuestion,
-  type Rubric,
-  type RubricDimension
+  type Rubric
 } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'

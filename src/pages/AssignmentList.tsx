@@ -7,7 +7,8 @@ import type {
   AnswerKey,
   Assignment,
   Classroom,
-  QuestionType,
+  QuestionCategoryType,
+  AnswerKeyQuestion,
   Rubric
 } from '@/lib/db'
 
@@ -28,33 +29,12 @@ export default function AssignmentList({
   const [assignments, setAssignments] = useState<AssignmentWithMeta[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
-  const questionTypeOptions: Array<{ value: QuestionType; label: string }> = [
-    { value: 'truefalse', label: '是非' },
-    { value: 'choice', label: '選擇' },
-    { value: 'fill', label: '填空' },
-    { value: 'calc', label: '計算' },
-    { value: 'qa', label: '問答' },
-    { value: 'short', label: '簡答' },
-    { value: 'short_sentence', label: '短句' },
-    { value: 'long', label: '長句' },
-    { value: 'essay', label: '作文' }
-  ]
   const rubricLabels: Rubric['levels'][number]['label'][] = [
     '優秀',
     '良好',
     '尚可',
     '待努力'
   ]
-  const subjectiveTypes = new Set<QuestionType>([
-    'calc',
-    'qa',
-    'short',
-    'short_sentence',
-    'long',
-    'essay'
-  ])
-  const isSubjectiveType = (type?: QuestionType) =>
-    type ? subjectiveTypes.has(type) : false
 
   const [editingAssignment, setEditingAssignment] =
     useState<AssignmentWithMeta | null>(null)
@@ -111,25 +91,38 @@ export default function AssignmentList({
         typeof q.maxScore === 'number' && Number.isFinite(q.maxScore)
           ? q.maxScore
           : 0
-      const type = (q.type ?? 'fill') as QuestionType
 
-      if (isSubjectiveType(type)) {
-        return {
-          id: sanitizeQuestionId(q.id, `${idx + 1}`),
-          type,
-          maxScore,
-          referenceAnswer: q.referenceAnswer ?? '',
-          rubric: normalizeRubric(q.rubric, maxScore),
-          answer: q.answer ?? ''
+      // Convert old QuestionType to QuestionCategoryType if needed
+      const questionType = typeof q.type === 'number'
+        ? q.type
+        : q.type === 'truefalse' || q.type === 'choice'
+          ? 1
+          : q.type === 'fill' || q.type === 'short' || q.type === 'short_sentence'
+            ? 2
+            : 3
+
+      const baseQuestion: AnswerKeyQuestion = {
+        id: sanitizeQuestionId(q.id, `${idx + 1}`),
+        type: questionType as QuestionCategoryType,
+        maxScore
+      }
+
+      // Add type-specific fields
+      if (questionType === 1) {
+        baseQuestion.answer = q.answer ?? ''
+      } else if (questionType === 2) {
+        baseQuestion.referenceAnswer = q.referenceAnswer ?? ''
+        baseQuestion.acceptableAnswers = q.acceptableAnswers ?? []
+      } else if (questionType === 3) {
+        baseQuestion.referenceAnswer = q.referenceAnswer ?? ''
+        if (q.rubricsDimensions) {
+          baseQuestion.rubricsDimensions = q.rubricsDimensions
+        } else {
+          baseQuestion.rubric = normalizeRubric(q.rubric, maxScore)
         }
       }
 
-      return {
-        id: sanitizeQuestionId(q.id, `${idx + 1}`),
-        type,
-        maxScore,
-        answer: q.answer ?? ''
-      }
+      return baseQuestion
     })
     const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
     return { questions, totalScore }
@@ -142,23 +135,54 @@ export default function AssignmentList({
   ) => {
     if (!editingAnswerKey) return
     const questions = [...editingAnswerKey.questions]
-    const item = { ...questions[index] }
+    const existing = questions[index]
+
+    // Support both old QuestionType and new QuestionCategoryType
+    const currentType = typeof existing?.type === 'number'
+      ? existing.type
+      : existing?.type
+        ? (existing.type === 'truefalse' || existing.type === 'choice' ? 1
+          : existing.type === 'fill' || existing.type === 'short' || existing.type === 'short_sentence' ? 2
+          : 3)
+        : 2
+
+    const item: AnswerKeyQuestion = {
+      ...existing,
+      id: existing?.id ?? '',
+      type: currentType as QuestionCategoryType,
+      maxScore: existing?.maxScore ?? 0
+    }
 
     if (field === 'maxScore') {
       const num = Number.parseInt(value || '0', 10) || 0
       item.maxScore = num
-      if (isSubjectiveType(item.type)) {
+      if (item.type === 3 && item.rubric) {
         item.rubric = normalizeRubric(item.rubric, num)
       }
     } else if (field === 'type') {
-      const nextType = (value || 'fill') as QuestionType
+      const nextType = parseInt(value, 10) as QuestionCategoryType
       item.type = nextType
-      if (isSubjectiveType(nextType)) {
-        if (!item.referenceAnswer) item.referenceAnswer = ''
-        item.rubric = normalizeRubric(item.rubric, item.maxScore || 0)
-      } else {
-        item.rubric = undefined
+
+      // Clear fields when type changes
+      if (nextType === 1) {
+        item.answer = item.answer ?? ''
         item.referenceAnswer = undefined
+        item.acceptableAnswers = undefined
+        item.rubric = undefined
+        item.rubricsDimensions = undefined
+      } else if (nextType === 2) {
+        item.answer = undefined
+        item.referenceAnswer = item.referenceAnswer ?? ''
+        item.acceptableAnswers = item.acceptableAnswers ?? []
+        item.rubric = undefined
+        item.rubricsDimensions = undefined
+      } else if (nextType === 3) {
+        item.answer = undefined
+        item.referenceAnswer = item.referenceAnswer ?? ''
+        item.acceptableAnswers = undefined
+        if (!item.rubric && !item.rubricsDimensions) {
+          item.rubric = normalizeRubric(undefined, item.maxScore || 0)
+        }
       }
     } else if (field === 'referenceAnswer') {
       item.referenceAnswer = value
@@ -380,8 +404,7 @@ export default function AssignmentList({
 
               <div className="space-y-3 max-h-64 overflow-auto">
                 {editingAnswerKey.questions.map((q, idx) => {
-                  const type = (q.type ?? 'fill') as QuestionType
-                  const isSubjective = isSubjectiveType(type)
+                  const questionType = typeof q.type === 'number' ? q.type : 2
                   const rubric = q.rubric ?? buildDefaultRubric(q.maxScore || 0)
 
                   return (
@@ -399,16 +422,14 @@ export default function AssignmentList({
                         />
                         <select
                           className="px-2 py-1 border border-gray-300 rounded"
-                          value={type}
+                          value={questionType}
                           onChange={(e) =>
                             updateQuestionField(idx, 'type', e.target.value)
                           }
                         >
-                          {questionTypeOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
+                          <option value={1}>Type 1 - 唯一答案</option>
+                          <option value={2}>Type 2 - 多答案可接受</option>
+                          <option value={3}>Type 3 - 依表現給分</option>
                         </select>
                         <NumericInput
                           className="w-16 px-1 py-1 border border-gray-300 rounded text-right"
@@ -419,74 +440,8 @@ export default function AssignmentList({
                         />
                       </div>
 
-                      {isSubjective ? (
-                        <div className="space-y-2">
-                          <div>
-                            <div className="text-[11px] text-gray-500 mb-1">
-                              範例答案
-                            </div>
-                            <textarea
-                              className="w-full px-2 py-1 border border-gray-300 rounded min-h-[60px]"
-                              value={q.referenceAnswer ?? ''}
-                              onChange={(e) =>
-                                updateQuestionField(
-                                  idx,
-                                  'referenceAnswer',
-                                  e.target.value
-                                )
-                              }
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            {rubric.levels.map((level, levelIndex) => (
-                              <div
-                                key={`${level.label}-${levelIndex}`}
-                                className="grid grid-cols-[auto,auto,auto,1fr] gap-2 items-center"
-                              >
-                                <span className="text-[11px] text-gray-600">
-                                  {level.label}
-                                </span>
-                                <NumericInput
-                                  className="w-14 px-1 py-1 border border-gray-300 rounded text-right"
-                                  value={level.min}
-                                  onChange={(v) =>
-                                    updateRubricLevel(
-                                      idx,
-                                      levelIndex,
-                                      'min',
-                                      String(v)
-                                    )
-                                  }
-                                />
-                                <NumericInput
-                                  className="w-14 px-1 py-1 border border-gray-300 rounded text-right"
-                                  value={level.max}
-                                  onChange={(v) =>
-                                    updateRubricLevel(
-                                      idx,
-                                      levelIndex,
-                                      'max',
-                                      String(v)
-                                    )
-                                  }
-                                />
-                                <input
-                                  className="w-full px-2 py-1 border border-gray-300 rounded"
-                                  value={level.criteria}
-                                  onChange={(e) =>
-                                    updateRubricLevel(
-                                      idx,
-                                      levelIndex,
-                                      'criteria',
-                                      e.target.value
-                                    )
-                                  }
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
+                      {/* Type 1: Standard Answer */}
+                      {questionType === 1 && (
                         <div>
                           <div className="text-[11px] text-gray-500 mb-1">
                             標準答案
@@ -500,6 +455,78 @@ export default function AssignmentList({
                           />
                         </div>
                       )}
+
+                      {/* Type 2 or 3: Reference Answer */}
+                      {(questionType === 2 || questionType === 3) && (
+                        <div>
+                          <div className="text-[11px] text-gray-500 mb-1">
+                            參考答案
+                          </div>
+                          <textarea
+                            className="w-full px-2 py-1 border border-gray-300 rounded min-h-[60px]"
+                            value={q.referenceAnswer ?? ''}
+                            onChange={(e) =>
+                              updateQuestionField(
+                                idx,
+                                'referenceAnswer',
+                                e.target.value
+                              )
+                            }
+                          />
+                        </div>
+                      )}
+
+                      {/* Type 3: Rubric */}
+                      {questionType === 3 && q.rubric && (
+                        <div className="space-y-2">
+                          {rubric.levels.map((level, levelIndex) => (
+                            <div
+                              key={`${level.label}-${levelIndex}`}
+                              className="grid grid-cols-[auto,auto,auto,1fr] gap-2 items-center"
+                            >
+                              <span className="text-[11px] text-gray-600">
+                                {level.label}
+                              </span>
+                              <NumericInput
+                                className="w-14 px-1 py-1 border border-gray-300 rounded text-right"
+                                value={level.min}
+                                onChange={(v) =>
+                                  updateRubricLevel(
+                                    idx,
+                                    levelIndex,
+                                    'min',
+                                    String(v)
+                                  )
+                                }
+                              />
+                              <NumericInput
+                                className="w-14 px-1 py-1 border border-gray-300 rounded text-right"
+                                value={level.max}
+                                onChange={(v) =>
+                                  updateRubricLevel(
+                                    idx,
+                                    levelIndex,
+                                    'max',
+                                    String(v)
+                                  )
+                                }
+                              />
+                              <input
+                                className="w-full px-2 py-1 border border-gray-300 rounded"
+                                value={level.criteria}
+                                onChange={(e) =>
+                                  updateRubricLevel(
+                                    idx,
+                                    levelIndex,
+                                    'criteria',
+                                    e.target.value
+                                  )
+                                }
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
@@ -508,16 +535,18 @@ export default function AssignmentList({
               <button
                 type="button"
                 onClick={() => {
+                  const newQuestion: AnswerKeyQuestion = {
+                    id: `${editingAnswerKey.questions.length + 1}`,
+                    type: 2, // Default to Type 2 (multi-answer acceptable)
+                    referenceAnswer: '',
+                    acceptableAnswers: [],
+                    maxScore: 1
+                  }
                   const next: AnswerKey = {
                     ...editingAnswerKey,
                     questions: [
                       ...editingAnswerKey.questions,
-                      {
-                        id: `${editingAnswerKey.questions.length + 1}`,
-                        type: 'fill',
-                        answer: '',
-                        maxScore: 1
-                      }
+                      newQuestion
                     ]
                   }
                   next.totalScore = next.questions.reduce(
