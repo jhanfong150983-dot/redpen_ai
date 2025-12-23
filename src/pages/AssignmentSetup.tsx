@@ -54,6 +54,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   ]
   const [answerKey, setAnswerKey] = useState<AnswerKey | null>(null)
   const [answerKeyFile, setAnswerKeyFile] = useState<File | null>(null)
+  const [answerSheetImage, setAnswerSheetImage] = useState<Blob | null>(null)
   const [isExtractingAnswerKey, setIsExtractingAnswerKey] = useState(false)
   const [answerKeyError, setAnswerKeyError] = useState<string | null>(null)
   const [answerKeyNotice, setAnswerKeyNotice] = useState<string | null>(null)
@@ -142,6 +143,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setPriorWeightTypes([])
     setAnswerKey(null)
     setAnswerKeyFile(null)
+    setAnswerSheetImage(null)
     setAnswerKeyError(null)
     setAnswerKeyNotice(null)
   }
@@ -159,20 +161,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
   const removePriorWeight = (type: QuestionCategoryType) => {
     setPriorWeightTypes(prev => prev.filter(t => t !== type))
-  }
-
-  const toggleEditingPriorWeight = (type: QuestionCategoryType) => {
-    setEditingPriorWeightTypes(prev => {
-      if (prev.includes(type)) {
-        return prev.filter(t => t !== type)
-      } else {
-        return [...prev, type]
-      }
-    })
-  }
-
-  const removeEditingPriorWeight = (type: QuestionCategoryType) => {
-    setEditingPriorWeightTypes(prev => prev.filter(t => t !== type))
   }
 
   const buildRubricRanges = (maxScore: number) => {
@@ -454,7 +442,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setAnswerKeyError,
       setAnswerKeyNotice,
       assignmentDomain,
-      priorWeightTypes
+      priorWeightTypes,
+      (blob) => setAnswerSheetImage(blob)
     )
   }
 
@@ -476,10 +465,18 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     )
   }
 
-  const handleReanalyzeMarkedQuestions = async () => {
-    if (!editingAnswerKey || !editAnswerSheetImage) return
+  const handleReanalyzeMarkedQuestions = async (target: 'create' | 'edit') => {
+    const currentAnswerKey = target === 'create' ? answerKey : editingAnswerKey
+    const currentImage = target === 'create' ? answerSheetImage : editAnswerSheetImage
+    const currentDomain = target === 'create' ? assignmentDomain : editingDomain
+    const currentPriorWeightTypes = target === 'create' ? priorWeightTypes : editingPriorWeightTypes
+    const setErrorFn = target === 'create' ? setAnswerKeyError : setEditAnswerKeyError
+    const setNoticeFn = target === 'create' ? setAnswerKeyNotice : setEditAnswerKeyNotice
+    const setAnswerKeyFn = target === 'create' ? setAnswerKey : setEditingAnswerKey
 
-    const markedQuestions = editingAnswerKey.questions.filter(q => q.needsReanalysis)
+    if (!currentAnswerKey || !currentImage) return
+
+    const markedQuestions = currentAnswerKey.questions.filter(q => q.needsReanalysis)
     if (markedQuestions.length === 0) return
 
     const confirmed = window.confirm(
@@ -491,18 +488,18 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     if (!confirmed) return
 
     setIsReanalyzing(true)
-    setEditAnswerKeyError(null)
+    setErrorFn(null)
 
     try {
       const reanalyzedQuestions = await reanalyzeQuestions(
-        editAnswerSheetImage,
+        currentImage,
         markedQuestions,
-        editingDomain,
-        editingPriorWeightTypes
+        currentDomain,
+        currentPriorWeightTypes
       )
 
-      // Merge reanalyzed questions back into editingAnswerKey
-      const updatedQuestions = editingAnswerKey.questions.map(q => {
+      // Merge reanalyzed questions back into current answer key
+      const updatedQuestions = currentAnswerKey.questions.map(q => {
         const reanalyzed = reanalyzedQuestions.find(rq => rq.id === q.id)
         if (reanalyzed) {
           // Clear needsReanalysis flag
@@ -512,11 +509,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       })
 
       const totalScore = updatedQuestions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
-      setEditingAnswerKey({ questions: updatedQuestions, totalScore })
-      setEditAnswerKeyNotice(`已重新分析 ${reanalyzedQuestions.length} 題`)
+      setAnswerKeyFn({ questions: updatedQuestions, totalScore })
+      setNoticeFn(`已重新分析 ${reanalyzedQuestions.length} 題`)
     } catch (err) {
       console.error('重新分析失敗', err)
-      setEditAnswerKeyError(
+      setErrorFn(
         err instanceof Error ? `重新分析失敗：${err.message}` : '重新分析失敗，請稍後再試'
       )
     } finally {
@@ -1371,18 +1368,33 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   <p className="text-xs text-gray-500 mt-1">
                     可多次上傳，題目會合併；重複題號會自動加上後綴。
                   </p>
-                  <button
-                    type="button"
-                    onClick={handleExtractAnswerKey}
-                    disabled={
-                      !answerKeyFile || isSubmitting || isExtractingAnswerKey
-                    }
-                    className="mt-2 inline-flex items-center px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                  >
-                    {isExtractingAnswerKey
-                      ? 'AI 解析中…'
-                      : '使用 AI 解析並合併答案'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleExtractAnswerKey}
+                      disabled={
+                        !answerKeyFile || isSubmitting || isExtractingAnswerKey
+                      }
+                      className="mt-2 inline-flex items-center px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    >
+                      {isExtractingAnswerKey
+                        ? 'AI 解析中…'
+                        : '使用 AI 解析並合併答案'}
+                    </button>
+                    {answerKey && answerKey.questions.some(q => q.needsReanalysis) && (
+                      <button
+                        type="button"
+                        onClick={() => handleReanalyzeMarkedQuestions('create')}
+                        disabled={isReanalyzing}
+                        className="mt-2 inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${isReanalyzing ? 'animate-spin' : ''}`} />
+                        {isReanalyzing
+                          ? '重新分析中…'
+                          : `重新分析 (${answerKey.questions.filter(q => q.needsReanalysis).length} 題)`}
+                      </button>
+                    )}
+                  </div>
                   {answerKeyError && (
                     <p className="text-sm text-red-600 mt-1">{answerKeyError}</p>
                   )}
@@ -1802,104 +1814,6 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  整份作業大部分題目屬性是？（可複選，必填）
-                  <span className="text-red-500 ml-1">*</span>
-                </label>
-
-                {/* Priority indicator with color depth */}
-                {editingPriorWeightTypes.length > 0 && (
-                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex flex-wrap gap-2">
-                      {editingPriorWeightTypes.map((type, index) => {
-                        const config = [
-                          { type: 1 as const, label: 'Type 1 - 唯一答案' },
-                          { type: 2 as const, label: 'Type 2 - 多答案可接受' },
-                          { type: 3 as const, label: 'Type 3 - 依表現給分' }
-                        ].find(c => c.type === type)!
-
-                        const colors = [
-                          { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-700' },
-                          { bg: 'bg-blue-400', text: 'text-white', border: 'border-blue-500' },
-                          { bg: 'bg-blue-200', text: 'text-blue-800', border: 'border-blue-300' }
-                        ][index]
-
-                        return (
-                          <div
-                            key={type}
-                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${colors.bg} ${colors.text} border-2 ${colors.border}`}
-                          >
-                            <span className="text-xs font-bold">#{index + 1}</span>
-                            <span className="text-xs font-medium">{config.label}</span>
-                            <button
-                              type="button"
-                              onClick={() => removeEditingPriorWeight(type)}
-                              className="ml-1 hover:opacity-70"
-                              disabled={isSavingAnswerKey}
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Type selection buttons */}
-                <div className="grid grid-cols-1 gap-3">
-                  {[
-                    {
-                      type: 1 as const,
-                      label: 'Type 1 - 唯一答案（精確匹配）',
-                      desc: '答案唯一且不可替換',
-                      examples: '如：是非題、選擇題'
-                    },
-                    {
-                      type: 2 as const,
-                      label: 'Type 2 - 多答案可接受（模糊匹配）',
-                      desc: '核心答案固定但允許不同表述',
-                      examples: '如：填空題、簡答題'
-                    },
-                    {
-                      type: 3 as const,
-                      label: 'Type 3 - 依表現給分（評價標準）',
-                      desc: '開放式或計算題，需評分規準',
-                      examples: '如：計算題、申論題、作文'
-                    }
-                  ].map((config) => {
-                    const isSelected = editingPriorWeightTypes.includes(config.type)
-                    const priority = isSelected ? editingPriorWeightTypes.indexOf(config.type) + 1 : null
-
-                    return (
-                      <button
-                        key={config.type}
-                        type="button"
-                        onClick={() => toggleEditingPriorWeight(config.type)}
-                        disabled={isSavingAnswerKey}
-                        className={`relative text-left p-4 rounded-xl border-2 transition-all ${
-                          isSelected
-                            ? 'bg-blue-50 border-blue-500 shadow-md'
-                            : 'bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50/50'
-                        }`}
-                      >
-                        {isSelected && (
-                          <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                            {priority}
-                          </div>
-                        )}
-                        <div className="text-sm font-semibold text-gray-900 mb-1">
-                          {config.label}
-                        </div>
-                        <div className="text-xs text-gray-600 mb-1">{config.desc}</div>
-                        <div className="text-xs text-gray-500">{config.examples}</div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-gray-700">
                   重新上傳答案卷（可選 PDF 或圖片）
@@ -1941,7 +1855,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   {editingAnswerKey && editingAnswerKey.questions.some(q => q.needsReanalysis) && (
                     <button
                       type="button"
-                      onClick={handleReanalyzeMarkedQuestions}
+                      onClick={() => handleReanalyzeMarkedQuestions('edit')}
                       disabled={isReanalyzing}
                       className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                     >
