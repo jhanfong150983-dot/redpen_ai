@@ -217,19 +217,6 @@ function buildAnswerKeyPrompt(domain?: string, allowedQuestionTypes?: import('./
     essay: '作文'
   }
 
-  // 題型分類（新增）
-  const typeCategory: Record<import('./db').QuestionType, 1 | 2 | 3> = {
-    truefalse: 1,  // Type 1: 精確
-    choice: 1,     // Type 1: 精確
-    fill: 2,       // Type 2: 模糊
-    calc: 2,       // Type 2: 模糊
-    qa: 3,         // Type 3: 評價
-    short: 3,      // Type 3: 評價
-    short_sentence: 3,  // Type 3: 評價
-    long: 3,       // Type 3: 評價
-    essay: 3       // Type 3: 評價
-  }
-
   let typeInstruction = `- 題型：請判斷題目類型並填入 type。若不確定，預設填 "fill"。
   - truefalse：是非題
   - choice：選擇題
