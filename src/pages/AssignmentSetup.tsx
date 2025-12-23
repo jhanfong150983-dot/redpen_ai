@@ -298,25 +298,48 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         console.log('🖼️ 處理圖片檔案', { size: file.size, type: file.type })
         imageBlob = await fileToBlob(file)
         
-        // 如果圖片太大，進行額外壓縮
-        if (imageBlob.size > 2 * 1024 * 1024) { // 大於 2MB
-          console.log('⚠️ 圖片過大，進行壓縮...', { originalSize: imageBlob.size })
+        // 激進壓縮：確保最終大小 < 1.5MB（Base64編碼後 < 2MB）
+        let compressionAttempts = 0
+        let targetSize = 1.5 * 1024 * 1024  // 1.5MB
+        
+        while (imageBlob.size > targetSize && compressionAttempts < 3) {
+          console.log(`⚠️ 第 ${compressionAttempts + 1} 次壓縮...`, { currentSize: imageBlob.size })
+          
+          const quality = 0.6 - (compressionAttempts * 0.15)  // 0.6, 0.45, 0.3
+          const maxWidth = 1600 - (compressionAttempts * 400)  // 1600, 1200, 800
+          
           imageBlob = await compressImageFile(imageBlob, {
-            maxWidth: 2000,
-            quality: 0.7,
+            maxWidth,
+            quality,
             format: 'image/webp'
           })
-          console.log('✅ 圖片壓縮完成', { compressedSize: imageBlob.size })
-        } else {
-          console.log('✅ 圖片轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
+          
+          compressionAttempts++
+          console.log(`✅ 壓縮完成 (第 ${compressionAttempts} 次)`, { compressedSize: imageBlob.size, maxWidth, quality })
+        }
+        
+        if (imageBlob.size > targetSize) {
+          console.warn('⚠️ 圖片仍然過大，但已達壓縮上限', { finalSize: imageBlob.size })
         }
       } else {
         console.log('📄 處理 PDF 檔案', { size: file.size })
         imageBlob = await convertPdfToImage(file, {
-          scale: 1.5,  // 降低 scale 以減少大小
+          scale: 1,  // 進一步降低 scale
           format: 'image/webp',
-          quality: 0.65  // 降低品質以減少大小
+          quality: 0.5  // 進一步降低品質
         })
+        
+        // PDF 也需要壓縮檢查
+        if (imageBlob.size > 1.5 * 1024 * 1024) {
+          console.log('⚠️ PDF 轉換後仍過大，進行壓縮...', { originalSize: imageBlob.size })
+          imageBlob = await compressImageFile(imageBlob, {
+            maxWidth: 1200,
+            quality: 0.4,
+            format: 'image/webp'
+          })
+          console.log('✅ PDF 壓縮完成', { compressedSize: imageBlob.size })
+        }
+        
         console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
       }
 
