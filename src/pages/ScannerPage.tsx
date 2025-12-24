@@ -19,39 +19,57 @@ interface ScannerPageProps {
 async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
   if (pageBlobs.length === 1) return pageBlobs[0]
 
-  const bitmaps = await Promise.all(pageBlobs.map((blob) => createImageBitmap(blob)))
-  const width = Math.max(...bitmaps.map((bmp) => bmp.width))
-  const height = bitmaps.reduce((sum, bmp) => sum + bmp.height, 0)
+  try {
+    // 驗證所有 Blob 都有效
+    for (let i = 0; i < pageBlobs.length; i++) {
+      if (!pageBlobs[i] || pageBlobs[i].size === 0) {
+        throw new Error(`第 ${i + 1} 頁的圖片無效或為空`)
+      }
+    }
 
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d')
-  if (!ctx) {
-    bitmaps.forEach((bmp) => bmp.close())
-    throw new Error('無法建立畫布')
+    const bitmaps = await Promise.all(pageBlobs.map((blob) => createImageBitmap(blob)))
+    const width = Math.max(...bitmaps.map((bmp) => bmp.width))
+    const height = bitmaps.reduce((sum, bmp) => sum + bmp.height, 0)
+
+    console.log(`🖼️ 合併 ${pageBlobs.length} 頁圖片: ${width}x${height}px`)
+
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      bitmaps.forEach((bmp) => bmp.close())
+      throw new Error('無法建立畫布')
+    }
+
+    let offsetY = 0
+    bitmaps.forEach((bmp) => {
+      const offsetX = Math.floor((width - bmp.width) / 2)
+      ctx.drawImage(bmp, offsetX, offsetY)
+      offsetY += bmp.height
+      bmp.close()
+    })
+
+    const merged = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (blob && blob.size > 0) {
+            console.log(`✅ 合併完成: ${(blob.size / 1024).toFixed(2)} KB, type: ${blob.type}`)
+            resolve(blob)
+          } else {
+            reject(new Error('無法產生合併影像或影像為空'))
+          }
+        },
+        'image/webp',
+        0.85
+      )
+    })
+
+    return merged
+  } catch (error) {
+    console.error('❌ 合併圖片失敗:', error)
+    throw new Error(`合併圖片失敗: ${error instanceof Error ? error.message : '未知錯誤'}`)
   }
-
-  let offsetY = 0
-  bitmaps.forEach((bmp) => {
-    const offsetX = Math.floor((width - bmp.width) / 2)
-    ctx.drawImage(bmp, offsetX, offsetY)
-    offsetY += bmp.height
-    bmp.close()
-  })
-
-  const merged = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) resolve(blob)
-        else reject(new Error('無法產生合併影像'))
-      },
-      'image/webp',
-      0.85
-    )
-  })
-
-  return merged
 }
 
 export default function ScannerPage({
@@ -373,9 +391,25 @@ export default function ScannerPage({
           blobCount: imageData.blobs.length
         })
 
+        // 驗證 Blob 的有效性
+        if (!mergedBlob || mergedBlob.size === 0) {
+          throw new Error(`學生 ${studentId} 的圖片 Blob 無效或為空`)
+        }
+
+        // 確保 Blob 有正確的 MIME type
+        if (!mergedBlob.type || mergedBlob.type === '') {
+          console.warn(`⚠️ Blob 缺少 MIME type，設定為 image/webp`)
+        }
+
         // 轉換為 Base64（Safari 備用）
-        const imageBase64 = await blobToBase64(mergedBlob)
-        console.log(`📝 Base64 轉換完成: ${(imageBase64.length / 1024).toFixed(2)} KB`)
+        let imageBase64: string
+        try {
+          imageBase64 = await blobToBase64(mergedBlob)
+          console.log(`📝 Base64 轉換完成: ${(imageBase64.length / 1024).toFixed(2)} KB`)
+        } catch (error) {
+          console.error('❌ Base64 轉換失敗:', error)
+          throw new Error(`Base64 轉換失敗: ${error instanceof Error ? error.message : '未知錯誤'}`)
+        }
 
         // 創建新提交
         const submission: Submission = {
@@ -389,7 +423,31 @@ export default function ScannerPage({
         }
 
         console.log(`💾 保存作業: studentId=${studentId}, assignmentId=${assignmentId}, submissionId=${submission.id}`)
-        await db.submissions.add(submission)
+        console.log(`   Blob 詳情: size=${mergedBlob.size} bytes, type="${mergedBlob.type}"`)
+        console.log(`   Base64 長度: ${imageBase64.length} chars`)
+
+        // 嘗試保存到 IndexedDB，添加詳細錯誤處理
+        try {
+          await db.submissions.add(submission)
+          console.log(`✅ 成功保存到 IndexedDB`)
+        } catch (dbError) {
+          console.error('❌ IndexedDB 保存失敗:', dbError)
+          console.error('   錯誤詳情:', {
+            name: dbError instanceof Error ? dbError.name : 'Unknown',
+            message: dbError instanceof Error ? dbError.message : String(dbError),
+            stack: dbError instanceof Error ? dbError.stack : undefined
+          })
+
+          // 提供更有用的錯誤訊息
+          if (dbError instanceof Error) {
+            if (dbError.message.includes('quota')) {
+              throw new Error('儲存空間不足，請清理瀏覽器資料或刪除舊的作業')
+            } else if (dbError.message.includes('Blob') || dbError.message.includes('DataClone')) {
+              throw new Error('圖片數據無法儲存，請嘗試重新拍照或上傳')
+            }
+          }
+          throw new Error(`資料庫儲存失敗: ${dbError instanceof Error ? dbError.message : '未知錯誤'}`)
+        }
 
         // 驗證保存的 Blob 和 Base64
         const saved = await db.submissions.get(submission.id)
