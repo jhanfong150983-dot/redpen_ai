@@ -48,8 +48,39 @@ export function getSubmissionImageUrl(submission?: {
 
   // 策略 1: 優先使用 Base64（最穩定，所有瀏覽器都支持）
   if (submission.imageBase64) {
-    console.log(`✅ 使用 Base64 (${browser})`, { submissionId: submission.id })
-    return submission.imageBase64
+    let base64 = submission.imageBase64
+
+    // 🔧 檢測並修復雙重前綴的問題
+    // 如果格式是 "data:image/xxx;base64,dataimage/xxx..." 說明內部有損壞的前綴
+    const doublePrefix = /^(data:image\/[^;]+;base64,)(data[^/]+)/i
+    const match = base64.match(doublePrefix)
+
+    if (match) {
+      console.warn(`⚠️ 檢測到雙重Base64前綴，正在修復...`, { submissionId: submission.id })
+      console.warn(`原始前150字:`, base64.substring(0, 150))
+
+      // 移除損壞的內部前綴，保留正確的外部前綴
+      // 將 "data:image/jpeg;base64,dataimage/jpegbase64/9j..."
+      // 修復為 "data:image/jpeg;base64,/9j..."
+      const prefix = match[1] // "data:image/jpeg;base64,"
+      const corruptedPart = match[2] // "dataimage" 或類似的損壞文字
+
+      // 找到真正的 Base64 數據開始位置 (通常是 / 或大寫字母開頭)
+      const dataStartIndex = base64.indexOf('/', prefix.length)
+      if (dataStartIndex > prefix.length) {
+        base64 = prefix + base64.substring(dataStartIndex)
+        console.log(`✅ 修復完成，新前150字:`, base64.substring(0, 150))
+      }
+    }
+
+    // 確保有正確的 data URL 格式
+    if (!base64.startsWith('data:image/')) {
+      console.warn(`⚠️ Base64缺少data URL前綴，添加默認前綴`, { submissionId: submission.id })
+      base64 = `data:image/jpeg;base64,${base64}`
+    }
+
+    console.log(`✅ 使用 Base64 (${browser})`, { submissionId: submission.id, length: base64.length })
+    return base64
   }
 
   // 策略 2: 使用本地 Blob

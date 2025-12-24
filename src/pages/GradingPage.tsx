@@ -154,6 +154,14 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             const blob = await downloadImageFromSupabase(sub.id)
             const base64 = await blobToBase64(blob)
 
+            // 🔍 調試：檢查 Base64 格式
+            console.log(`🔍 下載後的 Base64 格式檢查:`, {
+              submissionId: sub.id,
+              length: base64.length,
+              startsWithData: base64.startsWith('data:'),
+              prefix150: base64.substring(0, 150)
+            })
+
             // 更新資料庫和 state
             await db.submissions.update(sub.id, {
               imageBlob: blob,
