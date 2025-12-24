@@ -625,16 +625,24 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         console.warn(`將跳過 ${skipCount} 份沒有影像的作業`)
       }
 
+      console.log(`📤 開始調用 gradeMultipleSubmissions，作業數量: ${toGrade.length}`)
       const results = await gradeMultipleSubmissions(
         toGrade,
         null,
         (current, total) => setGradingProgress({ current, total }),
         assignment?.answerKey, { domain: assignment?.domain })
 
+      console.log(`📥 gradeMultipleSubmissions 返回:`, results)
+      console.log(`   類型: ${typeof results}`)
+      console.log(`   是否為物件: ${typeof results === 'object'}`)
+      console.log(`   有 successCount: ${'successCount' in (results || {})}`)
+
       const successCount =
         results && typeof results === 'object' && 'successCount' in results
           ? (results as any).successCount
           : toGrade.length
+
+      console.log(`✅ 最終 successCount: ${successCount}`)
 
       await loadData()
       requestSync()

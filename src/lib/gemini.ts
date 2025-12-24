@@ -694,10 +694,13 @@ export async function gradeMultipleSubmissions(
   answerKey?: AnswerKey,
   options?: GradeSubmissionOptions
 ) {
+  console.log(`📝 開始批量批改 ${submissions.length} 份作業`)
+
   // 先快速偵測可用模型（只做一次）
   const workingModel = await diagnoseModels()
   if (workingModel) {
     currentModelName = workingModel
+    console.log(`✅ 使用模型: ${workingModel}`)
   }
 
   let successCount = 0
@@ -705,17 +708,22 @@ export async function gradeMultipleSubmissions(
 
   for (let i = 0; i < submissions.length; i++) {
     const sub = submissions[i]
+    console.log(`\n📄 批改第 ${i + 1}/${submissions.length} 份作業: ${sub.id}`)
     onProgress(i + 1, submissions.length)
 
     try {
       if (!sub.imageBlob) {
-        console.warn(`跳過沒有 imageBlob 的作業: ${sub.id}`)
+        console.warn(`⚠️ 跳過沒有 imageBlob 的作業: ${sub.id}`)
         failCount++
         continue
       }
+
+      console.log(`🔍 開始批改作業 ${sub.id}...`)
       const result = await gradeSubmission(sub.imageBlob, answerKeyBlob, answerKey, options)
+      console.log(`📊 批改結果: 得分 ${result.totalScore}`)
 
       // 重要：保留 imageBlob 和 imageBase64，確保批改後仍可預覽
+      console.log(`💾 儲存批改結果到資料庫...`)
       await db.submissions.update(sub.id!, {
         status: 'graded',
         score: result.totalScore,
@@ -725,11 +733,12 @@ export async function gradeMultipleSubmissions(
         imageBase64: sub.imageBase64   // 保留圖片 Base64
       })
 
-      console.log(`✅ 批改成功: ${sub.id}, 得分: ${result.totalScore}`)
       successCount++
+      console.log(`✅ 批改成功 (${i + 1}/${submissions.length}): ${sub.id}, 得分: ${result.totalScore}, 累計成功: ${successCount}`)
     } catch (e) {
-      console.error(`❌ 批改作業 ${sub.id} 失敗:`, e)
       failCount++
+      console.error(`❌ 批改作業失敗 (${i + 1}/${submissions.length}): ${sub.id}`, e)
+      console.error(`   累計失敗: ${failCount}`)
     }
 
     // 簡單延遲，避免打太快
@@ -738,6 +747,9 @@ export async function gradeMultipleSubmissions(
       await new Promise((r) => setTimeout(r, 2000))
     }
   }
+
+  console.log(`\n🏁 批改完成！總計: ${submissions.length}, 成功: ${successCount}, 失敗: ${failCount}`)
+  console.log(`📤 返回結果: { successCount: ${successCount}, failCount: ${failCount} }`)
 
   return { successCount, failCount }
 }
