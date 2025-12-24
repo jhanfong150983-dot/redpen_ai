@@ -603,25 +603,43 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
 
     try {
       // 處理需要準備圖片的作業（沒有 Blob 但可能有 Base64 或需要下載）
-      const needPrepare = candidates.filter((s) => !s.imageBlob)
+      // 🔧 重要：強制為所有有 Base64 的作業重新重建 Blob，確保修復損壞的 Base64
+      const needRebuild = candidates.filter((s) => s.imageBase64)
+      const needPrepare = candidates.filter((s) => !s.imageBlob && !s.imageBase64)
       const prepareErrors: string[] = []
 
-      if (needPrepare.length > 0) {
-        console.log(`📥 需要準備 ${needPrepare.length} 份作業的圖片`)
+      console.log(`📦 批改前準備: ${needRebuild.length} 份需重建 Blob, ${needPrepare.length} 份需下載`)
+
+      if (needRebuild.length > 0 || needPrepare.length > 0) {
         setIsDownloading(true)
 
-        for (let i = 0; i < needPrepare.length; i++) {
-          const sub = needPrepare[i]
-          setDownloadProgress({ current: i + 1, total: needPrepare.length })
+        const totalTasks = needRebuild.length + needPrepare.length
+        let currentTask = 0
+
+        // 先重建所有有 Base64 的 Blob（修復損壞）
+        for (const sub of needRebuild) {
+          currentTask++
+          setDownloadProgress({ current: currentTask, total: totalTasks })
 
           try {
-            // 優先從 Base64 重建 Blob
-            if (sub.imageBase64) {
-              console.log(`🔧 從 Base64 重建 Blob: ${sub.id}`)
-              sub.imageBlob = rebuildBlobFromBase64(sub.imageBase64)
-              console.log(`✅ 從 Base64 重建成功: size=${sub.imageBlob.size}`)
-            } else if (sub.status === 'synced' || sub.status === 'graded') {
-              // 沒有 Base64，嘗試從雲端下載
+            console.log(`🔧 從 Base64 重建 Blob: ${sub.id}`)
+            sub.imageBlob = rebuildBlobFromBase64(sub.imageBase64!)
+            console.log(`✅ 從 Base64 重建成功: size=${sub.imageBlob.size}`)
+          } catch (err) {
+            console.error('重建 Blob 失敗', err)
+            const student = students.find(s => s.id === sub.studentId)
+            const studentInfo = student ? `${student.seatNumber}號 ${student.name}` : `ID: ${sub.studentId}`
+            prepareErrors.push(studentInfo)
+          }
+        }
+
+        // 再下載沒有 Base64 也沒有 Blob 的作業
+        for (const sub of needPrepare) {
+          currentTask++
+          setDownloadProgress({ current: currentTask, total: totalTasks })
+
+          try {
+            if (sub.status === 'synced' || sub.status === 'graded') {
               console.log(`📥 從雲端下載: ${sub.id}`)
               const blob = await downloadImageFromSupabase(sub.id)
               await db.submissions.update(sub.id, { imageBlob: blob })
@@ -637,6 +655,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             prepareErrors.push(studentInfo)
           }
         }
+
         setIsDownloading(false)
 
         // 如果有準備失敗，詢問是否繼續
