@@ -305,13 +305,36 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
     }
 
     if (!submission.imageBlob) {
-      try {
-        const blob = await downloadImageFromSupabase(submission.id)
-        submission.imageBlob = blob
-        await db.submissions.update(submission.id, { imageBlob: blob })
-      } catch {
-        alert('下載影像失敗，無法重評')
-        return
+      // 優先從 Base64 重建 Blob
+      if (submission.imageBase64) {
+        try {
+          console.log('🔧 從 Base64 重建 Blob 用於批改')
+          const base64Data = submission.imageBase64.split(',')[1]
+          const mimeMatch = submission.imageBase64.match(/data:([^;]+);/)
+          const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
+          const byteString = atob(base64Data)
+          const arrayBuffer = new ArrayBuffer(byteString.length)
+          const uint8Array = new Uint8Array(arrayBuffer)
+          for (let i = 0; i < byteString.length; i++) {
+            uint8Array[i] = byteString.charCodeAt(i)
+          }
+          submission.imageBlob = new Blob([arrayBuffer], { type: mimeType })
+          console.log(`✅ 從 Base64 重建 Blob 成功: size=${submission.imageBlob.size}, type=${submission.imageBlob.type}`)
+        } catch (error) {
+          console.error('❌ 從 Base64 重建 Blob 失敗:', error)
+          alert('無法重建圖片，請重新上傳作業')
+          return
+        }
+      } else {
+        // 沒有 Base64，嘗試從 Supabase 下載
+        try {
+          const blob = await downloadImageFromSupabase(submission.id)
+          submission.imageBlob = blob
+          await db.submissions.update(submission.id, { imageBlob: blob })
+        } catch {
+          alert('下載影像失敗，無法重評')
+          return
+        }
       }
     }
 
@@ -358,13 +381,36 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
     if (flaggedIds.length === 0) return
 
     if (!submission.imageBlob) {
-      try {
-        const blob = await downloadImageFromSupabase(submission.id)
-        submission.imageBlob = blob
-        await db.submissions.update(submission.id, { imageBlob: blob })
-      } catch {
-        alert('下載影像失敗，無法重評')
-        return
+      // 優先從 Base64 重建 Blob
+      if (submission.imageBase64) {
+        try {
+          console.log('🔧 從 Base64 重建 Blob 用於重新批改')
+          const base64Data = submission.imageBase64.split(',')[1]
+          const mimeMatch = submission.imageBase64.match(/data:([^;]+);/)
+          const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
+          const byteString = atob(base64Data)
+          const arrayBuffer = new ArrayBuffer(byteString.length)
+          const uint8Array = new Uint8Array(arrayBuffer)
+          for (let i = 0; i < byteString.length; i++) {
+            uint8Array[i] = byteString.charCodeAt(i)
+          }
+          submission.imageBlob = new Blob([arrayBuffer], { type: mimeType })
+          console.log(`✅ 從 Base64 重建 Blob 成功: size=${submission.imageBlob.size}, type=${submission.imageBlob.type}`)
+        } catch (error) {
+          console.error('❌ 從 Base64 重建 Blob 失敗:', error)
+          alert('無法重建圖片，請重新上傳作業')
+          return
+        }
+      } else {
+        // 沒有 Base64，嘗試從 Supabase 下載
+        try {
+          const blob = await downloadImageFromSupabase(submission.id)
+          submission.imageBlob = blob
+          await db.submissions.update(submission.id, { imageBlob: blob })
+        } catch {
+          alert('下載影像失敗，無法重評')
+          return
+        }
       }
     }
 

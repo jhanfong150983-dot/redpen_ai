@@ -429,24 +429,49 @@ export default function ScannerPage({
         // 嘗試保存到 IndexedDB，添加詳細錯誤處理
         try {
           await db.submissions.add(submission)
-          console.log(`✅ 成功保存到 IndexedDB`)
+          console.log(`✅ 成功保存到 IndexedDB (含 Blob)`)
         } catch (dbError) {
-          console.error('❌ IndexedDB 保存失敗:', dbError)
+          console.error('❌ IndexedDB 保存失敗 (含 Blob):', dbError)
           console.error('   錯誤詳情:', {
             name: dbError instanceof Error ? dbError.name : 'Unknown',
             message: dbError instanceof Error ? dbError.message : String(dbError),
             stack: dbError instanceof Error ? dbError.stack : undefined
           })
 
-          // 提供更有用的錯誤訊息
-          if (dbError instanceof Error) {
-            if (dbError.message.includes('quota')) {
-              throw new Error('儲存空間不足，請清理瀏覽器資料或刪除舊的作業')
-            } else if (dbError.message.includes('Blob') || dbError.message.includes('DataClone')) {
-              throw new Error('圖片數據無法儲存，請嘗試重新拍照或上傳')
+          // 檢查是否是 Blob 相關的錯誤
+          const errorMsg = dbError instanceof Error ? dbError.message.toLowerCase() : String(dbError).toLowerCase()
+          const isBlobError = errorMsg.includes('blob') ||
+                             errorMsg.includes('dataclone') ||
+                             errorMsg.includes('structured clone') ||
+                             errorMsg.includes('preparing')
+
+          if (isBlobError) {
+            console.warn('⚠️ Blob 儲存失敗，嘗試僅使用 Base64 儲存...')
+
+            // 備用方案：僅儲存 Base64，不儲存 Blob
+            const submissionWithoutBlob: Submission = {
+              id: submission.id,
+              assignmentId: submission.assignmentId,
+              studentId: submission.studentId,
+              status: submission.status,
+              imageBase64: submission.imageBase64,  // 僅保留 Base64
+              // imageBlob 不設定
+              createdAt: submission.createdAt
             }
+
+            try {
+              await db.submissions.add(submissionWithoutBlob)
+              console.log(`✅ 成功保存到 IndexedDB (僅 Base64，無 Blob)`)
+              console.log(`   注意：此提交僅包含 Base64 格式，Blob 已省略`)
+            } catch (base64Error) {
+              console.error('❌ 即使僅用 Base64 也儲存失敗:', base64Error)
+              throw new Error('儲存失敗，請檢查瀏覽器儲存空間或嘗試清理資料')
+            }
+          } else if (errorMsg.includes('quota')) {
+            throw new Error('儲存空間不足，請清理瀏覽器資料或刪除舊的作業')
+          } else {
+            throw new Error(`資料庫儲存失敗: ${dbError instanceof Error ? dbError.message : '未知錯誤'}`)
           }
-          throw new Error(`資料庫儲存失敗: ${dbError instanceof Error ? dbError.message : '未知錯誤'}`)
         }
 
         // 驗證保存的 Blob 和 Base64
