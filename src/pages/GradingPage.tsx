@@ -23,6 +23,7 @@ import {
 } from '@/lib/gemini'
 import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { getSubmissionImageUrl } from '@/lib/utils'
+import { blobToBase64 } from '@/lib/imageCompression'
 
 interface GradingPageProps {
   assignmentId: string
@@ -138,6 +139,40 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       }
 
       setSubmissions(map)
+
+      // 🔧 跨設備支持：自動下載沒有 Base64 的作業圖片
+      const needDownloadBase64 = submissionsData.filter(
+        (sub) => !sub.imageBase64 && !sub.imageBlob && sub.imageUrl && sub.status === 'synced'
+      )
+
+      if (needDownloadBase64.length > 0) {
+        console.log(`📥 檢測到 ${needDownloadBase64.length} 份作業沒有本地圖片，開始下載...`)
+
+        // 在背景下載並轉換為 Base64
+        for (const sub of needDownloadBase64) {
+          try {
+            const blob = await downloadImageFromSupabase(sub.id)
+            const base64 = await blobToBase64(blob)
+
+            // 更新資料庫和 state
+            await db.submissions.update(sub.id, {
+              imageBlob: blob,
+              imageBase64: base64
+            })
+
+            // 更新 UI
+            sub.imageBlob = blob
+            sub.imageBase64 = base64
+            setSubmissions((prev) => new Map(prev).set(sub.studentId, sub))
+
+            console.log(`✅ 下載並緩存成功: ${sub.id}`)
+          } catch (error) {
+            console.error(`❌ 下載失敗: ${sub.id}`, error)
+          }
+        }
+
+        console.log(`✅ 背景下載完成`)
+      }
     } catch (err) {
       console.error('載入失敗', err)
       setError(err instanceof Error ? err.message : '載入失敗')

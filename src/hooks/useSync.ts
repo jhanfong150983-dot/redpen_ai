@@ -327,6 +327,9 @@ export function useSync(options: UseSyncOptions = {}) {
 
     const existingSubmissions = await db.submissions.toArray()
 
+    console.log(`📦 pullMetadata: 從雲端拉取 ${submissions.length} 筆 submissions`)
+    console.log(`📦 pullMetadata: 本地現有 ${existingSubmissions.length} 筆 submissions`)
+
     // 保留本地圖片數據（Blob 和 Base64）
     const imageDataMap = new Map(
       existingSubmissions.map((sub) => [
@@ -337,6 +340,17 @@ export function useSync(options: UseSyncOptions = {}) {
         }
       ])
     )
+
+    console.log(`📦 imageDataMap 建立完成，包含 ${imageDataMap.size} 筆圖片數據`)
+
+    // 統計有多少本地圖片數據
+    let blobCount = 0
+    let base64Count = 0
+    imageDataMap.forEach((data) => {
+      if (data.imageBlob) blobCount++
+      if (data.imageBase64) base64Count++
+    })
+    console.log(`📊 本地圖片統計: ${blobCount} 個 Blob, ${base64Count} 個 Base64`)
 
     const mergedSubmissions: Submission[] = submissions
       .filter(
@@ -359,6 +373,14 @@ export function useSync(options: UseSyncOptions = {}) {
         // 從本地恢復圖片數據
         const localImageData = imageDataMap.get(sub.id)
 
+        if (localImageData && (localImageData.imageBlob || localImageData.imageBase64)) {
+          console.log(`🔄 恢復圖片數據: ${sub.id}`, {
+            hasBlob: !!localImageData.imageBlob,
+            hasBase64: !!localImageData.imageBase64,
+            base64Length: localImageData.imageBase64?.length
+          })
+        }
+
         return {
           id: sub.id,
           assignmentId: sub.assignmentId,
@@ -376,6 +398,17 @@ export function useSync(options: UseSyncOptions = {}) {
           updatedAt: toMillis(sub.updatedAt ?? (sub as { updated_at?: unknown }).updated_at)
         }
       })
+
+    console.log(`✅ 合併完成，準備寫入 ${mergedSubmissions.length} 筆 submissions`)
+
+    // 統計合併後的圖片數據
+    let mergedBlobCount = 0
+    let mergedBase64Count = 0
+    mergedSubmissions.forEach((sub) => {
+      if (sub.imageBlob) mergedBlobCount++
+      if (sub.imageBase64) mergedBase64Count++
+    })
+    console.log(`📊 合併後圖片統計: ${mergedBlobCount} 個 Blob, ${mergedBase64Count} 個 Base64`)
 
     const normalizedClassrooms: Classroom[] = classrooms
       .filter((c: Classroom) => c?.id && !deletedClassroomSet.has(c.id))
