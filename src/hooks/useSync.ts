@@ -118,11 +118,43 @@ export function useSync(options: UseSyncOptions = {}) {
 
       console.log('圖片與資料同步成功')
 
+      // 同步成功後，更新狀態但保留本地圖片數據
+      console.log('📝 更新本地狀態為 synced，保留圖片數據...')
+
+      // 先檢查當前數據
+      const beforeUpdate = await db.submissions.get(submission.id)
+      console.log('更新前:', {
+        hasBlob: !!beforeUpdate?.imageBlob,
+        blobSize: beforeUpdate?.imageBlob?.size,
+        hasBase64: !!beforeUpdate?.imageBase64,
+        base64Length: beforeUpdate?.imageBase64?.length
+      })
+
       await db.submissions.update(submission.id, {
         status: 'synced',
         imageUrl: `submissions/${submission.id}.webp`
+        // 注意：不更新 imageBlob 和 imageBase64，保留原有數據
       })
-      console.log('本地狀態更新成功')
+
+      // 驗證更新後數據
+      const afterUpdate = await db.submissions.get(submission.id)
+      console.log('更新後:', {
+        status: afterUpdate?.status,
+        hasBlob: !!afterUpdate?.imageBlob,
+        blobSize: afterUpdate?.imageBlob?.size,
+        hasBase64: !!afterUpdate?.imageBase64,
+        base64Length: afterUpdate?.imageBase64?.length,
+        imageUrl: afterUpdate?.imageUrl
+      })
+
+      if (beforeUpdate?.imageBlob && !afterUpdate?.imageBlob) {
+        console.error('⚠️ 警告：更新後 Blob 丟失！')
+      }
+      if (beforeUpdate?.imageBase64 && !afterUpdate?.imageBase64) {
+        console.error('⚠️ 警告：更新後 Base64 丟失！')
+      }
+
+      console.log('✅ 本地狀態更新成功')
 
       return true
     } catch (error) {
@@ -294,10 +326,16 @@ export function useSync(options: UseSyncOptions = {}) {
     const deletedSubmissionSet = new Set(deletedSubmissionIds)
 
     const existingSubmissions = await db.submissions.toArray()
-    const imageMap = new Map(
-      existingSubmissions
-        .filter((sub) => sub.imageBlob)
-        .map((sub) => [sub.id, sub.imageBlob as Blob])
+
+    // 保留本地圖片數據（Blob 和 Base64）
+    const imageDataMap = new Map(
+      existingSubmissions.map((sub) => [
+        sub.id,
+        {
+          imageBlob: sub.imageBlob,
+          imageBase64: sub.imageBase64
+        }
+      ])
     )
 
     const mergedSubmissions: Submission[] = submissions
@@ -318,6 +356,9 @@ export function useSync(options: UseSyncOptions = {}) {
             ? sub.gradedAt
             : undefined
 
+        // 從本地恢復圖片數據
+        const localImageData = imageDataMap.get(sub.id)
+
         return {
           id: sub.id,
           assignmentId: sub.assignmentId,
@@ -330,7 +371,8 @@ export function useSync(options: UseSyncOptions = {}) {
           gradedAt,
           correctionCount: sub.correctionCount,
           imageUrl: sub.imageUrl,
-          imageBlob: imageMap.get(sub.id),
+          imageBlob: localImageData?.imageBlob,       // 保留本地 Blob
+          imageBase64: localImageData?.imageBase64,   // 保留本地 Base64
           updatedAt: toMillis(sub.updatedAt ?? (sub as { updated_at?: unknown }).updated_at)
         }
       })
