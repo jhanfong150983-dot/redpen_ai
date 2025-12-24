@@ -239,7 +239,9 @@ function buildAnswerKeyPrompt(domain?: string, priorWeightTypes?: import('./db')
 
 - Type 2（多答案可接受）：核心答案固定但允許不同表述
   例：詞義解釋「光合作用」vs「植物製造養分」
-      字音造詞「ㄋㄨㄥˋ：弄瓦、弄璋」（須記錄讀音於referenceAnswer）
+      異音字造詞「ㄋㄨㄥˋ：弄瓦、弄璋」「ㄌㄨㄥˋ：巷弄」（須記錄讀音於referenceAnswer）
+      相似字造詞「(言部)辯：辯護、爭辯」「(辛部)辨：辨別、分辨」（須記錄部首於referenceAnswer）
+
 
 - Type 3（依表現給分）：開放式或計算題，需評分規準
   · 計算題：用 rubricsDimensions，維度通常包括「計算過程」和「最終答案」

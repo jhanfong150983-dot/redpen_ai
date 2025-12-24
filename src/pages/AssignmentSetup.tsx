@@ -351,7 +351,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
       // Save image blob for re-analysis if callback provided
       if (onImageBlobReady) {
+        console.log('💾 保存答案卷圖片 blob 用於重新分析', { blobSize: imageBlob.size })
         onImageBlobReady(imageBlob)
+      } else {
+        console.warn('⚠️ 沒有提供 onImageBlobReady 回調，重新分析功能將無法使用')
       }
 
       console.log('🧠 呼叫 Gemini API 提取標準答案...')
@@ -471,7 +474,25 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     const setNoticeFn = target === 'create' ? setAnswerKeyNotice : setEditAnswerKeyNotice
     const setAnswerKeyFn = target === 'create' ? setAnswerKey : setEditingAnswerKey
 
-    if (!currentAnswerKey || !currentImage) return
+    console.log('🔄 重新分析調試:', {
+      target,
+      hasAnswerKey: !!currentAnswerKey,
+      hasImage: !!currentImage,
+      imageSize: currentImage?.size,
+      markedQuestionsCount: currentAnswerKey?.questions.filter(q => q.needsReanalysis).length
+    })
+
+    if (!currentAnswerKey) {
+      console.error('❌ 缺少 currentAnswerKey')
+      setErrorFn('缺少標準答案，無法重新分析')
+      return
+    }
+
+    if (!currentImage) {
+      console.error('❌ 缺少答案卷圖片，請先上傳答案卷')
+      setErrorFn('缺少答案卷圖片，請重新上傳答案卷後再試')
+      return
+    }
 
     const markedQuestions = currentAnswerKey.questions.filter(q => q.needsReanalysis)
     if (markedQuestions.length === 0) return
