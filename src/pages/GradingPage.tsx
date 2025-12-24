@@ -552,32 +552,55 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
     setError(null)
 
     try {
-      const needDownload = candidates.filter(
-        (s) => !s.imageBlob && (s.status === 'synced' || s.status === 'graded')
-      )
-      const downloadErrors: string[] = []
+      // 處理需要準備圖片的作業（沒有 Blob 但可能有 Base64 或需要下載）
+      const needPrepare = candidates.filter((s) => !s.imageBlob)
+      const prepareErrors: string[] = []
 
-      if (needDownload.length > 0) {
+      if (needPrepare.length > 0) {
+        console.log(`📥 需要準備 ${needPrepare.length} 份作業的圖片`)
         setIsDownloading(true)
-        for (let i = 0; i < needDownload.length; i++) {
-          const sub = needDownload[i]
-          setDownloadProgress({ current: i + 1, total: needDownload.length })
+
+        for (let i = 0; i < needPrepare.length; i++) {
+          const sub = needPrepare[i]
+          setDownloadProgress({ current: i + 1, total: needPrepare.length })
+
           try {
-            const blob = await downloadImageFromSupabase(sub.id)
-            await db.submissions.update(sub.id, { imageBlob: blob })
-            sub.imageBlob = blob
+            // 優先從 Base64 重建 Blob
+            if (sub.imageBase64) {
+              console.log(`🔧 從 Base64 重建 Blob: ${sub.id}`)
+              const base64Data = sub.imageBase64.split(',')[1]
+              const mimeMatch = sub.imageBase64.match(/data:([^;]+);/)
+              const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
+              const byteString = atob(base64Data)
+              const arrayBuffer = new ArrayBuffer(byteString.length)
+              const uint8Array = new Uint8Array(arrayBuffer)
+              for (let j = 0; j < byteString.length; j++) {
+                uint8Array[j] = byteString.charCodeAt(j)
+              }
+              sub.imageBlob = new Blob([arrayBuffer], { type: mimeType })
+              console.log(`✅ 從 Base64 重建成功: size=${sub.imageBlob.size}`)
+            } else if (sub.status === 'synced' || sub.status === 'graded') {
+              // 沒有 Base64，嘗試從雲端下載
+              console.log(`📥 從雲端下載: ${sub.id}`)
+              const blob = await downloadImageFromSupabase(sub.id)
+              await db.submissions.update(sub.id, { imageBlob: blob })
+              sub.imageBlob = blob
+              console.log(`✅ 下載成功: size=${blob.size}`)
+            } else {
+              throw new Error('無圖片數據（無 Blob、Base64 或雲端 URL）')
+            }
           } catch (err) {
-            console.error('下載失敗', err)
+            console.error('準備圖片失敗', err)
             const student = students.find(s => s.id === sub.studentId)
             const studentInfo = student ? `${student.seatNumber}號 ${student.name}` : `ID: ${sub.studentId}`
-            downloadErrors.push(studentInfo)
+            prepareErrors.push(studentInfo)
           }
         }
         setIsDownloading(false)
 
-        // 如果有下載失敗，詢問是否繼續
-        if (downloadErrors.length > 0) {
-          const errorMsg = `以下 ${downloadErrors.length} 份作業下載失敗，將無法批改：\n${downloadErrors.join('\n')}\n\n是否繼續批改其他作業？`
+        // 如果有準備失敗，詢問是否繼續
+        if (prepareErrors.length > 0) {
+          const errorMsg = `以下 ${prepareErrors.length} 份作業準備失敗，將無法批改：\n${prepareErrors.join('\n')}\n\n是否繼續批改其他作業？`
           if (!window.confirm(errorMsg)) {
             setIsGrading(false)
             return
@@ -591,6 +614,8 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         setIsGrading(false)
         return
       }
+
+      console.log(`✅ 準備批改 ${toGrade.length} 份作業`)
 
       // 顯示將要批改的數量
       if (toGrade.length < candidates.length) {

@@ -70,11 +70,31 @@ export function useSync(options: UseSyncOptions = {}) {
     try {
       console.log(`開始同步提交 ${submission.id}`)
 
-      if (!submission.imageBlob) {
-        throw new Error('缺少圖片資料')
+      let imageBase64: string
+
+      // 優先使用 imageBase64（如果已經有）
+      if (submission.imageBase64) {
+        console.log('✅ 使用現有的 Base64 數據')
+        imageBase64 = submission.imageBase64
+      } else if (submission.imageBlob) {
+        // 從 Blob 轉換
+        console.log('🔄 從 Blob 轉換為 Base64')
+        imageBase64 = await blobToBase64(submission.imageBlob)
+      } else {
+        throw new Error('缺少圖片資料（無 Blob 也無 Base64）')
       }
 
-      const imageBase64 = await blobToBase64(submission.imageBlob)
+      // 確定 content type
+      let contentType = 'image/webp'
+      if (submission.imageBlob?.type) {
+        contentType = submission.imageBlob.type
+      } else if (submission.imageBase64) {
+        // 從 Base64 data URL 中提取 MIME type
+        const mimeMatch = submission.imageBase64.match(/data:([^;]+);/)
+        if (mimeMatch) {
+          contentType = mimeMatch[1]
+        }
+      }
 
       const response = await fetch('/api/data/submission', {
         method: 'POST',
@@ -86,7 +106,7 @@ export function useSync(options: UseSyncOptions = {}) {
           studentId: submission.studentId,
           createdAt: submission.createdAt,
           imageBase64,
-          contentType: submission.imageBlob.type || 'image/webp'
+          contentType
         })
       })
 
@@ -102,7 +122,7 @@ export function useSync(options: UseSyncOptions = {}) {
         status: 'synced',
         imageUrl: `submissions/${submission.id}.webp`
       })
-      console.log('本地狀態更新成功，保留 Blob 供預覽')
+      console.log('本地狀態更新成功')
 
       return true
     } catch (error) {
