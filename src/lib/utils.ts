@@ -50,6 +50,9 @@ export function getSubmissionImageUrl(submission?: {
   if (submission.imageBase64) {
     let base64 = submission.imageBase64
 
+    // 🔍 調試：顯示 Base64 的前 200 個字符
+    console.log(`🔍 Base64 前200字:`, base64.substring(0, 200))
+
     // 🔧 檢測並修復損壞的 Base64 前綴
     // 正常格式: "data:image/jpeg;base64,/9j/4AAQ..."
     // 損壞格式: "data:image/jpeg;base64,/jpegbase64/9j/4AAQ..." 或 "data:image/jpeg;base64,dataimage/jpegbase64/9j/..."
@@ -62,23 +65,20 @@ export function getSubmissionImageUrl(submission?: {
         const prefix = prefixMatch[0] // "data:image/jpeg;base64,"
         const afterPrefix = base64.substring(prefix.length)
 
-        // 檢查是否有損壞的文字（不是有效的 Base64 開頭）
-        // 有效的 Base64 通常以 / 或大寫字母開頭
-        const validBase64Start = /^[/A-Z0-9+]/i
+        console.log(`🔍 前綴後的前50字:`, afterPrefix.substring(0, 50))
 
-        if (!validBase64Start.test(afterPrefix)) {
-          console.warn(`⚠️ 檢測到損壞的Base64數據，正在修復...`, { submissionId: submission.id })
-          console.warn(`原始前150字:`, base64.substring(0, 150))
+        // 檢測損壞模式：查找 "jpegbase64" 或 "dataimage" 等異常文字
+        if (afterPrefix.includes('jpegbase64') || afterPrefix.includes('dataimage')) {
+          console.warn(`⚠️ 檢測到損壞的Base64數據（包含異常文字），正在修復...`, { submissionId: submission.id })
+          console.warn(`原始前200字:`, base64.substring(0, 200))
 
-          // 找到第一個看起來像 Base64 的位置（/ 或連續的大寫字母數字）
-          // 通常是 /9j/ 開頭（JPEG Base64 的典型開頭）
-          const realDataMatch = afterPrefix.match(/\/9j\/|\/[A-Z0-9+/]{10,}/i)
-          if (realDataMatch) {
-            const realDataStart = realDataMatch.index!
-            base64 = prefix + afterPrefix.substring(realDataStart)
+          // 找到 /9j/ 的位置（JPEG Base64 的標準開頭）
+          const jpegStart = base64.indexOf('/9j/')
+          if (jpegStart > prefix.length) {
+            base64 = prefix + base64.substring(jpegStart)
             console.log(`✅ 修復完成，新前150字:`, base64.substring(0, 150))
           } else {
-            console.error(`❌ 無法找到有效的Base64數據`, { submissionId: submission.id })
+            console.error(`❌ 無法找到 /9j/ 標記`, { submissionId: submission.id })
           }
         }
       }
