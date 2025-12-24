@@ -348,7 +348,8 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         feedback: '',
         gradingResult: result,
         gradedAt: Date.now(),
-        imageBlob: submission.imageBlob  // 保留圖片
+        imageBlob: submission.imageBlob,      // 保留圖片 Blob
+        imageBase64: submission.imageBase64   // 保留圖片 Base64
       })
       requestSync()
 
@@ -490,7 +491,8 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         feedback: '',
         gradingResult: newGradingResult,
         gradedAt: Date.now(),
-        imageBlob: submission.imageBlob  // 保留圖片
+        imageBlob: submission.imageBlob,      // 保留圖片 Blob
+        imageBase64: submission.imageBase64   // 保留圖片 Base64
       })
       requestSync()
 

@@ -715,22 +715,20 @@ export async function gradeMultipleSubmissions(
       }
       const result = await gradeSubmission(sub.imageBlob, answerKeyBlob, answerKey, options)
 
-      // 重要：保留 imageBlob，確保批改後仍可預覽
+      // 重要：保留 imageBlob 和 imageBase64，確保批改後仍可預覽
       await db.submissions.update(sub.id!, {
         status: 'graded',
         score: result.totalScore,
         gradingResult: result,
         gradedAt: Date.now(),
-        imageBlob: sub.imageBlob  // 保留圖片
+        imageBlob: sub.imageBlob,      // 保留圖片 Blob
+        imageBase64: sub.imageBase64   // 保留圖片 Base64
       })
 
-      if (result.totalScore === 0) {
-        failCount++
-      } else {
-        successCount++
-      }
+      console.log(`✅ 批改成功: ${sub.id}, 得分: ${result.totalScore}`)
+      successCount++
     } catch (e) {
-      console.error(`批改作業 ${sub.id} 失敗:`, e)
+      console.error(`❌ 批改作業 ${sub.id} 失敗:`, e)
       failCount++
     }
 
