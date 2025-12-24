@@ -50,25 +50,37 @@ export function getSubmissionImageUrl(submission?: {
   if (submission.imageBase64) {
     let base64 = submission.imageBase64
 
-    // 🔧 檢測並修復雙重前綴的問題
-    // 如果格式是 "data:image/xxx;base64,dataimage/xxx..." 說明內部有損壞的前綴
-    const doublePrefix = /^(data:image\/[^;]+;base64,)(data[^/]+)/i
-    const match = base64.match(doublePrefix)
+    // 🔧 檢測並修復損壞的 Base64 前綴
+    // 正常格式: "data:image/jpeg;base64,/9j/4AAQ..."
+    // 損壞格式: "data:image/jpeg;base64,/jpegbase64/9j/4AAQ..." 或 "data:image/jpeg;base64,dataimage/jpegbase64/9j/..."
+    const correctPrefix = /^data:image\/[^;]+;base64,/i
 
-    if (match) {
-      console.warn(`⚠️ 檢測到雙重Base64前綴，正在修復...`, { submissionId: submission.id })
-      console.warn(`原始前150字:`, base64.substring(0, 150))
+    if (correctPrefix.test(base64)) {
+      // 提取前綴
+      const prefixMatch = base64.match(correctPrefix)
+      if (prefixMatch) {
+        const prefix = prefixMatch[0] // "data:image/jpeg;base64,"
+        const afterPrefix = base64.substring(prefix.length)
 
-      // 移除損壞的內部前綴，保留正確的外部前綴
-      // 將 "data:image/jpeg;base64,dataimage/jpegbase64/9j..."
-      // 修復為 "data:image/jpeg;base64,/9j..."
-      const prefix = match[1] // "data:image/jpeg;base64,"
+        // 檢查是否有損壞的文字（不是有效的 Base64 開頭）
+        // 有效的 Base64 通常以 / 或大寫字母開頭
+        const validBase64Start = /^[/A-Z0-9+]/i
 
-      // 找到真正的 Base64 數據開始位置 (通常是 / 或大寫字母開頭)
-      const dataStartIndex = base64.indexOf('/', prefix.length)
-      if (dataStartIndex > prefix.length) {
-        base64 = prefix + base64.substring(dataStartIndex)
-        console.log(`✅ 修復完成，新前150字:`, base64.substring(0, 150))
+        if (!validBase64Start.test(afterPrefix)) {
+          console.warn(`⚠️ 檢測到損壞的Base64數據，正在修復...`, { submissionId: submission.id })
+          console.warn(`原始前150字:`, base64.substring(0, 150))
+
+          // 找到第一個看起來像 Base64 的位置（/ 或連續的大寫字母數字）
+          // 通常是 /9j/ 開頭（JPEG Base64 的典型開頭）
+          const realDataMatch = afterPrefix.match(/\/9j\/|\/[A-Z0-9+/]{10,}/i)
+          if (realDataMatch) {
+            const realDataStart = realDataMatch.index!
+            base64 = prefix + afterPrefix.substring(realDataStart)
+            console.log(`✅ 修復完成，新前150字:`, base64.substring(0, 150))
+          } else {
+            console.error(`❌ 無法找到有效的Base64數據`, { submissionId: submission.id })
+          }
+        }
       }
     }
 
