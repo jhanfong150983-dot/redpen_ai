@@ -34,13 +34,19 @@ interface GradingPageProps {
  * 從 Base64 重建 Blob（自動修復損壞的 Base64）
  */
 function rebuildBlobFromBase64(base64: string): Blob {
+  console.log('🔍 rebuildBlobFromBase64 輸入前100字:', base64.substring(0, 100))
+
   // 先修復損壞的 Base64
   const fixedBase64 = fixCorruptedBase64(base64)
+  console.log('🔧 修復後前100字:', fixedBase64.substring(0, 100))
 
   // 提取純 Base64 數據（去掉 data URL 前綴）
   const base64Data = fixedBase64.split(',')[1]
+  console.log('📝 純 Base64 前50字:', base64Data?.substring(0, 50))
+
   const mimeMatch = fixedBase64.match(/data:([^;]+);/)
   const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
+  console.log('🎨 MIME 類型:', mimeType)
 
   // 轉換為 Blob
   const byteString = atob(base64Data)
@@ -50,7 +56,10 @@ function rebuildBlobFromBase64(base64: string): Blob {
     uint8Array[i] = byteString.charCodeAt(i)
   }
 
-  return new Blob([arrayBuffer], { type: mimeType })
+  const blob = new Blob([arrayBuffer], { type: mimeType })
+  console.log('✅ Blob 創建成功:', { size: blob.size, type: blob.type })
+
+  return blob
 }
 
 export default function GradingPage({ assignmentId, onBack }: GradingPageProps) {
