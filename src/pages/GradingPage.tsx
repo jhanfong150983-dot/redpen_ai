@@ -22,12 +22,35 @@ import {
   isGeminiAvailable
 } from '@/lib/gemini'
 import { downloadImageFromSupabase } from '@/lib/supabase-download'
-import { getSubmissionImageUrl } from '@/lib/utils'
+import { getSubmissionImageUrl, fixCorruptedBase64 } from '@/lib/utils'
 import { blobToBase64 } from '@/lib/imageCompression'
 
 interface GradingPageProps {
   assignmentId: string
   onBack?: () => void
+}
+
+/**
+ * 從 Base64 重建 Blob（自動修復損壞的 Base64）
+ */
+function rebuildBlobFromBase64(base64: string): Blob {
+  // 先修復損壞的 Base64
+  const fixedBase64 = fixCorruptedBase64(base64)
+
+  // 提取純 Base64 數據（去掉 data URL 前綴）
+  const base64Data = fixedBase64.split(',')[1]
+  const mimeMatch = fixedBase64.match(/data:([^;]+);/)
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
+
+  // 轉換為 Blob
+  const byteString = atob(base64Data)
+  const arrayBuffer = new ArrayBuffer(byteString.length)
+  const uint8Array = new Uint8Array(arrayBuffer)
+  for (let i = 0; i < byteString.length; i++) {
+    uint8Array[i] = byteString.charCodeAt(i)
+  }
+
+  return new Blob([arrayBuffer], { type: mimeType })
 }
 
 export default function GradingPage({ assignmentId, onBack }: GradingPageProps) {
@@ -108,16 +131,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             if (sub.imageBase64) {
               try {
                 console.log(`🔧 嘗試從 Base64 重建 Blob`)
-                const base64Data = sub.imageBase64.split(',')[1]
-                const mimeMatch = sub.imageBase64.match(/data:([^;]+);/)
-                const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
-                const byteString = atob(base64Data)
-                const arrayBuffer = new ArrayBuffer(byteString.length)
-                const uint8Array = new Uint8Array(arrayBuffer)
-                for (let i = 0; i < byteString.length; i++) {
-                  uint8Array[i] = byteString.charCodeAt(i)
-                }
-                sub.imageBlob = new Blob([arrayBuffer], { type: mimeType })
+                sub.imageBlob = rebuildBlobFromBase64(sub.imageBase64)
                 console.log(`✅ 從 Base64 重建 Blob 成功: size=${sub.imageBlob.size}, type=${sub.imageBlob.type}`)
               } catch (error) {
                 console.error(`❌ 從 Base64 重建 Blob 失敗:`, error)
@@ -352,16 +366,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       if (submission.imageBase64) {
         try {
           console.log('🔧 從 Base64 重建 Blob 用於批改')
-          const base64Data = submission.imageBase64.split(',')[1]
-          const mimeMatch = submission.imageBase64.match(/data:([^;]+);/)
-          const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
-          const byteString = atob(base64Data)
-          const arrayBuffer = new ArrayBuffer(byteString.length)
-          const uint8Array = new Uint8Array(arrayBuffer)
-          for (let i = 0; i < byteString.length; i++) {
-            uint8Array[i] = byteString.charCodeAt(i)
-          }
-          submission.imageBlob = new Blob([arrayBuffer], { type: mimeType })
+          submission.imageBlob = rebuildBlobFromBase64(submission.imageBase64)
           console.log(`✅ 從 Base64 重建 Blob 成功: size=${submission.imageBlob.size}, type=${submission.imageBlob.type}`)
         } catch (error) {
           console.error('❌ 從 Base64 重建 Blob 失敗:', error)
@@ -429,16 +434,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       if (submission.imageBase64) {
         try {
           console.log('🔧 從 Base64 重建 Blob 用於重新批改')
-          const base64Data = submission.imageBase64.split(',')[1]
-          const mimeMatch = submission.imageBase64.match(/data:([^;]+);/)
-          const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
-          const byteString = atob(base64Data)
-          const arrayBuffer = new ArrayBuffer(byteString.length)
-          const uint8Array = new Uint8Array(arrayBuffer)
-          for (let i = 0; i < byteString.length; i++) {
-            uint8Array[i] = byteString.charCodeAt(i)
-          }
-          submission.imageBlob = new Blob([arrayBuffer], { type: mimeType })
+          submission.imageBlob = rebuildBlobFromBase64(submission.imageBase64)
           console.log(`✅ 從 Base64 重建 Blob 成功: size=${submission.imageBlob.size}, type=${submission.imageBlob.type}`)
         } catch (error) {
           console.error('❌ 從 Base64 重建 Blob 失敗:', error)
@@ -613,16 +609,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             // 優先從 Base64 重建 Blob
             if (sub.imageBase64) {
               console.log(`🔧 從 Base64 重建 Blob: ${sub.id}`)
-              const base64Data = sub.imageBase64.split(',')[1]
-              const mimeMatch = sub.imageBase64.match(/data:([^;]+);/)
-              const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
-              const byteString = atob(base64Data)
-              const arrayBuffer = new ArrayBuffer(byteString.length)
-              const uint8Array = new Uint8Array(arrayBuffer)
-              for (let j = 0; j < byteString.length; j++) {
-                uint8Array[j] = byteString.charCodeAt(j)
-              }
-              sub.imageBlob = new Blob([arrayBuffer], { type: mimeType })
+              sub.imageBlob = rebuildBlobFromBase64(sub.imageBase64)
               console.log(`✅ 從 Base64 重建成功: size=${sub.imageBlob.size}`)
             } else if (sub.status === 'synced' || sub.status === 'graded') {
               // 沒有 Base64，嘗試從雲端下載

@@ -18,6 +18,41 @@ function isSafari(): boolean {
 }
 
 /**
+ * 修復損壞的 Base64 字符串
+ * 處理格式：data:image/jpeg;base64,dataimage/jpegbase64/9j/...
+ * 修復為：data:image/jpeg;base64,/9j/...
+ */
+export function fixCorruptedBase64(base64: string): string {
+  if (!base64) return base64
+
+  const correctPrefix = /^data:image\/[^;]+;base64,/i
+
+  if (correctPrefix.test(base64)) {
+    const prefixMatch = base64.match(correctPrefix)
+    if (prefixMatch) {
+      const prefix = prefixMatch[0]
+      const afterPrefix = base64.substring(prefix.length)
+
+      // 檢測損壞模式：查找 "jpegbase64" 或 "dataimage" 等異常文字
+      if (afterPrefix.includes('jpegbase64') || afterPrefix.includes('dataimage')) {
+        // 找到 /9j/ 的位置（JPEG Base64 的標準開頭）
+        const jpegStart = base64.indexOf('/9j/')
+        if (jpegStart > prefix.length) {
+          return prefix + base64.substring(jpegStart)
+        }
+      }
+    }
+  }
+
+  // 確保有正確的 data URL 格式
+  if (!base64.startsWith('data:image/')) {
+    return `data:image/jpeg;base64,${base64}`
+  }
+
+  return base64
+}
+
+/**
  * 获取 Submission 图片的显示 URL
  * 優先順序：Base64 > Blob > 雲端 URL
  * 理由：Base64 在所有瀏覽器都穩定，Blob 在某些情況下可能有問題
@@ -29,7 +64,7 @@ export function getSubmissionImageUrl(submission?: {
   imageUrl?: string
 } | null): string | null {
   if (!submission) {
-    console.log('❌ getSubmissionImageUrl: submission 為空')
+    // 正常情況：某些學生可能沒有提交作業
     return null
   }
 
@@ -48,48 +83,7 @@ export function getSubmissionImageUrl(submission?: {
 
   // 策略 1: 優先使用 Base64（最穩定，所有瀏覽器都支持）
   if (submission.imageBase64) {
-    let base64 = submission.imageBase64
-
-    // 🔍 調試：顯示 Base64 的前 200 個字符
-    console.log(`🔍 Base64 前200字:`, base64.substring(0, 200))
-
-    // 🔧 檢測並修復損壞的 Base64 前綴
-    // 正常格式: "data:image/jpeg;base64,/9j/4AAQ..."
-    // 損壞格式: "data:image/jpeg;base64,/jpegbase64/9j/4AAQ..." 或 "data:image/jpeg;base64,dataimage/jpegbase64/9j/..."
-    const correctPrefix = /^data:image\/[^;]+;base64,/i
-
-    if (correctPrefix.test(base64)) {
-      // 提取前綴
-      const prefixMatch = base64.match(correctPrefix)
-      if (prefixMatch) {
-        const prefix = prefixMatch[0] // "data:image/jpeg;base64,"
-        const afterPrefix = base64.substring(prefix.length)
-
-        console.log(`🔍 前綴後的前50字:`, afterPrefix.substring(0, 50))
-
-        // 檢測損壞模式：查找 "jpegbase64" 或 "dataimage" 等異常文字
-        if (afterPrefix.includes('jpegbase64') || afterPrefix.includes('dataimage')) {
-          console.warn(`⚠️ 檢測到損壞的Base64數據（包含異常文字），正在修復...`, { submissionId: submission.id })
-          console.warn(`原始前200字:`, base64.substring(0, 200))
-
-          // 找到 /9j/ 的位置（JPEG Base64 的標準開頭）
-          const jpegStart = base64.indexOf('/9j/')
-          if (jpegStart > prefix.length) {
-            base64 = prefix + base64.substring(jpegStart)
-            console.log(`✅ 修復完成，新前150字:`, base64.substring(0, 150))
-          } else {
-            console.error(`❌ 無法找到 /9j/ 標記`, { submissionId: submission.id })
-          }
-        }
-      }
-    }
-
-    // 確保有正確的 data URL 格式
-    if (!base64.startsWith('data:image/')) {
-      console.warn(`⚠️ Base64缺少data URL前綴，添加默認前綴`, { submissionId: submission.id })
-      base64 = `data:image/jpeg;base64,${base64}`
-    }
-
+    const base64 = fixCorruptedBase64(submission.imageBase64)
     console.log(`✅ 使用 Base64 (${browser})`, { submissionId: submission.id, length: base64.length })
     return base64
   }
