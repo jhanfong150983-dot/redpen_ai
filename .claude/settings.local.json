@@ -10,7 +10,8 @@
       "Bash(npm uninstall:*)",
       "Bash(cat:*)",
       "Bash(npx tsc:*)",
-      "Bash(node test-prompt-length.js:*)"
+      "Bash(node test-prompt-length.js:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

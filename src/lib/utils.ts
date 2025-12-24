@@ -63,7 +63,6 @@ export function getSubmissionImageUrl(submission?: {
       // 將 "data:image/jpeg;base64,dataimage/jpegbase64/9j..."
       // 修復為 "data:image/jpeg;base64,/9j..."
       const prefix = match[1] // "data:image/jpeg;base64,"
-      const corruptedPart = match[2] // "dataimage" 或類似的損壞文字
 
       // 找到真正的 Base64 數據開始位置 (通常是 / 或大寫字母開頭)
       const dataStartIndex = base64.indexOf('/', prefix.length)
