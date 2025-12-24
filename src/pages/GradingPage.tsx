@@ -34,32 +34,54 @@ interface GradingPageProps {
  * 從 Base64 重建 Blob（自動修復損壞的 Base64）
  */
 function rebuildBlobFromBase64(base64: string): Blob {
-  console.log('🔍 rebuildBlobFromBase64 輸入前100字:', base64.substring(0, 100))
+  try {
+    console.log('🔍 rebuildBlobFromBase64 輸入前100字:', base64.substring(0, 100))
 
-  // 先修復損壞的 Base64
-  const fixedBase64 = fixCorruptedBase64(base64)
-  console.log('🔧 修復後前100字:', fixedBase64.substring(0, 100))
+    // 先修復損壞的 Base64
+    const fixedBase64 = fixCorruptedBase64(base64)
+    console.log('🔧 修復後前100字:', fixedBase64.substring(0, 100))
 
-  // 提取純 Base64 數據（去掉 data URL 前綴）
-  const base64Data = fixedBase64.split(',')[1]
-  console.log('📝 純 Base64 前50字:', base64Data?.substring(0, 50))
+    // 提取純 Base64 數據（去掉 data URL 前綴）
+    const parts = fixedBase64.split(',')
+    if (parts.length < 2) {
+      throw new Error(`Base64 格式錯誤：缺少逗號分隔符。格式: ${fixedBase64.substring(0, 100)}`)
+    }
+    const base64Data = parts[1]
+    console.log('📝 純 Base64 前50字:', base64Data?.substring(0, 50))
 
-  const mimeMatch = fixedBase64.match(/data:([^;]+);/)
-  const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
-  console.log('🎨 MIME 類型:', mimeType)
+    if (!base64Data || base64Data.length === 0) {
+      throw new Error('Base64 數據為空')
+    }
 
-  // 轉換為 Blob
-  const byteString = atob(base64Data)
-  const arrayBuffer = new ArrayBuffer(byteString.length)
-  const uint8Array = new Uint8Array(arrayBuffer)
-  for (let i = 0; i < byteString.length; i++) {
-    uint8Array[i] = byteString.charCodeAt(i)
+    const mimeMatch = fixedBase64.match(/data:([^;]+);/)
+    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg'
+    console.log('🎨 MIME 類型:', mimeType)
+
+    // 轉換為 Blob
+    console.log('🔄 開始 atob 解碼...')
+    const byteString = atob(base64Data)
+    console.log(`✅ atob 解碼成功，長度: ${byteString.length}`)
+
+    const arrayBuffer = new ArrayBuffer(byteString.length)
+    const uint8Array = new Uint8Array(arrayBuffer)
+    for (let i = 0; i < byteString.length; i++) {
+      uint8Array[i] = byteString.charCodeAt(i)
+    }
+
+    const blob = new Blob([arrayBuffer], { type: mimeType })
+    console.log('✅ Blob 創建成功:', { size: blob.size, type: blob.type })
+
+    // 驗證 Blob
+    if (blob.size === 0) {
+      throw new Error('創建的 Blob 大小為 0')
+    }
+
+    return blob
+  } catch (error) {
+    console.error('❌ rebuildBlobFromBase64 失敗:', error)
+    console.error('輸入 Base64 前200字:', base64.substring(0, 200))
+    throw new Error(`Blob 重建失敗: ${error instanceof Error ? error.message : String(error)}`)
   }
-
-  const blob = new Blob([arrayBuffer], { type: mimeType })
-  console.log('✅ Blob 創建成功:', { size: blob.size, type: blob.type })
-
-  return blob
 }
 
 export default function GradingPage({ assignmentId, onBack }: GradingPageProps) {

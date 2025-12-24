@@ -393,10 +393,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setError('頁數需介於 1-100')
       return
     }
-    if (priorWeightTypes.length === 0) {
-      setError('請至少選擇一種題型屬性（Prior Weight）')
-      return
-    }
+    // Prior Weight 現在是選填，不再強制要求
 
     setIsSubmitting(true)
     try {
@@ -609,10 +606,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setEditAnswerKeyError('請選擇作業領域')
       return
     }
-    if (editingPriorWeightTypes.length === 0) {
-      setEditAnswerKeyError('請至少選擇一種題型屬性（Prior Weight）')
-      return
-    }
+    // Prior Weight 現在是選填，不再強制要求
     try {
       setIsSavingAnswerKey(true)
       await db.assignments.update(editingAnswerAssignment.id, {
