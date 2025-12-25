@@ -151,29 +151,9 @@ export interface GradeSubmissionOptions {
 
 const gradingDomainHints: Record<string, string> = {
   國語: `
-【最高優先規則：studentAnswer 嚴禁優化】
-1. studentAnswer 一律逐字抄寫「圖片中看得到的學生筆跡」，不可摘要、不可改寫、不可修正錯字、不可補全。
-2. 需要抓重點/摘要只能寫在 reason 或 mistakes/weaknesses/suggestions，絕對不能寫進 studentAnswer。
-
 【評分提示（只影響 isCorrect/score/reason，不得影響 studentAnswer）】
 1. 文意題：避免主觀推論，只在 reason 說明「缺哪些關鍵字/要點」。
 2. 字音造詞題：檢查學生答案讀音是否符合題目要求（如：ㄋㄨㄥˋ 可答「弄瓦」，不可答「巷弄(ㄌㄨㄥˋ)」），讀音錯誤直接 0 分。
-
-【方格框答案擷取】
-1. 識別方格區域：確認學生填寫內容在方格框內
-2. 擷取規則：
-- 單方格 = 單字（□ → "弄"）
-- 多方格 = 連續字詞（□□ → "弄瓦"）
-- 空白方格 → "未作答"
-3. 對齊檢查：確保方格數量與標準答案一致
-
-【國語答案擷取特別注意】
-1. 相近字造詞題：學生可能寫錯字（如：嗇→普），原樣輸出不修正
-2. 同音字造詞題：檢查讀音一致性，但不修正學生用字
-3. 開放題/申論題：
-- 學生答案可能簡短、不完整、有語病 → 原樣輸出
-- 禁止擴寫、補充、修正、優化學生答案
-- 即使答案明顯錯誤或不完整，也必須如實記錄
 `.trim(),
 
   數學: `
@@ -407,220 +387,297 @@ function isEmptyStudentAnswer(ans?: string) {
 }
 
 /**
- * 單份作業批改（支援 AnswerKey 與答案卷圖片）
+ * 抽取第一個完整 JSON 物件（用括號配對，避免正則截斷）
  */
-export async function gradeSubmission(
+function extractFirstJsonObject(text: string): string {
+  const s = text.trim()
+  const start = s.indexOf('{')
+  if (start === -1) return s
+  let depth = 0
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === '{') depth++
+    else if (s[i] === '}') {
+      depth--
+      if (depth === 0) return s.slice(start, i + 1)
+    }
+  }
+  return s
+}
+
+// ========================
+// 新增：兩段式批改 - 類型定義
+// ========================
+export type ExtractedDetail = {
+  questionId: string
+  studentAnswer: string
+  confidence: number
+}
+
+export type ExtractedAnswers = {
+  details: ExtractedDetail[]
+}
+
+// ========================
+// 新增：sanitize 防呆（程式端硬擋）
+// ========================
+function sanitizeExtractedAnswers(
+  extracted: ExtractedAnswers,
+  answerKey?: AnswerKey
+): { extracted: ExtractedAnswers; reviewFlags: string[] } {
+  const reviewFlags: string[] = []
+  const answerKeyMap = new Map(answerKey?.questions.map((q) => [q.id, q]))
+
+  const sanitized: ExtractedAnswers = {
+    details: extracted.details.map((detail) => {
+      // 先 trim 並正規化空白答案
+      let studentAnswer = (detail.studentAnswer ?? '').trim()
+      if (!studentAnswer) studentAnswer = '未作答'
+
+      const confidence = detail.confidence
+      const qid = detail.questionId
+      const question = answerKeyMap.get(qid)
+
+      // 跳過已經是「未作答/無法辨識」的答案（避免誤判 & 減少運算）
+      if (isEmptyStudentAnswer(studentAnswer)) {
+        return { ...detail, studentAnswer }
+      }
+
+      // 規則 1：長度 > 40 且 confidence < 85 → 視為高風險改寫
+      if (studentAnswer.length > 40 && confidence < 85) {
+        reviewFlags.push(`extract_suspect_rewrite:${qid}`)
+        return { ...detail, studentAnswer: '無法辨識' }
+      }
+
+      // 規則 2：含明顯擴寫/造句跡象（避免誤殺閱讀理解題的正常連接詞）
+      const narrativePatterns = /驚喜|耶誕節|畢竟|怎可能|感受到|準備了|令人|讓我|使得|當時|如今|竟然|居然|果然|究竟/
+      if (narrativePatterns.test(studentAnswer) && confidence < 90) {
+        reviewFlags.push(`extract_suspect_narrative:${qid}`)
+        return { ...detail, studentAnswer: '無法辨識' }
+      }
+
+      // 規則 3：標準答案語氣（多逗號/句號且字數很長）且 confidence < 90
+      const punctuationCount = (studentAnswer.match(/[，。、；]/g) || []).length
+      if (punctuationCount >= 2 && studentAnswer.length > 30 && confidence < 90) {
+        reviewFlags.push(`extract_suspect_standard_answer:${qid}`)
+        return { ...detail, studentAnswer: '無法辨識' }
+      }
+
+      // 規則 4：題目配分很低但答案超長
+      if (question && question.maxScore <= 5 && studentAnswer.length > 50) {
+        reviewFlags.push(`extract_suspect_long_for_small_score:${qid}`)
+        return { ...detail, studentAnswer: '無法辨識' }
+      }
+
+      return { ...detail, studentAnswer }
+    })
+  }
+
+  return { extracted: sanitized, reviewFlags }
+}
+
+// ========================
+// 新增：第一階段 - 純抄寫（不評分）
+// ========================
+export async function extractStudentAnswers(
   submissionImage: Blob,
-  answerKeyImage: Blob | null,
   answerKey?: AnswerKey,
+  options?: GradeSubmissionOptions
+): Promise<ExtractedAnswers> {
+  if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
+
+  console.log(`🔍 階段 1：抽取學生答案（純 OCR）...`)
+
+  const submissionBase64 = await blobToBase64(submissionImage)
+  const mimeType = submissionImage.type || 'image/jpeg'
+
+  const promptParts: string[] = []
+
+  let requiredQuestionIds: string[] = []
+  if (answerKey) {
+    requiredQuestionIds = options?.regrade?.questionIds || answerKey.questions.map((q) => q.id)
+    promptParts.push(`
+請從學生作業圖片中，抽取以下題號的學生答案：${requiredQuestionIds.join(', ')}
+
+硬約束：
+- details 必須包含所有題號：${requiredQuestionIds.join(', ')}（共 ${requiredQuestionIds.length} 題）
+- 不得遺漏任何題號
+- 不得輸出額外的題號
+- details.length 必須等於 ${requiredQuestionIds.length}
+- 即使學生未作答也要輸出該題號，studentAnswer 填「未作答」
+`.trim())
+  } else {
+    promptParts.push(`請從學生作業圖片中，抽取所有題目的學生答案。`)
+  }
+
+  promptParts.push(`
+回傳純 JSON（無 markdown）：
+{
+  "details": [
+    {
+      "questionId": "1",
+      "studentAnswer": "學生手寫內容（逐字抄寫）",
+      "confidence": 0-100
+    }
+  ]
+}
+`.trim())
+
+  // 硬規則放最後
+  promptParts.push(`
+【抄寫硬規則（最高優先）】
+1. studentAnswer 必須逐字逐畫抄寫圖片中學生的手寫筆跡
+2. 禁止改寫、禁止摘要、禁止補全、禁止修正錯字
+3. 禁止輸出任何你推測的句子
+4. 禁止輸出題目內容
+5. 禁止輸出標準答案內容
+6. 完全空白 → 只能輸出「未作答」
+7. 有筆跡但看不清 → 只能輸出「無法辨識」
+8. 允許用「[?]」標記看不清的單字，例如：「光[?]作用」
+9. confidence 只反映字跡清晰度，與答案對錯無關
+10. 只允許輸出 keys：details、questionId、studentAnswer、confidence；禁止額外 keys（如 notes、commentary）
+`.trim())
+
+  const prompt = promptParts.join('\n\n')
+  const requestParts: GeminiRequestPart[] = [
+    prompt,
+    { inlineData: { mimeType, data: submissionBase64 } }
+  ]
+
+  const text = (await generateGeminiText(currentModelName, requestParts))
+    .replace(/```json|```/g, '')
+    .trim()
+
+  // 用括號配對抽取第一個完整 JSON 物件（避免多 JSON 黏在一起）
+  const cleaned = extractFirstJsonObject(text)
+  let parsed = JSON.parse(cleaned) as ExtractedAnswers
+
+  // 程式端補漏：如果有 answerKey 且 details 有缺題，直接補上「未作答」
+  if (requiredQuestionIds.length > 0) {
+    const extractedIds = new Set(parsed.details.map((d) => d.questionId))
+    const missingIds = requiredQuestionIds.filter((id) => !extractedIds.has(id))
+
+    if (missingIds.length > 0) {
+      console.warn(`⚠️ 抽取階段遺漏 ${missingIds.length} 題：${missingIds.join(', ')}，自動補上「未作答」`)
+      const missingDetails: ExtractedDetail[] = missingIds.map((id) => ({
+        questionId: id,
+        studentAnswer: '未作答',
+        confidence: 0
+      }))
+      parsed.details = [...parsed.details, ...missingDetails]
+
+      // 依 answerKey 排序
+      if (answerKey) {
+        const order = new Map(answerKey.questions.map((q, i) => [q.id, i]))
+        parsed.details.sort((a, b) => {
+          const ai = order.get(a.questionId) ?? 9999
+          const bi = order.get(b.questionId) ?? 9999
+          return ai - bi
+        })
+      }
+    }
+
+    // 移除多餘的題號
+    const extraDetails = parsed.details.filter((d) => !requiredQuestionIds.includes(d.questionId))
+    if (extraDetails.length > 0) {
+      console.warn(
+        `⚠️ 抽取階段多出 ${extraDetails.length} 題：${extraDetails.map((d) => d.questionId).join(', ')}，已移除`
+      )
+      parsed.details = parsed.details.filter((d) => requiredQuestionIds.includes(d.questionId))
+    }
+  }
+
+  console.log(`✅ 階段 1 完成：抽取 ${parsed.details.length} 題`)
+  return parsed
+}
+
+// ========================
+// 新增：第二階段 - 評分（嚴禁改寫 studentAnswer）
+// ========================
+export async function gradeWithExtractedAnswers(
+  extracted: ExtractedAnswers,
+  answerKey?: AnswerKey,
+  answerKeyImage?: Blob | null,
   options?: GradeSubmissionOptions
 ): Promise<GradingResult> {
   if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
 
-  try {
-    console.log(`🧠 使用模型 ${currentModelName} 進行批改...`)
+  console.log(`📊 階段 2：依標準答案評分...`)
 
-    const submissionBase64 = await blobToBase64(submissionImage)
-    const requestParts: GeminiRequestPart[] = []
-    const promptSections: string[] = []
+  const promptSections: string[] = []
+  let answerKeyImageData: { mimeType: string; data: string } | null = null
 
-    promptSections.push(
-      `
+  promptSections.push(`
 你是一位嚴謹、公正的老師，負責批改學生的紙本作業。
 本系統會用在各種科目（例如：國語、英文、數學、自然、社會等），
 請主要根據「題目文字」與「標準答案」來判斷對錯，不要憑常識亂猜。
-`.trim()
-    )
+`.trim())
 
-    if (answerKey) {
-      const questionIds = answerKey.questions.map((q) => q.id).join(', ')
-      promptSections.push(
-        `
+  // 將已抽取的學生答案加入 prompt
+  promptSections.push(`
+【已抽取的學生答案（不可修改）】
+以下是已經抽取完成的學生答案，你必須原封不動使用這些答案進行評分：
+${JSON.stringify(extracted.details, null, 2)}
+
+⚠️ 絕對禁止：
+- 禁止修改 studentAnswer 的任何內容
+- 禁止補全、改寫、修正、優化學生答案
+- 你只能依據這些答案進行評分，並在 reason 中說明扣分原因
+`.trim())
+
+  if (answerKey) {
+    const questionIds = answerKey.questions.map((q) => q.id).join(', ')
+    promptSections.push(`
 下面是本次作業的標準答案與配分（JSON 格式）：
 ${JSON.stringify(answerKey)}
 
 【批改流程】
-請嚴格依照這份 AnswerKey 逐題批改，請注意「擷取」與「給分」是兩個獨立的步驟：
+請嚴格依照這份 AnswerKey 逐題批改：
 
 - 必須輸出所有題號：${questionIds}（共 ${answerKey.questions.length} 題）
 - 即使學生未作答、空白、或答案完全無法辨識，也必須為該題輸出一條記錄。
 - 題號 id 以 AnswerKey 中的 "id" 為主（例如 "1", "1-1"）。
 
-【步驟 1：擷取（嚴格）】
-- 無論字跡多潦草或有錯別字，studentAnswer 必須原樣保留學生筆跡與錯誤
-- 例如學生寫「苹菓」，就輸出「苹菓」，不可改成「蘋果」
-
-【步驟 2：給分（寬容）】
-- 判斷 isCorrect 時：若包含正確關鍵字，即使字跡不完美或有輕微錯別字，仍可視情況判定為正確
-- ⚠️ 重要：寬容只影響 isCorrect/score/reason；不得影響 studentAnswer（studentAnswer 永遠原樣抄寫）
-
-【分層評分規則】
-- Type 1（精確）：使用 answer 字段嚴格對比。完全相符 → 滿分；不符 → 0分
-- Type 2（模糊）：使用 acceptableAnswers 進行語義匹配。完全/語義相符 → 滿分；部分 → 部分分
-  - 字音造詞題：若 referenceAnswer 含讀音說明（如「ㄋㄨㄥˋ讀音」），學生答案必須符合該讀音；讀音錯誤直接 0 分
-- Type 3（評價）：使用 rubricsDimensions 多維度評分，逐維度累計總分；若無維度則用 rubric 4級標準
-`.trim()
-      )
-    } else if (answerKeyImage) {
-      const answerKeyBase64 = await blobToBase64(answerKeyImage)
-      promptSections.push(
-        `
-第一張圖片是「標準答案／解答本」，第二張圖片是「學生作業」。
+【評分規則】
+- studentAnswer 若為「未作答」或「無法辨識」→ 直接 score=0、isCorrect=false、reason 簡短說明
+- 其他情況依據 AnswerKey 類型評分：
+  - Type 1（精確）：使用 answer 字段嚴格對比。完全相符 → 滿分；不符 → 0分
+  - Type 2（模糊）：使用 acceptableAnswers 進行語義匹配。完全/語義相符 → 滿分；部分 → 部分分
+    - 字音造詞題：若 referenceAnswer 含讀音說明（如「ㄋㄨㄥˋ讀音」），學生答案必須符合該讀音；讀音錯誤直接 0 分
+  - Type 3（評價）：使用 rubricsDimensions 多維度評分，逐維度累計總分；若無維度則用 rubric 4級標準
+`.trim())
+  } else if (answerKeyImage) {
+    const answerKeyBase64 = await blobToBase64(answerKeyImage)
+    const mimeType = answerKeyImage.type || 'image/jpeg'
+    answerKeyImageData = { mimeType, data: answerKeyBase64 }
+    promptSections.push(`
+圖片是「標準答案／解答本」。
 請先從標準答案圖片中，為每一題抽取「題號、正確答案、配分（可以合理估計）」，
 再根據這些標準答案來批改學生作業。
 請不要憑空新增題目，也不要改變題號。
-`.trim()
-      )
-      requestParts.push({
-        inlineData: { mimeType: 'image/jpeg', data: answerKeyBase64 }
-      })
-    } else {
-      promptSections.push(
-        `
-目前沒有提供標準答案，只有學生作業圖片。
-請執行以下步驟：
-1. 先盡量辨識圖片中的「學生原始筆跡」，填入 studentAnswer（不可修改學生內容；不可摘要/不可改寫/不可補全）。
-2. 如需保守推測題意或合理答案，只能寫在 reason（或 mistakes/weaknesses/suggestions），不得寫進 studentAnswer。
-`.trim()
-      )
-    }
+`.trim())
+  } else {
+    promptSections.push(`
+目前沒有提供標準答案，請依據你的判斷進行評分。
+如需保守推測題意或合理答案，只能寫在 reason（或 mistakes/weaknesses/suggestions）。
+`.trim())
+  }
 
-    const domainHint = buildGradingDomainSection(options?.domain)
-    if (domainHint && options?.domain) {
-      promptSections.push(`【${options.domain} 批改要點】\n${domainHint}`.trim())
-    }
+  const domainHint = buildGradingDomainSection(options?.domain)
+  if (domainHint && options?.domain) {
+    promptSections.push(`【${options.domain} 批改要點】\n${domainHint}`.trim())
+  }
 
-    if (options?.regrade?.questionIds?.length) {
-      const questionIds = options.regrade.questionIds
-      const previousDetails = options.regrade.previousDetails ?? []
-      const forcedIds = options.regrade.forceUnrecognizableQuestionIds ?? []
-
-      const previousAnswerLines = previousDetails
-        .filter((detail) => detail?.questionId && questionIds.includes(detail.questionId))
-        .map((detail) => `- ${detail.questionId}：${detail?.studentAnswer ?? ''}`)
-        .join('\n')
-
-      promptSections.push(
-        `
-【再次批改模式】
-- 只重新擷取與批改：${questionIds.join(', ')}
-- 其他題目維持不變
-- 目前批改 details：${JSON.stringify(previousDetails)}
-
-限制：
-- previousDetails 只能用來「定位題號、比對是否漏題」
-- studentAnswer 必須以本次圖片為準逐字抄寫，不得參考 previousDetails 來推測、修正或美化
-`.trim()
-      )
-
-      if (previousAnswerLines) {
-        promptSections.push(`上一次學生答案（已確認錯誤）：\n${previousAnswerLines}`.trim())
-      }
-
-      if (forcedIds.length > 0) {
-        promptSections.push(`強制無法辨識清單：${forcedIds.join(', ')}`.trim())
-      }
-    }
-
-    const recentCorrections = await getRecentAnswerExtractionCorrections(options?.domain, 5)
-    if (recentCorrections.length > 0) {
-      const lines = recentCorrections
-        .map((item) => {
-          const aiAnswer = item.aiStudentAnswer || '—'
-          return `- 題目 ${item.questionId}：AI「${aiAnswer}」→ 正確「${item.correctedStudentAnswer}」`
-        })
-        .join('\n')
-
-      promptSections.push(`【近期 AI 擷取錯誤參考】\n${lines}`.trim())
-    }
-
-    if (options?.strict) {
-      promptSections.push(
-        `
+  if (options?.strict) {
+    promptSections.push(`
 【嚴謹模式】
 - 若題意、字跡或答案不清楚，請判為不給分，並在 reason 說明原因
 - 不要推測或補寫；只根據題目文字與標準答案判斷
 - 答案不完整或缺少關鍵字/數值時，視為錯誤
 - 請再次檢查每題得分與 totalScore 是否一致
-`.trim()
-      )
-    }
+`.trim())
+  }
 
-    promptSections.push(
-      `
-【學生答案擷取規則（機械式抄寫）】
-核心原則：像 OCR 機器一樣原樣輸出，禁止任何形式的修正或推測。
-
-✅ DO
-- 學生寫「光和作用」→ 輸出「光和作用」
-- 學生寫「辯別」（錯字）→ 輸出「辯別」（不修正）
-- 學生寫「台北」→ 輸出「台北」（不改成「臺北」）
-- 學生只填「光合」→ 輸出「光合」（不補全為「光合作用」）
-- 筆跡模糊但可辨「光舎」→ 輸出「光舎」（不改成「光合」）
-
-❌ DON'T
-- 禁止依上下文推測缺字
-- 禁止修正錯字
-- 禁止補全答案
-- 禁止同義替換
-
-🔍 唯一例外
-- 完全無法辨識的字跡（墨水塗抹、筆劃模糊）→ 用「[?]」標記
-- 例：「光[?]作用」
-`.trim()
-    )
-
-    promptSections.push(
-      `
-【空白答案處理（絕對禁止臆測）】
-✅ 正確
-- 完全未作答（空白方格/空白行）→ 輸出「未作答」
-- 只寫了部分 → 輸出可見部分（不補全）
-- 無意義符號（如 ???）→ 原樣輸出
-
-❌ 禁止
-- 禁止為空白生成內容
-- 禁止推測學生想寫什麼
-- 禁止補全或修正
-
-判斷標準：
-- 填寫區域有筆跡 → 抄寫筆跡內容
-- 無筆跡 → 輸出「未作答」
-- 有筆跡但完全看不出是什麼 → 輸出「無法辨識」
-`.trim()
-    )
-
-    promptSections.push(
-      `
-【低成就學生答案處理】
-核心原則：保真 > 優化，寧可記錄錯誤，不可美化答案
-
-✅ 正確
-- 原樣輸出，不擴寫、不書面化、不補完、不修正
-`.trim()
-    )
-
-    promptSections.push(
-      `
-【單題擷取信心率（0-100）】
-- 定義：只反映「擷取時的猶豫程度」（字跡清晰度），與答案正確性無關
-- 100：唯一解釋，不需推測
-- 80-99：小雜訊但可排除
-- 60-79：有兩個以上候選，需要比筆劃
-- 0-59：幾乎在猜
-
-常見誤區：
-- ❌ 看到錯字就給低信心
-- ✅ 字很清楚但答案錯，也應給高信心
-`.trim()
-    )
-
-    promptSections.push(
-      `
-【最終硬規則（輸出前自我檢查）】
-- studentAnswer 必須能在圖片中逐字逐畫對應到學生筆跡
-- 若你想「修正錯字、補全、換詞、變通語序、抓重點」→ 一律只能寫在 reason，不得改動 studentAnswer
-
+  promptSections.push(`
 回傳純 JSON：
 {
   "totalScore": 整數,
@@ -628,7 +685,7 @@ ${JSON.stringify(answerKey)}
     {
       "questionId": 題號,
       "detectedType": 1|2|3,
-      "studentAnswer": 學生答案,
+      "studentAnswer": 學生答案（必須與輸入完全一致），
       "isCorrect": true/false,
       "score": 得分,
       "maxScore": 滿分,
@@ -642,24 +699,121 @@ ${JSON.stringify(answerKey)}
   "weaknesses": [概念],
   "suggestions": [建議]
 }
+`.trim())
 
-若為「再次批改模式」，details 只回傳被要求重新批改的題號。
-`.trim()
-    )
+  // ✅ 修正：先組裝 prompt，再 push 圖片（提高服從度）
+  const prompt = promptSections.join('\n\n')
+  const requestParts: GeminiRequestPart[] = [prompt]
 
-    const prompt = promptSections.join('\n\n')
-    requestParts.push(prompt)
+  if (answerKeyImageData) {
     requestParts.push({
-      inlineData: { mimeType: 'image/jpeg', data: submissionBase64 }
+      inlineData: { mimeType: answerKeyImageData.mimeType, data: answerKeyImageData.data }
     })
+  }
 
-    const text = (await generateGeminiText(currentModelName, requestParts))
-      .replace(/```json|```/g, '')
-      .trim()
+  const text = (await generateGeminiText(currentModelName, requestParts))
+    .replace(/```json|```/g, '')
+    .trim()
 
-    let parsed = JSON.parse(text) as GradingResult
+  let parsed = JSON.parse(text) as GradingResult
 
-    const reviewReasons: string[] = []
+  // 硬性覆蓋：強制使用 extracted 的 studentAnswer
+  const extractedMap = new Map(extracted.details.map((d) => [d.questionId, d]))
+
+  if (parsed.details && Array.isArray(parsed.details)) {
+    parsed.details = parsed.details.map((detail) => {
+      const qid = detail.questionId ?? ''
+      if (extractedMap.has(qid)) {
+        const extractedDetail = extractedMap.get(qid)!
+        return { ...detail, studentAnswer: extractedDetail.studentAnswer }
+      }
+      return detail
+    })
+  }
+
+  // 補齊：如果有 answerKey 且模型在第二階段少回了題目，補回來
+  if (answerKey && parsed.details) {
+    const gradedIds = new Set(parsed.details.map((d) => d.questionId))
+    const allRequiredIds = answerKey.questions.map((q) => q.id)
+    const missingInGrading = allRequiredIds.filter((id) => !gradedIds.has(id))
+
+    if (missingInGrading.length > 0) {
+      console.warn(
+        `⚠️ 評分階段遺漏 ${missingInGrading.length} 題：${missingInGrading.join(', ')}，自動補上（使用 extracted 的答案）`
+      )
+      const missingGradingDetails = missingInGrading.map((id) => {
+        const question = answerKey.questions.find((q) => q.id === id)
+        const extractedDetail = extractedMap.get(id)
+        return {
+          questionId: id,
+          studentAnswer: extractedDetail?.studentAnswer ?? '未作答',
+          score: 0,
+          maxScore: question?.maxScore ?? 0,
+          isCorrect: false,
+          reason: 'AI未回傳此題詳解，需複核',
+          confidence: extractedDetail?.confidence ?? 0
+        }
+      })
+      parsed.details = [...parsed.details, ...missingGradingDetails]
+
+      // 依 AnswerKey 排序
+      const order = new Map(answerKey.questions.map((q, i) => [q.id, i]))
+      parsed.details.sort((a, b) => {
+        const ai = order.get(a.questionId ?? '') ?? 9999
+        const bi = order.get(b.questionId ?? '') ?? 9999
+        return ai - bi
+      })
+
+      // 重新計算 totalScore
+      parsed.totalScore = parsed.details.reduce((sum, d) => sum + (d.score ?? 0), 0)
+    }
+  }
+
+  console.log(`✅ 階段 2 完成：評分完成`)
+  return parsed
+}
+
+// ========================
+// 改造：gradeSubmission 改成兩段式流程
+// ========================
+export async function gradeSubmission(
+  submissionImage: Blob,
+  answerKeyImage: Blob | null,
+  answerKey?: AnswerKey,
+  options?: GradeSubmissionOptions
+): Promise<GradingResult> {
+  if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
+
+  try {
+    console.log(`🧠 使用模型 ${currentModelName} 進行兩段式批改...`)
+
+    // ========================
+    // 階段 1：抽取學生答案（純 OCR）
+    // ========================
+    const extracted = await extractStudentAnswers(submissionImage, answerKey, options)
+
+    // ========================
+    // 階段 2：sanitize 防呆
+    // ========================
+    const { extracted: sanitized, reviewFlags } = sanitizeExtractedAnswers(extracted, answerKey)
+
+    // ========================
+    // 階段 3：評分
+    // ========================
+    let parsed = await gradeWithExtractedAnswers(sanitized, answerKey, answerKeyImage, options)
+
+    // ========================
+    // 階段 4：合併 reviewFlags
+    // ========================
+    if (reviewFlags.length > 0) {
+      parsed.needsReview = true
+      parsed.reviewReasons = [...(parsed.reviewReasons ?? []), ...reviewFlags]
+    }
+
+    // ========================
+    // 階段 5：檢查遺漏與異常
+    // ========================
+    const reviewReasons: string[] = [...(parsed.reviewReasons ?? [])]
     if (!parsed.details || !Array.isArray(parsed.details)) {
       reviewReasons.push('缺少逐題詳解')
     }
@@ -685,7 +839,9 @@ ${JSON.stringify(answerKey)}
     parsed.needsReview = reviewReasons.length > 0
     parsed.reviewReasons = reviewReasons
 
-    // 步驟 2：後處理補漏（如果有 AnswerKey）
+    // ========================
+    // 階段 6：後處理補漏（如果有 AnswerKey）
+    // ========================
     let missingQuestionIds: string[] = []
     if (answerKey && !options?.regrade?.mode) {
       const fillResult = fillMissingQuestions(parsed, answerKey)
@@ -693,7 +849,9 @@ ${JSON.stringify(answerKey)}
       missingQuestionIds = fillResult.missingQuestionIds
     }
 
-    // 步驟 3：自動重試缺失的題目（除非明確跳過）
+    // ========================
+    // 階段 7：自動重試缺失的題目（除非明確跳過）
+    // ========================
     if (missingQuestionIds.length > 0 && !options?.skipMissingRetry && !options?.regrade?.mode) {
       console.log(`🔄 自動重試批改缺失的 ${missingQuestionIds.length} 題...`)
 
@@ -851,6 +1009,7 @@ export async function extractAnswerKeyFromImage(
 
   console.log('🧾 開始從答案卷圖片抽取 AnswerKey...')
   const imageBase64 = await blobToBase64(answerSheetImage)
+  const mimeType = answerSheetImage.type || 'image/jpeg'
 
   let priorWeightTypes = opts?.priorWeightTypes
   if (!priorWeightTypes && opts?.allowedQuestionTypes && opts.allowedQuestionTypes.length > 0) {
@@ -865,7 +1024,7 @@ export async function extractAnswerKeyFromImage(
 
   const text = (await generateGeminiText(currentModelName, [
     prompt,
-    { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } }
+    { inlineData: { mimeType, data: imageBase64 } }
   ]))
     .replace(/```json|```/g, '')
     .trim()
@@ -892,6 +1051,7 @@ export async function reanalyzeQuestions(
   console.log(`🔄 重新分析 ${markedQuestions.length} 題...`)
 
   const imageBase64 = await blobToBase64(answerSheetImage)
+  const mimeType = answerSheetImage.type || 'image/jpeg'
 
   const questionIds = markedQuestions.map((q) => q.id).join(', ')
   const basePrompt = buildAnswerKeyPrompt(domain, priorWeightTypes)
@@ -915,7 +1075,7 @@ ${basePrompt}
 
   const text = (await generateGeminiText(currentModelName, [
     reanalyzePrompt,
-    { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } }
+    { inlineData: { mimeType, data: imageBase64 } }
   ]))
     .replace(/```json|```/g, '')
     .trim()
@@ -951,3 +1111,12 @@ ${basePrompt}
 
   return result.questions
 }
+
+// ========================
+// 改動摘要（5 行）
+// ========================
+// 1. 新增 extractStudentAnswers()：純 OCR 抄寫，禁止評分/改寫/推測
+// 2. 新增 gradeWithExtractedAnswers()：依抽取結果評分，硬性覆蓋 studentAnswer
+// 3. 新增 sanitizeExtractedAnswers()：程式端防呆，擋改寫/敘事/超長答案
+// 4. 改造 gradeSubmission()：兩段式流程（抽取 → sanitize → 評分 → 合併 reviewFlags）
+// 5. 修正所有 MIME type：改用 blob.type || 'image/jpeg'（extractAnswerKeyFromImage、reanalyzeQuestions）
