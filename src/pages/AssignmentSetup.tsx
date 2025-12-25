@@ -456,15 +456,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
           console.log('🖼️ 處理圖片檔案', { name: file.name, size: file.size, type: file.type })
           imageBlob = await fileToBlob(file)
 
-          // 激進壓縮：多檔案時確保每個檔案 < 800KB（Base64編碼後 < 1MB）
+          // 輕度壓縮：優先保持品質，單個檔案限制 < 2MB（Base64編碼後 < 2.7MB）
           let compressionAttempts = 0
-          let targetSize = 800 * 1024  // 800KB (更嚴格的限制)
+          let targetSize = 2 * 1024 * 1024  // 2MB（保持高品質）
 
           while (imageBlob.size > targetSize && compressionAttempts < 3) {
             console.log(`⚠️ ${file.name} 第 ${compressionAttempts + 1} 次壓縮...`, { currentSize: imageBlob.size })
 
-            const quality = 0.5 - (compressionAttempts * 0.15)  // 0.5, 0.35, 0.2
-            const maxWidth = 1400 - (compressionAttempts * 400)  // 1400, 1000, 600
+            const quality = 0.85 - (compressionAttempts * 0.1)  // 0.85, 0.75, 0.65（高品質）
+            const maxWidth = 2400 - (compressionAttempts * 400)  // 2400, 2000, 1600（保持大尺寸）
 
             imageBlob = await compressImageFile(imageBlob, {
               maxWidth,
@@ -488,11 +488,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
           })
 
           // PDF 也需要壓縮檢查
-          if (imageBlob.size > 800 * 1024) {
-            console.log(`⚠️ ${file.name} PDF 轉換後仍過大，進行壓縮...`, { originalSize: imageBlob.size })
+          if (imageBlob.size > 2 * 1024 * 1024) {
+            console.log(`⚠️ ${file.name} PDF 轉換後仍過大，進行輕度壓縮...`, { originalSize: imageBlob.size })
             imageBlob = await compressImageFile(imageBlob, {
-              maxWidth: 1000,
-              quality: 0.3,
+              maxWidth: 2000,
+              quality: 0.75,
               format: 'image/webp'
             })
             console.log('✅ PDF 壓縮完成', { compressedSize: imageBlob.size })
@@ -507,7 +507,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       // 檢查總大小（Base64 編碼後會增加約 33%）
       const totalSize = imageBlobs.reduce((sum, blob) => sum + blob.size, 0)
       const estimatedBase64Size = totalSize * 1.33
-      const maxAllowedSize = 10 * 1024 * 1024  // 10MB（保守估計）
+      const maxAllowedSize = 15 * 1024 * 1024  // 15MB（提高限制以保持品質）
 
       console.log('📊 檔案大小統計', {
         檔案數量: imageBlobs.length,
@@ -517,9 +517,14 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
       if (estimatedBase64Size > maxAllowedSize) {
         setAnswerKeyError(
-          `檔案總大小過大（預估 ${(estimatedBase64Size / 1024 / 1024).toFixed(1)} MB），請減少檔案數量或選擇較小的圖片。建議一次上傳 2-3 個檔案。`
+          `檔案總大小過大（預估 ${(estimatedBase64Size / 1024 / 1024).toFixed(1)} MB），請減少檔案數量。建議：為保持最佳辨識品質，一次上傳 1-2 個檔案。`
         )
         return
+      }
+
+      // 建議：為保持品質，檔案數量不宜過多
+      if (imageBlobs.length > 2) {
+        console.warn(`⚠️ 選擇了 ${imageBlobs.length} 個檔案，建議一次上傳 1-2 個以保持最佳品質`)
       }
 
       // Save first image blob for re-analysis
@@ -1494,11 +1499,16 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    可一次選取多個檔案，或多次上傳合併；重複題號會自動加上後綴。
+                    可多次上傳合併；重複題號會自動加上後綴。
                   </p>
                   <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mt-2">
                     <p className="text-xs text-blue-800">
                       💡 <strong>提示：</strong>建議使用<strong className="text-blue-900">紅筆、藍筆或其他彩色筆</strong>填寫答案，AI 會優先識別與印刷黑色不同的彩色筆跡作為標準答案，辨識率更高！
+                    </p>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                    <p className="text-xs text-amber-800">
+                      ⚠️ <strong>品質優先：</strong>建議<strong className="text-amber-900">一次上傳 1-2 個檔案</strong>，避免過度壓縮影響辨識品質。若檔案較多，可分批上傳後自動合併。
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
