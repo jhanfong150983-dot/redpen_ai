@@ -490,7 +490,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
     if (!currentImage) {
       console.error('❌ 缺少答案卷圖片，請先上傳答案卷')
-      setErrorFn('缺少答案卷圖片，請重新上傳答案卷後再試')
+      const errorMsg = target === 'edit'
+        ? '請先「重新上傳答案卷」並點擊「AI 解析並合併答案」，才能使用重新分析功能'
+        : '缺少答案卷圖片，請先上傳答案卷'
+      setErrorFn(errorMsg)
       return
     }
 
@@ -599,7 +602,9 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setEditingDomain(assignment.domain ?? '')
     setEditingPriorWeightTypes(assignment.priorWeightTypes ?? [])
     setEditAnswerKeyFile(null)
+    setEditAnswerSheetImage(null)  // 清空答案卷圖片
     setEditAnswerKeyError(null)
+    setEditAnswerKeyNotice(null)
     setAnswerKeyModalOpen(true)
   }
 
@@ -611,6 +616,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setEditingDomain('')
     setEditingPriorWeightTypes([])
     setEditAnswerKeyFile(null)
+    setEditAnswerSheetImage(null)  // 清空答案卷圖片
     setEditAnswerKeyError(null)
     setEditAnswerKeyNotice(null)
     setIsExtractingAnswerKeyEdit(false)
@@ -1846,6 +1852,9 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   可多次上傳，題目會合併；重複題號會自動加上後綴。
+                </p>
+                <p className="text-xs text-amber-600 mt-1">
+                  💡 若要使用「重新分析」功能，請先上傳答案卷並點擊「AI 解析」
                 </p>
                 <div className="flex items-center gap-2">
                   <button
