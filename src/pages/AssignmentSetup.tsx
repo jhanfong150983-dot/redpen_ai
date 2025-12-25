@@ -24,7 +24,7 @@ import {
 } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
-import { extractAnswerKeyFromImage, reanalyzeQuestions } from '@/lib/gemini'
+import { extractAnswerKeyFromImage, extractAnswerKeyFromImages, reanalyzeQuestions } from '@/lib/gemini'
 import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
 import { compressImageFile } from '@/lib/imageCompression'
 
@@ -53,7 +53,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     '待努力'
   ]
   const [answerKey, setAnswerKey] = useState<AnswerKey | null>(null)
-  const [answerKeyFile, setAnswerKeyFile] = useState<File | null>(null)
+  const [answerKeyFile, setAnswerKeyFile] = useState<File[]>([])
   const [answerSheetImage, setAnswerSheetImage] = useState<Blob | null>(null)
   const [isExtractingAnswerKey, setIsExtractingAnswerKey] = useState(false)
   const [answerKeyError, setAnswerKeyError] = useState<string | null>(null)
@@ -142,7 +142,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAssignmentDomain('')
     setPriorWeightTypes([])
     setAnswerKey(null)
-    setAnswerKeyFile(null)
+    setAnswerKeyFile([])
     setAnswerSheetImage(null)
     setAnswerKeyError(null)
     setAnswerKeyNotice(null)
@@ -423,28 +423,116 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   }
 
   const handleAnswerKeyFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] || null
-    setAnswerKeyFile(file)
+    const files = Array.from(e.target.files || [])
+    setAnswerKeyFile(files)
     setAnswerKeyError(null)
     setAnswerKeyNotice(null)
   }
 
   const handleExtractAnswerKey = async () => {
-    if (!answerKeyFile) {
+    if (answerKeyFile.length === 0) {
       setAnswerKeyError('請選擇檔案，支援 PDF 或圖片')
       return
     }
-    await extractAndSetAnswerKey(
-      answerKeyFile,
-      answerKey,
-      (ak) => setAnswerKey(ak),
-      setIsExtractingAnswerKey,
-      setAnswerKeyError,
-      setAnswerKeyNotice,
-      assignmentDomain,
-      priorWeightTypes,
-      (blob) => setAnswerSheetImage(blob)
-    )
+
+    console.log(`📋 開始提取標準答案... (${answerKeyFile.length} 個檔案)`, { domain: assignmentDomain, priorWeights: priorWeightTypes })
+
+    try {
+      setIsExtractingAnswerKey(true)
+      setAnswerKeyError(null)
+
+      // 處理所有檔案並轉換為 Blob[]
+      const imageBlobs: Blob[] = []
+
+      for (const file of answerKeyFile) {
+        const fileType = getFileType(file)
+        if (fileType !== 'image' && fileType !== 'pdf') {
+          setAnswerKeyError(`不支援的檔案格式: ${file.name}，請改用圖片或 PDF`)
+          return
+        }
+
+        let imageBlob: Blob
+        if (fileType === 'image') {
+          console.log('🖼️ 處理圖片檔案', { name: file.name, size: file.size, type: file.type })
+          imageBlob = await fileToBlob(file)
+
+          // 激進壓縮：確保最終大小 < 1.5MB（Base64編碼後 < 2MB）
+          let compressionAttempts = 0
+          let targetSize = 1.5 * 1024 * 1024  // 1.5MB
+
+          while (imageBlob.size > targetSize && compressionAttempts < 3) {
+            console.log(`⚠️ ${file.name} 第 ${compressionAttempts + 1} 次壓縮...`, { currentSize: imageBlob.size })
+
+            const quality = 0.6 - (compressionAttempts * 0.15)  // 0.6, 0.45, 0.3
+            const maxWidth = 1600 - (compressionAttempts * 400)  // 1600, 1200, 800
+
+            imageBlob = await compressImageFile(imageBlob, {
+              maxWidth,
+              quality,
+              format: 'image/webp'
+            })
+
+            compressionAttempts++
+            console.log(`✅ 壓縮完成 (第 ${compressionAttempts} 次)`, { compressedSize: imageBlob.size, maxWidth, quality })
+          }
+
+          if (imageBlob.size > targetSize) {
+            console.warn(`⚠️ ${file.name} 仍然過大，但已達壓縮上限`, { finalSize: imageBlob.size })
+          }
+        } else {
+          console.log('📄 處理 PDF 檔案', { name: file.name, size: file.size })
+          imageBlob = await convertPdfToImage(file, {
+            scale: 1,
+            format: 'image/webp',
+            quality: 0.5
+          })
+
+          // PDF 也需要壓縮檢查
+          if (imageBlob.size > 1.5 * 1024 * 1024) {
+            console.log(`⚠️ ${file.name} PDF 轉換後仍過大，進行壓縮...`, { originalSize: imageBlob.size })
+            imageBlob = await compressImageFile(imageBlob, {
+              maxWidth: 1200,
+              quality: 0.4,
+              format: 'image/webp'
+            })
+            console.log('✅ PDF 壓縮完成', { compressedSize: imageBlob.size })
+          }
+
+          console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
+        }
+
+        imageBlobs.push(imageBlob)
+      }
+
+      // Save first image blob for re-analysis
+      if (imageBlobs.length > 0) {
+        console.log('💾 保存第一張答案卷圖片 blob 用於重新分析', { blobSize: imageBlobs[0].size })
+        setAnswerSheetImage(imageBlobs[0])
+      }
+
+      // 呼叫多圖片版本的 extractAnswerKeyFromImages
+      const extracted = await extractAnswerKeyFromImages(imageBlobs, {
+        domain: assignmentDomain,
+        priorWeightTypes
+      })
+
+      console.log('📥 AI 回傳 AnswerKey：', extracted)
+
+      // 與現有的 answerKey 合併
+      if (answerKey) {
+        console.log('🔄 合併新舊 AnswerKey...')
+        const { merged, notice } = mergeAnswerKeys(answerKey, extracted)
+        setAnswerKey(merged)
+        if (notice) setAnswerKeyNotice(notice)
+      } else {
+        setAnswerKey(extracted)
+      }
+    } catch (err) {
+      console.error('❌ 提取 AnswerKey 失敗：', err)
+      setAnswerKeyError(err instanceof Error ? err.message : '提取失敗')
+    } finally {
+      setIsExtractingAnswerKey(false)
+    }
   }
 
   const handleExtractAnswerKeyForEdit = async () => {
@@ -1377,30 +1465,31 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-gray-700">
-                    上傳答案卷（可用 PDF 或圖片）
+                    上傳答案卷（可用 PDF 或圖片，支援多檔案選取）
                   </label>
                   <input
                     type="file"
                     accept="image/*,application/pdf"
+                    multiple
                     onChange={handleAnswerKeyFileChange}
                     disabled={isSubmitting || isExtractingAnswerKey}
                     className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    可多次上傳，題目會合併；重複題號會自動加上後綴。
+                    可一次選取多個檔案，或多次上傳合併；重複題號會自動加上後綴。
                   </p>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={handleExtractAnswerKey}
                       disabled={
-                        !answerKeyFile || isSubmitting || isExtractingAnswerKey
+                        answerKeyFile.length === 0 || isSubmitting || isExtractingAnswerKey
                       }
                       className="mt-2 inline-flex items-center px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                     >
                       {isExtractingAnswerKey
                         ? 'AI 解析中…'
-                        : '使用 AI 解析並合併答案'}
+                        : `使用 AI 解析並合併答案${answerKeyFile.length > 0 ? ` (${answerKeyFile.length} 個檔案)` : ''}`}
                     </button>
                     {answerKey && answerKey.questions.some(q => q.needsReanalysis) && (
                       <button
