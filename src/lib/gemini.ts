@@ -87,7 +87,7 @@ export async function diagnoseModels() {
     return
   }
 
-  const candidates = ['gemini-3-pro-preview']
+  const candidates = ['gemini-3-flash-preview']
 
   console.log('🩺 開始測試可用的 Gemini 模型...')
   let winnerModel = ''
@@ -119,7 +119,7 @@ export async function diagnoseModels() {
 }
 
 // 預設使用的模型名稱（會被 diagnoseModels 動態覆蓋）
-let currentModelName = 'gemini-3-pro-preview'
+let currentModelName = 'gemini-3-flash-preview'
 
 export interface ExtractAnswerKeyOptions {
   domain?: string
@@ -499,44 +499,54 @@ ${JSON.stringify(answerKey)}
       const mode = options.regrade.mode || 'correction'
 
       if (mode === 'correction') {
-        // 人工修正模式：第一次批改錯誤，需要重新仔細看
-        const previousAnswerLines = previousDetails
+        // 人工修正模式：部分題目被標記錯誤
+        const markedQuestionsInfo = previousDetails
           .filter((detail) => detail?.questionId && questionIds.includes(detail.questionId))
           .map(
             (detail) =>
-              `- 題號 ${detail.questionId}：你之前輸出「${detail?.studentAnswer ?? ''}」（已被標記為錯誤）`
+              `- 題號 ${detail.questionId}：你之前輸出「${detail?.studentAnswer ?? ''}」（已被老師標記為錯誤）`
           )
+          .join('\n')
+
+        const otherQuestionsInfo = previousDetails
+          .filter((detail) => detail?.questionId && !questionIds.includes(detail.questionId))
+          .map((detail) => `- 題號 ${detail.questionId}：「${detail?.studentAnswer ?? ''}」`)
           .join('\n')
 
         promptSections.push(
           `
-【人工修正模式 - 重新仔細檢視】
-⚠️ 以下題目的第一次批改已被確認錯誤，請重新仔細檢視圖片：
+【人工修正模式 - 部分題目需重新檢視】
 
-${previousAnswerLines || `題號：${questionIds.join(', ')}`}
+🔴 以下 ${questionIds.length} 題已被老師標記為錯誤，需要重新仔細檢視圖片：
+${markedQuestionsInfo || `題號：${questionIds.join(', ')}`}
+
+✅ 以下題目批改正確，直接使用之前的結果（不要重新批改）：
+${otherQuestionsInfo || '（無其他題目）'}
 
 重新批改要求：
-1. 完全忘記之前的判斷，重新從圖片開始看
-2. 仔細確認學生筆跡的每一筆畫
-3. 確認題目要求（例如：考國字還是注音、選擇題要看打勾位置）
-4. 不要再給出和之前一樣的答案（除非你非常確定之前是對的）
-5. 只輸出這 ${questionIds.length} 題：${questionIds.join(', ')}
+1. 標記錯誤的題目：完全忘記之前的判斷，重新從圖片仔細檢視
+   - 仔細確認學生筆跡的每一筆畫
+   - 確認題目要求（例如：考國字還是注音、選擇題要看打勾位置）
+   - 不要再給出和之前一樣的答案（除非你非常確定之前是對的）
+
+2. 其他題目：直接照抄之前的 studentAnswer，不需要重新辨識
+
+3. 必須輸出所有題目（包括正確的和標記錯誤的）
 
 ❌ 嚴禁：
-- 直接沿用之前的 studentAnswer
-- 用推測或猜測來填補
-- 輸出和之前完全相同的內容（這代表你沒有重新思考）
+- 對於標記錯誤的題目：輸出和之前完全相同的內容（這代表你沒有重新思考）
+- 對於正確的題目：改動之前的 studentAnswer（這些題目不需要重新批改）
 `.trim()
         )
       } else if (mode === 'missing') {
-        // 自動補漏模式：第一次遺漏題目
+        // 自動補漏模式：第一次完全遺漏的題目
         promptSections.push(
           `
-【補漏模式 - 遺漏題目重新辨識】
-第一次批改遺漏了以下題目，請補上：${questionIds.join(', ')}
+【補漏模式 - AI遺漏題目重新辨識】
+第一次批改時你遺漏了以下題目，現在請補上：${questionIds.join(', ')}
 
 要求：
-1. 只輸出這 ${questionIds.length} 題
+1. 只輸出這 ${questionIds.length} 題（其他題目已經批改過了）
 2. 每題都必須有 studentAnswer（即使是「未作答」或「無法辨識」）
 3. 不要輸出其他題號
 `.trim()
@@ -548,7 +558,7 @@ ${previousAnswerLines || `題號：${questionIds.join(', ')}`}
         promptSections.push(
           `
 【強制標記】
-以下題目已被標記為完全無法辨識，請直接輸出：
+以下題目圖片品質太差或筆跡無法辨識，請直接輸出：
 ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0, confidence=0`).join('\n')}
 `.trim()
         )
@@ -710,30 +720,69 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
       })
     }
 
-    // 檢查：correction 模式下，AI 是否給出了和之前一樣的答案
-    if (options?.regrade?.mode === 'correction' && options.regrade.previousDetails && parsed.details) {
+    // 檢查：correction 模式下，被標記的題目是否真的重新思考了
+    if (
+      options?.regrade?.mode === 'correction' &&
+      options.regrade.questionIds &&
+      options.regrade.previousDetails &&
+      parsed.details
+    ) {
+      const markedIds = new Set(options.regrade.questionIds)
       const previousMap = new Map(
         options.regrade.previousDetails.map((d) => [d.questionId, d.studentAnswer?.trim()])
       )
       const sameAnswerIds: string[] = []
+      const changedOtherIds: string[] = []
 
       parsed.details.forEach((detail) => {
         const qid = detail.questionId ?? ''
         const prevAnswer = previousMap.get(qid)
         const currAnswer = detail.studentAnswer?.trim()
 
-        if (prevAnswer && currAnswer && prevAnswer === currAnswer) {
-          sameAnswerIds.push(qid)
+        if (markedIds.has(qid)) {
+          // 被標記的題目：應該要不一樣（除非 AI 真的確定之前是對的）
+          if (prevAnswer && currAnswer && prevAnswer === currAnswer) {
+            sameAnswerIds.push(qid)
+          }
+        } else {
+          // 沒被標記的題目：應該要一樣（直接照抄）
+          if (prevAnswer && currAnswer && prevAnswer !== currAnswer) {
+            changedOtherIds.push(qid)
+          }
         }
       })
 
       if (sameAnswerIds.length > 0) {
-        console.warn(`⚠️ AI 重新批改後給出了和之前完全相同的答案：${sameAnswerIds.join(', ')}`)
+        console.warn(
+          `⚠️ 被標記錯誤的題目，AI 重新批改後仍給出相同答案：${sameAnswerIds.join(', ')}`
+        )
         parsed.needsReview = true
         parsed.reviewReasons = [
           ...(parsed.reviewReasons ?? []),
-          `AI 重新批改後答案未改變（${sameAnswerIds.join(', ')}），可能需人工介入`
+          `標記題目 AI 答案未改變（${sameAnswerIds.join(', ')}），可能需人工介入`
         ]
+      }
+
+      if (changedOtherIds.length > 0) {
+        console.warn(`⚠️ 未標記的題目被 AI 改動了：${changedOtherIds.join(', ')}，已自動還原`)
+        // 自動還原未標記題目的答案
+        parsed.details = parsed.details.map((detail) => {
+          const qid = detail.questionId ?? ''
+          if (changedOtherIds.includes(qid)) {
+            const prev = options.regrade!.previousDetails!.find((d) => d.questionId === qid)
+            if (prev && prev.studentAnswer !== undefined) {
+              return {
+                ...detail,
+                studentAnswer: prev.studentAnswer,
+                score: prev.score ?? 0,
+                isCorrect: prev.isCorrect ?? false,
+                confidence: prev.confidence ?? 0,
+                reason: prev.reason ?? ''
+              }
+            }
+          }
+          return detail
+        })
       }
     }
 
