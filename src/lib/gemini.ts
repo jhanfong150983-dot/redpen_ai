@@ -522,6 +522,19 @@ export async function extractStudentAnswers(
 }
 `.trim())
 
+  // 加入近期擷取錯誤參考（幫助模型避免重複錯誤）
+  const recentCorrections = await getRecentAnswerExtractionCorrections(options?.domain, 5)
+  if (recentCorrections.length > 0) {
+    const lines = recentCorrections
+      .map((item) => {
+        const aiAnswer = item.aiStudentAnswer || '—'
+        return `- 題目 ${item.questionId}：AI 曾錯誤輸出「${aiAnswer}」→ 正確應為「${item.correctedStudentAnswer}」`
+      })
+      .join('\n')
+
+    promptParts.push(`【近期 AI 擷取錯誤參考】\n${lines}`.trim())
+  }
+
   // 硬規則放最後
   promptParts.push(`
 【抄寫硬規則（最高優先）】
