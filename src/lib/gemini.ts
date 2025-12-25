@@ -1394,6 +1394,66 @@ export async function extractAnswerKeyFromImage(
 }
 
 /**
+ * 從多張答案卷圖片中抽取 AnswerKey（一次上傳多張圖片）
+ * 支持答案卷跨多頁的情況
+ */
+export async function extractAnswerKeyFromImages(
+  answerSheetImages: Blob[],
+  opts?: ExtractAnswerKeyOptions
+): Promise<AnswerKey> {
+  if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
+  if (answerSheetImages.length === 0) throw new Error('至少需要提供一張圖片')
+
+  console.log(`🧾 開始從 ${answerSheetImages.length} 張答案卷圖片抽取 AnswerKey...`)
+
+  let priorWeightTypes = opts?.priorWeightTypes
+  if (!priorWeightTypes && opts?.allowedQuestionTypes && opts.allowedQuestionTypes.length > 0) {
+    const { migrateLegacyQuestionType } = await import('./db')
+    priorWeightTypes = Array.from(new Set(opts.allowedQuestionTypes.map(migrateLegacyQuestionType))).sort() as import(
+      './db'
+    ).QuestionCategoryType[]
+    console.log('📦 已自動遷移 allowedQuestionTypes 為 priorWeightTypes:', priorWeightTypes)
+  }
+
+  const prompt = buildAnswerKeyPrompt(opts?.domain, priorWeightTypes)
+
+  // 多圖片提示增強
+  const multiImagePrompt = `
+${prompt}
+
+【多張圖片處理】
+- 你會收到 ${answerSheetImages.length} 張答案卷圖片
+- 這些圖片可能是同一份作業的不同頁面
+- 請從所有圖片中提取題目，並合併成一個完整的 AnswerKey
+- 題號必須連續且不重複（如果多張圖片有重複題號，請保留最完整的版本）
+- totalScore 是所有圖片中所有題目的 maxScore 總和
+`.trim()
+
+  // 準備多圖片請求
+  const requestParts: GeminiRequestPart[] = [multiImagePrompt]
+
+  // 添加所有圖片
+  for (let i = 0; i < answerSheetImages.length; i++) {
+    const imageBase64 = await blobToBase64(answerSheetImages[i])
+    const mimeType = answerSheetImages[i].type || 'image/jpeg'
+    requestParts.push({
+      inlineData: { mimeType, data: imageBase64 }
+    })
+    console.log(`  📄 已添加第 ${i + 1} 張圖片`)
+  }
+
+  console.log('🤖 發送請求到 Gemini API...')
+  const text = (await generateGeminiText(currentModelName, requestParts))
+    .replace(/```json|```/g, '')
+    .trim()
+
+  const result = JSON.parse(text) as AnswerKey
+  console.log(`✅ 成功提取 ${result.questions.length} 題，總分 ${result.totalScore}`)
+
+  return result
+}
+
+/**
  * 重新分析被標記的題目
  * 只針對 needsReanalysis === true 的題目重新分析
  */
