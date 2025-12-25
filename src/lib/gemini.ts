@@ -86,7 +86,6 @@ export async function diagnoseModels() {
   }
 
   const candidates = [
-    'gemini-3-flash-preview',
     'gemini-3-pro-preview',
   ]
 
@@ -120,7 +119,7 @@ export async function diagnoseModels() {
 }
 
 // 預設使用的模型名稱（會被 diagnoseModels 動態覆蓋）
-let currentModelName = 'gemini-2.5-pro'
+let currentModelName = 'gemini-3-pro-preview'
 
 export interface ExtractAnswerKeyOptions {
   domain?: string
