@@ -396,18 +396,18 @@ export async function gradeSubmission(
 
     const submissionBase64 = await blobToBase64(submissionImage)
     const requestParts: GeminiRequestPart[] = []
+    const promptSections: string[] = []
 
-    // --- Prompt 區（通用所有科目） ---
-    let prompt = `
+    promptSections.push(`
 你是一位嚴謹、公正的老師，負責批改學生的紙本作業。
 本系統會用在各種科目（例如：國語、英文、數學、自然、社會等），
 請主要根據「題目文字」與「標準答案」來判斷對錯，不要憑常識亂猜。
-`.trim()
+`.trim())
 
     if (answerKey) {
       // 情境 1：已經有結構化 AnswerKey
       const questionIds = answerKey.questions.map(q => q.id).join(', ')
-      prompt += `
+      promptSections.push(`
 
 下面是本次作業的標準答案與配分（JSON 格式）：
 ${JSON.stringify(answerKey)}
@@ -425,37 +425,37 @@ ${JSON.stringify(answerKey)}
   · 字音造詞題：若 referenceAnswer 包含讀音說明（如「ㄋㄨㄥˋ讀音」），學生答案必須符合該讀音，讀音錯誤直接 0 分。
 - Type 3（評價）：使用 rubricsDimensions 多維度評分，逐維度評估後累計總分。若無維度，用 4 級標準（優秀/良好/尚可/待努力）。
 - 學生答案只要清楚寫出關鍵字/數值，即使字跡不完美也視為正確。
-`.trim()
+`.trim())
     } else if (answerKeyImage) {
       // 情境 2：沒有結構化 AnswerKey，但有答案卷圖片
       const answerKeyBase64 = await blobToBase64(answerKeyImage)
-      prompt += `
+      promptSections.push(`
 
 第一張圖片是「標準答案／解答本」，第二張圖片是「學生作業」。
 請先從標準答案圖片中，為每一題抽取「題號、正確答案、配分（可以合理估計）」，
 再根據這些標準答案來批改學生作業。
 請不要憑空新增題目，也不要改變題號。
-`.trim()
+`.trim())
       requestParts.push({
         inlineData: { mimeType: 'image/jpeg', data: answerKeyBase64 }
       })
     } else {
       // 情境 3：只有學生作業圖片（最不可靠，只為相容）
-      prompt += `
+      promptSections.push(`
 
 目前沒有提供標準答案，只有學生作業圖片。
 請先保守推測每一題題意與合理答案，再進行批改。
 只有在你非常有把握的情況下才判為正確，題意不清就視為不給分。
-`.trim()
+`.trim())
     }
 
     const domainHint = buildGradingDomainSection(options?.domain)
     if (domainHint && options?.domain) {
-      prompt += `
+      promptSections.push(`
 
 【${options.domain} 批改要點】
 ${domainHint}
-`.trim()
+`.trim())
     }
 
     if (options?.regrade?.questionIds?.length) {
@@ -470,27 +470,27 @@ ${domainHint}
         })
         .join('\n')
 
-      prompt += `
+      promptSections.push(`
 
 【再次批改模式】
 - 只重新擷取與批改：${questionIds.join(', ')}。
 - 其他題目維持不變。
 - 目前批改 details：${JSON.stringify(previousDetails)}
-`.trim()
+`.trim())
 
       if (previousAnswerLines) {
-        prompt += `
+        promptSections.push(`
 
 上一次學生答案（已確認錯誤）：
 ${previousAnswerLines}
-`.trim()
+`.trim())
       }
 
       if (forcedIds.length > 0) {
-        prompt += `
+        promptSections.push(`
 
 強制無法辨識清單：${forcedIds.map((id) => `${id}`).join(', ')}
-`.trim()
+`.trim())
       }
     }
 
@@ -506,25 +506,25 @@ ${previousAnswerLines}
         })
         .join('\n')
 
-      prompt += `
+      promptSections.push(`
 
 【近期 AI 擷取錯誤參考】
 ${lines}
-`.trim()
+`.trim())
     }
 
     if (options?.strict) {
-      prompt += `
+      promptSections.push(`
 
 【嚴謹模式】
 - 若題意、字跡或答案不清楚，請判為不給分，並在 reason 說明原因。
 - 不要推測或補寫；只根據題目文字與標準答案判斷。
 - 答案不完整或缺少關鍵字/數值時，視為錯誤。
 - 請再次檢查每題得分與 totalScore 是否一致。
-`.trim()
+`.trim())
     }
 
-    prompt += `
+    promptSections.push(`
 
 【學生答案擷取規則 - 機械式抄寫】
 
@@ -546,9 +546,9 @@ ${lines}
 🔍 唯一例外：
 - 完全無法辨識的字跡（墨水塗抹、筆劃模糊）→ 用「[?]」標記
 - 例：「光[?]作用」（第二字完全看不清）
-`.trim()
+`.trim())
 
-    prompt += `
+    promptSections.push(`
 
 【空白答案處理 - 絕對禁止臆測】
 
@@ -567,9 +567,9 @@ ${lines}
 - 圖片中學生填寫區域是否有筆跡？
   · 有 → 抄寫筆跡內容（不修改）
   · 無 → 輸出「未作答」（不臆測）
-`.trim()
+`.trim())
 
-    prompt += `
+    promptSections.push(`
 
 【低成就學生答案處理】
 
@@ -587,9 +587,9 @@ ${lines}
 - 禁止將錯誤答案「修正」成正確答案
 
 記住：你的任務是「如實記錄學生作答」，而非「幫學生改作業」。
-`.trim()
+`.trim())
 
-    prompt += `
+    promptSections.push(`
 
 【單題擷取信心率（0-100）】
 - 定義：只根據「擷取學生答案時的猶豫程度」給分，不是圖片清晰度，也不是比對正確答案。
@@ -613,10 +613,10 @@ ${lines}
 - 常見誤區：
   ❌ 看到「光和作用」→ 信心率 20（因答案錯誤）
   ✅ 看到「光和作用」→ 信心率 90（因字跡清晰）
-`.trim()
+`.trim())
 
     // 要求輸出統一的 JSON 結構（所有科目通用）
-    prompt += `
+    promptSections.push(`
 
 回傳純 JSON：
 {
@@ -641,8 +641,9 @@ ${lines}
 }
 
 若為「再次批改模式」，details 請只回傳被要求重新批改的題號。
-`.trim()
+`.trim())
 
+    const prompt = promptSections.join('\n\n')
     requestParts.push(prompt)
     requestParts.push({
       inlineData: { mimeType: 'image/jpeg', data: submissionBase64 }
