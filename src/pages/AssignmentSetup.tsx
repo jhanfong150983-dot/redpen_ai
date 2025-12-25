@@ -1496,6 +1496,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   <p className="text-xs text-gray-500 mt-1">
                     可一次選取多個檔案，或多次上傳合併；重複題號會自動加上後綴。
                   </p>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mt-2">
+                    <p className="text-xs text-blue-800">
+                      💡 <strong>提示：</strong>建議使用<strong className="text-blue-900">紅筆、藍筆或其他彩色筆</strong>填寫答案，AI 會優先識別與印刷黑色不同的彩色筆跡作為標準答案，辨識率更高！
+                    </p>
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1963,6 +1968,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 <p className="text-xs text-amber-600 mt-1">
                   💡 若要使用「重新分析」功能，請先上傳答案卷並點擊「AI 解析」
                 </p>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mt-2">
+                  <p className="text-xs text-blue-800">
+                    💡 <strong>提示：</strong>建議使用<strong className="text-blue-900">紅筆、藍筆或其他彩色筆</strong>填寫答案，AI 會優先識別與印刷黑色不同的彩色筆跡作為標準答案，辨識率更高！
+                  </p>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
