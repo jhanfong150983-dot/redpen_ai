@@ -86,9 +86,8 @@ export async function diagnoseModels() {
   }
 
   const candidates = [
-    'gemini-2.5-pro',
-    'gemini-2.0-flash-exp',
-    'gemini-2.5-flash-image'
+    'gemini-3-flash-preview',
+    'gemini-3-pro-preview',
   ]
 
   console.log('🩺 開始測試可用的 Gemini 模型...')
@@ -855,8 +854,15 @@ export async function reanalyzeQuestions(
 
   const reanalyzePrompt = `${basePrompt}
 
-【重新分析模式】
-只重新分析以下題號：${questionIds}
+【重新分析模式 - 強制完整輸出】
+必須重新分析以下題號：${questionIds}（共 ${markedQuestions.length} 題）
+
+⚠️ 強制要求：
+- 必須輸出所有 ${markedQuestions.length} 題的完整資料
+- 即使某題在圖片中看不清楚，也必須輸出該題號，並在 referenceAnswer 標記「圖片中無法辨識」
+- 題號順序可以不同，但數量必須完全一致
+- 禁止遺漏任何題號
+
 其他題目請忽略，不要輸出。
 
 請仔細辨識這些題目的內容，重新判斷類型並提取答案。`
@@ -869,7 +875,35 @@ export async function reanalyzeQuestions(
     .trim()
 
   const result = JSON.parse(text) as import('./db').AnswerKey
-  console.log(`✅ 重新分析完成，共 ${result.questions.length} 題`)
+
+  // Debug: 檢查是否有遺漏的題目
+  const requestedIds = markedQuestions.map(q => q.id)
+  const returnedIds = result.questions.map(q => q.id)
+  const missingIds = requestedIds.filter(id => !returnedIds.includes(id))
+
+  if (missingIds.length > 0) {
+    console.warn(`⚠️ AI 遺漏了 ${missingIds.length} 題：${missingIds.join(', ')}`)
+    console.warn(`要求分析：${requestedIds.join(', ')}`)
+    console.warn(`實際回傳：${returnedIds.join(', ')}`)
+
+    // 自動補漏：為遺漏的題目創建佔位項
+    const placeholderQuestions = missingIds.map(id => {
+      const originalQuestion = markedQuestions.find(q => q.id === id)!
+      return {
+        id,
+        type: 2 as import('./db').QuestionCategoryType, // 預設 Type 2
+        maxScore: originalQuestion.maxScore || 0,
+        referenceAnswer: 'AI 無法從圖片中重新辨識此題，請手動編輯',
+        acceptableAnswers: [],
+        needsReanalysis: true // 保持標記，提醒教師手動處理
+      }
+    })
+
+    result.questions.push(...placeholderQuestions)
+    console.log(`🔧 已自動為遺漏的 ${missingIds.length} 題創建佔位項（需手動編輯）`)
+  }
+
+  console.log(`✅ 重新分析完成，共 ${result.questions.length} 題（要求 ${markedQuestions.length} 題）`)
 
   return result.questions
 }
