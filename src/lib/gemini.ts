@@ -496,31 +496,62 @@ ${JSON.stringify(answerKey)}
       const questionIds = options.regrade.questionIds
       const previousDetails = options.regrade.previousDetails ?? []
       const forcedIds = options.regrade.forceUnrecognizableQuestionIds ?? []
+      const mode = options.regrade.mode || 'correction'
 
-      const previousAnswerLines = previousDetails
-        .filter((detail) => detail?.questionId && questionIds.includes(detail.questionId))
-        .map((detail) => `- ${detail.questionId}：${detail?.studentAnswer ?? ''}`)
-        .join('\n')
+      if (mode === 'correction') {
+        // 人工修正模式：第一次批改錯誤，需要重新仔細看
+        const previousAnswerLines = previousDetails
+          .filter((detail) => detail?.questionId && questionIds.includes(detail.questionId))
+          .map(
+            (detail) =>
+              `- 題號 ${detail.questionId}：你之前輸出「${detail?.studentAnswer ?? ''}」（已被標記為錯誤）`
+          )
+          .join('\n')
 
-      promptSections.push(
-        `
-【再次批改模式】
-- 只重新擷取與批改：${questionIds.join(', ')}
-- 其他題目維持不變
-- 目前批改 details：${JSON.stringify(previousDetails)}
+        promptSections.push(
+          `
+【人工修正模式 - 重新仔細檢視】
+⚠️ 以下題目的第一次批改已被確認錯誤，請重新仔細檢視圖片：
 
-限制：
-- previousDetails 只能用來「定位題號、比對是否漏題」
-- studentAnswer 必須以本次圖片為準逐字抄寫，不得參考 previousDetails 來推測、修正或美化
+${previousAnswerLines || `題號：${questionIds.join(', ')}`}
+
+重新批改要求：
+1. 完全忘記之前的判斷，重新從圖片開始看
+2. 仔細確認學生筆跡的每一筆畫
+3. 確認題目要求（例如：考國字還是注音、選擇題要看打勾位置）
+4. 不要再給出和之前一樣的答案（除非你非常確定之前是對的）
+5. 只輸出這 ${questionIds.length} 題：${questionIds.join(', ')}
+
+❌ 嚴禁：
+- 直接沿用之前的 studentAnswer
+- 用推測或猜測來填補
+- 輸出和之前完全相同的內容（這代表你沒有重新思考）
 `.trim()
-      )
+        )
+      } else if (mode === 'missing') {
+        // 自動補漏模式：第一次遺漏題目
+        promptSections.push(
+          `
+【補漏模式 - 遺漏題目重新辨識】
+第一次批改遺漏了以下題目，請補上：${questionIds.join(', ')}
 
-      if (previousAnswerLines) {
-        promptSections.push(`上一次學生答案（已確認錯誤）：\n${previousAnswerLines}`.trim())
+要求：
+1. 只輸出這 ${questionIds.length} 題
+2. 每題都必須有 studentAnswer（即使是「未作答」或「無法辨識」）
+3. 不要輸出其他題號
+`.trim()
+        )
       }
 
+      // 強制無法辨識（優先級最高）
       if (forcedIds.length > 0) {
-        promptSections.push(`強制無法辨識清單：${forcedIds.join(', ')}`.trim())
+        promptSections.push(
+          `
+【強制標記】
+以下題目已被標記為完全無法辨識，請直接輸出：
+${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0, confidence=0`).join('\n')}
+`.trim()
+        )
       }
     }
 
@@ -661,7 +692,52 @@ ${JSON.stringify(answerKey)}
 
     let parsed = JSON.parse(text) as GradingResult
 
-    const reviewReasons: string[] = []
+    // 硬性覆蓋：強制無法辨識的題目
+    if (options?.regrade?.forceUnrecognizableQuestionIds?.length && parsed.details) {
+      const forcedIds = new Set(options.regrade.forceUnrecognizableQuestionIds)
+      parsed.details = parsed.details.map((detail) => {
+        if (forcedIds.has(detail.questionId ?? '')) {
+          return {
+            ...detail,
+            studentAnswer: '無法辨識',
+            score: 0,
+            isCorrect: false,
+            confidence: 0,
+            reason: '圖片品質不佳或筆跡無法辨識'
+          }
+        }
+        return detail
+      })
+    }
+
+    // 檢查：correction 模式下，AI 是否給出了和之前一樣的答案
+    if (options?.regrade?.mode === 'correction' && options.regrade.previousDetails && parsed.details) {
+      const previousMap = new Map(
+        options.regrade.previousDetails.map((d) => [d.questionId, d.studentAnswer?.trim()])
+      )
+      const sameAnswerIds: string[] = []
+
+      parsed.details.forEach((detail) => {
+        const qid = detail.questionId ?? ''
+        const prevAnswer = previousMap.get(qid)
+        const currAnswer = detail.studentAnswer?.trim()
+
+        if (prevAnswer && currAnswer && prevAnswer === currAnswer) {
+          sameAnswerIds.push(qid)
+        }
+      })
+
+      if (sameAnswerIds.length > 0) {
+        console.warn(`⚠️ AI 重新批改後給出了和之前完全相同的答案：${sameAnswerIds.join(', ')}`)
+        parsed.needsReview = true
+        parsed.reviewReasons = [
+          ...(parsed.reviewReasons ?? []),
+          `AI 重新批改後答案未改變（${sameAnswerIds.join(', ')}），可能需人工介入`
+        ]
+      }
+    }
+
+    const reviewReasons: string[] = [...(parsed.reviewReasons ?? [])]
     if (!parsed.details || !Array.isArray(parsed.details)) {
       reviewReasons.push('缺少逐題詳解')
     }
