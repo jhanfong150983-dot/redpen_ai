@@ -7,7 +7,9 @@ import {
 } from './db'
 
 const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
-export const isGeminiAvailable = Boolean(geminiProxyUrl)
+
+// 你這套設計是「一定走 proxy」：有沒有可用最後由 fetch 成功與否決定
+export const isGeminiAvailable = true
 
 // 工具：Blob 轉 Base64（去掉 data: 前綴）
 async function blobToBase64(blob: Blob): Promise<string> {
@@ -85,9 +87,7 @@ export async function diagnoseModels() {
     return
   }
 
-  const candidates = [
-    'gemini-3-pro-preview',
-  ]
+  const candidates = ['gemini-3-pro-preview']
 
   console.log('🩺 開始測試可用的 Gemini 模型...')
   let winnerModel = ''
@@ -149,38 +149,50 @@ export interface GradeSubmissionOptions {
   }
 }
 
-
 const gradingDomainHints: Record<string, string> = {
-  '國語': `
-- 以關鍵字、成語或句子重點為主，避免抄全文。
-- 文意題避免主觀推論，只抽取題幹可判斷的詞。
-- 字音造詞題：檢查學生答案的讀音是否與題目要求一致（如：ㄋㄨㄥˋ 可答「弄瓦」，不可答「巷弄(ㄌㄨㄥˋ)」），讀音錯誤直接 0 分。
+  國語: `
+【最高優先規則：studentAnswer 嚴禁優化】
+1. studentAnswer 一律逐字抄寫「圖片中看得到的學生筆跡」，不可摘要、不可改寫、不可修正錯字、不可補全。
+2. 需要抓重點/摘要只能寫在 reason 或 mistakes/weaknesses/suggestions，絕對不能寫進 studentAnswer。
+
+【評分提示（只影響 isCorrect/score/reason，不得影響 studentAnswer）】
+1. 文意題：避免主觀推論，只在 reason 說明「缺哪些關鍵字/要點」。
+2. 字音造詞題：檢查學生答案讀音是否符合題目要求（如：ㄋㄨㄥˋ 可答「弄瓦」，不可答「巷弄(ㄌㄨㄥˋ)」），讀音錯誤直接 0 分。
 
 【方格框答案擷取】
-- 識別方格區域：確認學生填寫內容在方格框內
-- 擷取規則：
-  · 單方格 = 單字（□ → "弄"）
-  · 多方格 = 連續字詞（□□ → "弄瓦"）
-  · 空白方格 → "未作答"
-- 對齊檢查：確保方格數量與標準答案一致
+1. 識別方格區域：確認學生填寫內容在方格框內
+2. 擷取規則：
+- 單方格 = 單字（□ → "弄"）
+- 多方格 = 連續字詞（□□ → "弄瓦"）
+- 空白方格 → "未作答"
+3. 對齊檢查：確保方格數量與標準答案一致
 
 【國語答案擷取特別注意】
-- 相近字造詞題：學生可能寫錯字（如：嗇→普），原樣輸出不修正
-- 同音字造詞題：檢查讀音一致性，但不修正學生用字
-- 開放題/申論題：
-  · 學生答案可能簡短、不完整、有語病 → 原樣輸出
-  · 禁止擴寫、補充、修正、優化學生答案
-  · 即使答案明顯錯誤或不完整，也必須如實記錄`,
-  '數學': `
-- 計算題保留最終數值與必要單位；需公式時留核心公式。
-- 幾何/代數題可列主要結論，避免冗長過程。`,
-  '社會': `
-- 名詞、年代、地點、人物要精確；時間題保留年份或朝代。
-- 請專注於同音異字的錯誤，特別是地名。用字錯誤視為錯誤。例如：九州和九洲。`,
-  '自然': `
-- 保留關鍵名詞、數值、實驗結論；單位必須保留，化學式/符號需完整。`,
-  '英語': `
-- 拼字需精確；大小寫與標點依題幹要求；完形/選擇用正確選項或必要單字短語。`
+1. 相近字造詞題：學生可能寫錯字（如：嗇→普），原樣輸出不修正
+2. 同音字造詞題：檢查讀音一致性，但不修正學生用字
+3. 開放題/申論題：
+- 學生答案可能簡短、不完整、有語病 → 原樣輸出
+- 禁止擴寫、補充、修正、優化學生答案
+- 即使答案明顯錯誤或不完整，也必須如實記錄
+`.trim(),
+
+  數學: `
+計算題保留最終數值與必要單位；需公式時留核心公式。
+幾何/代數題可列主要結論，避免冗長過程。
+`.trim(),
+
+  社會: `
+名詞、年代、地點、人物要精確；時間題保留年份或朝代。
+請專注於同音異字的錯誤，特別是地名。用字錯誤視為錯誤。例如：九州和九洲。
+`.trim(),
+
+  自然: `
+保留關鍵名詞、數值、實驗結論；單位必須保留，化學式/符號需完整。
+`.trim(),
+
+  英語: `
+拼字需精確；大小寫與標點依題幹要求；完形/選擇用正確選項或必要單字短語。
+`.trim()
 }
 
 function buildGradingDomainSection(domain?: string) {
@@ -193,9 +205,7 @@ async function getRecentAnswerExtractionCorrections(
   limit = 5
 ): Promise<AnswerExtractionCorrection[]> {
   try {
-    let collection = db.answerExtractionCorrections
-      .orderBy('createdAt')
-      .reverse()
+    let collection = db.answerExtractionCorrections.orderBy('createdAt').reverse()
     if (domain) {
       collection = collection.filter((item) => item.domain === domain)
     }
@@ -206,7 +216,10 @@ async function getRecentAnswerExtractionCorrections(
   }
 }
 
-function buildAnswerKeyPrompt(domain?: string, priorWeightTypes?: import('./db').QuestionCategoryType[]) {
+function buildAnswerKeyPrompt(
+  domain?: string,
+  priorWeightTypes?: import('./db').QuestionCategoryType[]
+) {
   const base = `
 從標準答案圖片提取可機器批改的答案表。回傳純 JSON（無 Markdown）：
 
@@ -225,12 +238,10 @@ function buildAnswerKeyPrompt(domain?: string, priorWeightTypes?: import('./db')
 
     // Type 3 專用：評分規準
     "referenceAnswer": "評分要點",
-    // 有標準答案+思考過程時：
     "rubricsDimensions": [
       {"name": "計算過程", "maxScore": 3, "criteria": "步驟清晰"},
       {"name": "最終答案", "maxScore": 2, "criteria": "答案正確"}
     ],
-    // 純評價題時：
     "rubric": {
       "levels": [
         {"label": "優秀", "min": 9, "max": 10, "criteria": "邏輯清晰完整"},
@@ -244,95 +255,99 @@ function buildAnswerKeyPrompt(domain?: string, priorWeightTypes?: import('./db')
     "aiDivergedFromPrior": false,
     "aiOriginalDetection": 1
   }],
-  "totalScore": 50  // 所有題目滿分總和
+  "totalScore": 50
 }
 
 【題型分類標準】
-- Type 1（唯一答案）：精確匹配，答案唯一且不可替換
-  例：是非題(O/X)、選擇題(A/B/C)、計算結果(2+3=5)
+Type 1（唯一答案）：精確匹配，答案唯一且不可替換
+- 例：是非題(O/X)、選擇題(A/B/C)、計算結果(2+3=5)
 
-- Type 2（多答案可接受）：核心答案固定但允許不同表述
-  例：詞義解釋「光合作用」vs「植物製造養分」
-      異音字造詞「ㄋㄨㄥˋ：弄瓦、弄璋」「ㄌㄨㄥˋ：巷弄」（須記錄讀音於referenceAnswer）
-      相似字造詞「(言部)辯：辯護、爭辯」「(辛部)辨：辨別、分辨」（須記錄部首於referenceAnswer）
+Type 2（多答案可接受）：核心答案固定但允許不同表述
+- 例：詞義解釋「光合作用」vs「植物製造養分」
+- 異音字造詞「ㄋㄨㄥˋ：弄瓦、弄璋」「ㄌㄨㄥˋ：巷弄」（須記錄讀音於 referenceAnswer）
+- 相似字造詞「(言部)辯：辯護、爭辯」「(辛部)辨：辨別、分辨」（須記錄部首於 referenceAnswer）
 
-
-- Type 3（依表現給分）：開放式或計算題，需評分規準
-  · 計算題：用 rubricsDimensions，維度通常包括「計算過程」和「最終答案」
-  · 申論題：有明確答案要點時用 rubricsDimensions（如：「列舉三個優點」）
-            純評價題時用 rubric 4級評價（如：「你對此事的看法」）
+Type 3（依表現給分）：開放式或計算題，需評分規準
+- 計算題：用 rubricsDimensions，維度通常包括「計算過程」和「最終答案」
+- 申論題：有明確答案要點時用 rubricsDimensions（如：「列舉三個優點」）
+- 純評價題：用 rubric 4級評價（優秀/良好/尚可/待努力）
 
 【規則】
-- 題號：圖片有就用，無則1, 2, 3...（不可跳號）
-- 配分：圖片有就用，無則估計（是非/選擇2-5分，簡答5-8分，申論8-15分）
+- 題號：圖片有就用，無則 1, 2, 3...（不可跳號）
+- 配分：圖片有就用，無則估計（是非/選擇 2-5 分，簡答 5-8 分，申論 8-15 分）
 - totalScore = 所有 maxScore 總和
 - 無法辨識時回傳 {"questions": [], "totalScore": 0}
 `.trim()
 
-  // Prior Weight 提示
   let priorHint = ''
   if (priorWeightTypes && priorWeightTypes.length > 0) {
-    const typeLabels = priorWeightTypes.map((t, i) => {
-      const priority = i === 0 ? '最優先' : i === 1 ? '次優先' : '最後'
-      const typeName = t === 1 ? 'Type 1（唯一答案）' : t === 2 ? 'Type 2（多答案可接受）' : 'Type 3（依表現給分）'
-      return `${priority}：${typeName}`
-    }).join('、')
+    const typeLabels = priorWeightTypes
+      .map((t, i) => {
+        const priority = i === 0 ? '最優先' : i === 1 ? '次優先' : '最後'
+        const typeName =
+          t === 1 ? 'Type 1（唯一答案）' : t === 2 ? 'Type 2（多答案可接受）' : 'Type 3（依表現給分）'
+        return `${priority}：${typeName}`
+      })
+      .join('、')
 
-    priorHint = `\n\n【Prior Weight - 教師指定題型偏好】
+    priorHint = `
+
+【Prior Weight - 教師指定題型偏好】
 教師指定此作業的題型優先級：${typeLabels}
 
-請優先按此順序判斷，但若遇到強烈證據顯示不符時（例如明顯的申論題但教師優先Type 1），可偏離並設定：
+請優先按此順序判斷，但若遇到強烈證據顯示不符時可偏離並設定：
 - "aiDivergedFromPrior": true
 - "aiOriginalDetection": <你的判斷類型>
 
-注意：只在強烈證據時才偏離，一般情況應遵循教師的Prior Weight。`
+注意：只在強烈證據時才偏離，一般情況應遵循 Prior Weight。
+`.trim()
   }
 
-  // 領域提示（精簡版）
   const domainHints: Record<string, string> = {
-    '國語': `【寫國字 vs 寫注音題型識別】
+    國語: `
+【寫國字 vs 寫注音題型識別】
 - 關鍵判斷依據：看「題目要求」而非「圖片內容」
 - 題目文字包含「寫國字」「國字注音」→ 答案應為「國字」
 - 題目文字包含「注音」「寫出讀音」→ 答案應為「注音符號」
 - 典型場景：
-  · 題目：「劈（寫國字）」→ 答案抓「劈」而非「ㄆ一」
-  · 題目：「ㄆ一ㄣˊ（寫注音）」→ 答案抓「ㄆ一ㄣˊ」而非「貧」
-- ⚠️ 錯誤示警：圖片中可能同時有國字和注音，必須依據「題目要求」抓取正確形式
+  - 題目：「劈（寫國字）」→ 答案抓「劈」而非「ㄆ一」
+  - 題目：「ㄆ一ㄣˊ（寫注音）」→ 答案抓「ㄆ一ㄣˊ」而非「貧」
+- ⚠️ 圖片中可能同時有國字和注音，必須依據「題目要求」抓取正確形式
 
 【相近字 vs 同音字 vs 異音字題型】
 - 相近字造詞：字形相似（如：辨/辯、嗇/普）
 - 同音字造詞：讀音相同字形不同（如：ㄋㄨㄥˋ：弄/農）
 - 異音字造詞：同字不同讀音（如：行（ㄏㄤˊ/ㄒㄧㄥˊ））
-- 注意：題組中可能混合三種題型，需逐題判斷
+- 題組中可能混合三種題型，需逐題判斷
 
 【多步驟題型處理】
 - 若題目包含「步驟一」「步驟二」等分階段指示
 - 應視為 1 題（多維度評分），而非拆成多題
 - rubricsDimensions 應包含各步驟的評分維度
 
-字音辨別造詞題（含注音符號，如：ㄋㄨㄥˋ：___）：
-      - 判斷為 Type 2
-      - referenceAnswer 必須包含讀音說明，如「ㄋㄨㄥˋ讀音的詞語」
-      - acceptableAnswers 列出標準答案中的所有範例詞
+【字音辨別造詞題（含注音符號，如：ㄋㄨㄥˋ：____）】
+- 判斷為 Type 2
+- referenceAnswer 必須包含讀音說明，如「ㄋㄨㄥˋ讀音的詞語」
+- acceptableAnswers 列出標準答案中的所有範例詞
 
-      【方格框題目識別】
-      - 定義：連續的空白方格（用於填寫單字或注音），如：□□□□
-      - 判定：一行包含連續方格，該行視為 1 題
-      - 題號生成：若有引導文字（如「ㄋㄨㄥˋ：」），以此為線索；無則按順序編號 1, 2, 3...
-      - 典型場景：
-        · 注音填寫：「ㄋㄨㄥˋ：□□□□」→ 1 題（Type 2，注音造詞）
-        · 生字造詞：「光：□□ □□」→ 1 題（2個詞，Type 2）`,
-    '數學': '數值+單位完整，公式需核心部分',
-    '社會': '專注同音異字（如：九州≠九洲）',
-    '自然': '名詞/數值/單位必須完整',
-    '英語': '拼字/大小寫需精確'
+【方格框題目識別】
+- 定義：連續空白方格（填單字或注音），如：□□□□
+- 判定：一行包含連續方格，該行視為 1 題
+- 題號生成：有引導文字（如「ㄋㄨㄥˋ：」）就用；無則按順序編號 1,2,3...
+- 典型：
+  - 注音填寫：「ㄋㄨㄥˋ：□□□□」→ 1 題（Type 2，注音造詞）
+  - 生字造詞：「光：□□ □□」→ 1 題（2個詞，Type 2）
+`.trim(),
+    數學: '數值+單位完整，公式需核心部分',
+    社會: '專注同音異字（如：九州≠九洲）',
+    自然: '名詞/數值/單位必須完整',
+    英語: '拼字/大小寫需精確'
   }
 
-  const domainHint = domain && domainHints[domain]
-    ? `\n\n【${domain}提示】${domainHints[domain]}`
-    : ''
+  const domainHint =
+    domain && domainHints[domain] ? `\n\n【${domain}提示】\n${domainHints[domain]}` : ''
 
-  return base + priorHint + domainHint
+  return [base, priorHint, domainHint].filter(Boolean).join('\n')
 }
 
 /**
@@ -342,19 +357,18 @@ function fillMissingQuestions(
   result: GradingResult,
   answerKey: AnswerKey
 ): { result: GradingResult; missingQuestionIds: string[] } {
-  const expectedIds = new Set(answerKey.questions.map(q => q.id))
-  const actualIds = new Set((result.details ?? []).map(d => d.questionId))
-  const missingIds = Array.from(expectedIds).filter(id => !actualIds.has(id))
+  const expectedIds = new Set(answerKey.questions.map((q) => q.id))
+  const actualIds = new Set((result.details ?? []).map((d) => d.questionId))
+  const missingIds = Array.from(expectedIds).filter((id) => !actualIds.has(id))
 
   if (missingIds.length > 0) {
     console.warn(`⚠️ AI 遺漏了 ${missingIds.length} 題：${missingIds.join(', ')}`)
 
-    // 補充缺失的題目
-    const missingDetails = missingIds.map(id => {
-      const question = answerKey.questions.find(q => q.id === id)
+    const missingDetails = missingIds.map((id) => {
+      const question = answerKey.questions.find((q) => q.id === id)
       return {
         questionId: id,
-        studentAnswer: '未作答/無法辨識',
+        studentAnswer: '無法辨識',
         score: 0,
         maxScore: question?.maxScore ?? 0,
         isCorrect: false,
@@ -364,6 +378,14 @@ function fillMissingQuestions(
     })
 
     result.details = [...(result.details ?? []), ...missingDetails]
+
+    // ✅ 依 AnswerKey 排序（避免補題跑到最尾端）
+    const order = new Map(answerKey.questions.map((q, i) => [q.id, i]))
+    result.details.sort((a, b) => {
+      const ai = order.get(a.questionId ?? '') ?? 9999
+      const bi = order.get(b.questionId ?? '') ?? 9999
+      return ai - bi
+    })
 
     // 重新計算 totalScore
     result.totalScore = result.details.reduce((sum, d) => sum + (d.score ?? 0), 0)
@@ -377,6 +399,11 @@ function fillMissingQuestions(
   }
 
   return { result, missingQuestionIds: missingIds }
+}
+
+function isEmptyStudentAnswer(ans?: string) {
+  const a = (ans ?? '').trim()
+  return a === '未作答' || a === '無法辨識' || a === '未作答/無法辨識'
 }
 
 /**
@@ -397,106 +424,105 @@ export async function gradeSubmission(
     const requestParts: GeminiRequestPart[] = []
     const promptSections: string[] = []
 
-    promptSections.push(`
+    promptSections.push(
+      `
 你是一位嚴謹、公正的老師，負責批改學生的紙本作業。
 本系統會用在各種科目（例如：國語、英文、數學、自然、社會等），
 請主要根據「題目文字」與「標準答案」來判斷對錯，不要憑常識亂猜。
-`.trim())
+`.trim()
+    )
 
     if (answerKey) {
-      // 情境 1：已經有結構化 AnswerKey
-      const questionIds = answerKey.questions.map(q => q.id).join(', ')
-      promptSections.push(`
-
+      const questionIds = answerKey.questions.map((q) => q.id).join(', ')
+      promptSections.push(
+        `
 下面是本次作業的標準答案與配分（JSON 格式）：
 ${JSON.stringify(answerKey)}
 
 【批改流程】
-請嚴格依照這份 AnswerKey 逐題批改，根據「detectedType」採用分層評分邏輯：
+請嚴格依照這份 AnswerKey 逐題批改，請注意「擷取」與「給分」是兩個獨立的步驟：
 
-- **必須輸出所有題號**：${questionIds}（共 ${answerKey.questions.length} 題）
+- 必須輸出所有題號：${questionIds}（共 ${answerKey.questions.length} 題）
 - 即使學生未作答、空白、或答案完全無法辨識，也必須為該題輸出一條記錄。
 - 題號 id 以 AnswerKey 中的 "id" 為主（例如 "1", "1-1"）。
 
-【分層評分規則】
-- Type 1（精確）：使用 answer 字段進行嚴格對比。完全相符 → 滿分；不符 → 0分。
-- Type 2（模糊）：使用 acceptableAnswers 進行語義匹配。完全/語義相符 → 滿分；部分 → 部分分。
-  · 字音造詞題：若 referenceAnswer 包含讀音說明（如「ㄋㄨㄥˋ讀音」），學生答案必須符合該讀音，讀音錯誤直接 0 分。
-- Type 3（評價）：使用 rubricsDimensions 多維度評分，逐維度評估後累計總分。若無維度，用 4 級標準（優秀/良好/尚可/待努力）。
-- 學生答案只要清楚寫出關鍵字/數值，即使字跡不完美也視為正確。
-`.trim())
-    } else if (answerKeyImage) {
-      // 情境 2：沒有結構化 AnswerKey，但有答案卷圖片
-      const answerKeyBase64 = await blobToBase64(answerKeyImage)
-      promptSections.push(`
+【步驟 1：擷取（嚴格）】
+- 無論字跡多潦草或有錯別字，studentAnswer 必須原樣保留學生筆跡與錯誤
+- 例如學生寫「苹菓」，就輸出「苹菓」，不可改成「蘋果」
 
+【步驟 2：給分（寬容）】
+- 判斷 isCorrect 時：若包含正確關鍵字，即使字跡不完美或有輕微錯別字，仍可視情況判定為正確
+- ⚠️ 重要：寬容只影響 isCorrect/score/reason；不得影響 studentAnswer（studentAnswer 永遠原樣抄寫）
+
+【分層評分規則】
+- Type 1（精確）：使用 answer 字段嚴格對比。完全相符 → 滿分；不符 → 0分
+- Type 2（模糊）：使用 acceptableAnswers 進行語義匹配。完全/語義相符 → 滿分；部分 → 部分分
+  - 字音造詞題：若 referenceAnswer 含讀音說明（如「ㄋㄨㄥˋ讀音」），學生答案必須符合該讀音；讀音錯誤直接 0 分
+- Type 3（評價）：使用 rubricsDimensions 多維度評分，逐維度累計總分；若無維度則用 rubric 4級標準
+`.trim()
+      )
+    } else if (answerKeyImage) {
+      const answerKeyBase64 = await blobToBase64(answerKeyImage)
+      promptSections.push(
+        `
 第一張圖片是「標準答案／解答本」，第二張圖片是「學生作業」。
 請先從標準答案圖片中，為每一題抽取「題號、正確答案、配分（可以合理估計）」，
 再根據這些標準答案來批改學生作業。
 請不要憑空新增題目，也不要改變題號。
-`.trim())
+`.trim()
+      )
       requestParts.push({
         inlineData: { mimeType: 'image/jpeg', data: answerKeyBase64 }
       })
     } else {
-      // 情境 3：只有學生作業圖片（最不可靠，只為相容）
-      promptSections.push(`
-
+      promptSections.push(
+        `
 目前沒有提供標準答案，只有學生作業圖片。
-請先保守推測每一題題意與合理答案，再進行批改。
-只有在你非常有把握的情況下才判為正確，題意不清就視為不給分。
-`.trim())
+請執行以下步驟：
+1. 先盡量辨識圖片中的「學生原始筆跡」，填入 studentAnswer（不可修改學生內容；不可摘要/不可改寫/不可補全）。
+2. 如需保守推測題意或合理答案，只能寫在 reason（或 mistakes/weaknesses/suggestions），不得寫進 studentAnswer。
+`.trim()
+      )
     }
 
     const domainHint = buildGradingDomainSection(options?.domain)
     if (domainHint && options?.domain) {
-      promptSections.push(`
-
-【${options.domain} 批改要點】
-${domainHint}
-`.trim())
+      promptSections.push(`【${options.domain} 批改要點】\n${domainHint}`.trim())
     }
 
     if (options?.regrade?.questionIds?.length) {
       const questionIds = options.regrade.questionIds
       const previousDetails = options.regrade.previousDetails ?? []
       const forcedIds = options.regrade.forceUnrecognizableQuestionIds ?? []
+
       const previousAnswerLines = previousDetails
         .filter((detail) => detail?.questionId && questionIds.includes(detail.questionId))
-        .map((detail) => {
-          const answerText = detail?.studentAnswer ?? ''
-          return `- ${detail.questionId}：${answerText}`
-        })
+        .map((detail) => `- ${detail.questionId}：${detail?.studentAnswer ?? ''}`)
         .join('\n')
 
-      promptSections.push(`
-
+      promptSections.push(
+        `
 【再次批改模式】
-- 只重新擷取與批改：${questionIds.join(', ')}。
-- 其他題目維持不變。
+- 只重新擷取與批改：${questionIds.join(', ')}
+- 其他題目維持不變
 - 目前批改 details：${JSON.stringify(previousDetails)}
-`.trim())
+
+限制：
+- previousDetails 只能用來「定位題號、比對是否漏題」
+- studentAnswer 必須以本次圖片為準逐字抄寫，不得參考 previousDetails 來推測、修正或美化
+`.trim()
+      )
 
       if (previousAnswerLines) {
-        promptSections.push(`
-
-上一次學生答案（已確認錯誤）：
-${previousAnswerLines}
-`.trim())
+        promptSections.push(`上一次學生答案（已確認錯誤）：\n${previousAnswerLines}`.trim())
       }
 
       if (forcedIds.length > 0) {
-        promptSections.push(`
-
-強制無法辨識清單：${forcedIds.map((id) => `${id}`).join(', ')}
-`.trim())
+        promptSections.push(`強制無法辨識清單：${forcedIds.join(', ')}`.trim())
       }
     }
 
-    const recentCorrections = await getRecentAnswerExtractionCorrections(
-      options?.domain,
-      5
-    )
+    const recentCorrections = await getRecentAnswerExtractionCorrections(options?.domain, 5)
     if (recentCorrections.length > 0) {
       const lines = recentCorrections
         .map((item) => {
@@ -505,117 +531,95 @@ ${previousAnswerLines}
         })
         .join('\n')
 
-      promptSections.push(`
-
-【近期 AI 擷取錯誤參考】
-${lines}
-`.trim())
+      promptSections.push(`【近期 AI 擷取錯誤參考】\n${lines}`.trim())
     }
 
     if (options?.strict) {
-      promptSections.push(`
-
+      promptSections.push(
+        `
 【嚴謹模式】
-- 若題意、字跡或答案不清楚，請判為不給分，並在 reason 說明原因。
-- 不要推測或補寫；只根據題目文字與標準答案判斷。
-- 答案不完整或缺少關鍵字/數值時，視為錯誤。
-- 請再次檢查每題得分與 totalScore 是否一致。
-`.trim())
+- 若題意、字跡或答案不清楚，請判為不給分，並在 reason 說明原因
+- 不要推測或補寫；只根據題目文字與標準答案判斷
+- 答案不完整或缺少關鍵字/數值時，視為錯誤
+- 請再次檢查每題得分與 totalScore 是否一致
+`.trim()
+      )
     }
 
-    promptSections.push(`
+    promptSections.push(
+      `
+【學生答案擷取規則（機械式抄寫）】
+核心原則：像 OCR 機器一樣原樣輸出，禁止任何形式的修正或推測。
 
-【學生答案擷取規則 - 機械式抄寫】
-
-核心原則：像 OCR 機器一樣，原樣輸出字跡，禁止任何形式的修正或推測。
-
-✅ DO（正確做法）：
+✅ DO
 - 學生寫「光和作用」→ 輸出「光和作用」
 - 學生寫「辯別」（錯字）→ 輸出「辯別」（不修正）
 - 學生寫「台北」→ 輸出「台北」（不改成「臺北」）
 - 學生只填「光合」→ 輸出「光合」（不補全為「光合作用」）
 - 筆跡模糊但可辨「光舎」→ 輸出「光舎」（不改成「光合」）
 
-❌ DON'T（禁止行為）：
-- 禁止依上下文推測：看到「光_作用」不可猜測缺字
-- 禁止修正錯字：看到「辯別」不可改成「辨別」
-- 禁止補全答案：看到「光合」不可補成「光合作用」
-- 禁止同義替換：看到「台北」不可改成「臺北」
+❌ DON'T
+- 禁止依上下文推測缺字
+- 禁止修正錯字
+- 禁止補全答案
+- 禁止同義替換
 
-🔍 唯一例外：
+🔍 唯一例外
 - 完全無法辨識的字跡（墨水塗抹、筆劃模糊）→ 用「[?]」標記
-- 例：「光[?]作用」（第二字完全看不清）
-`.trim())
+- 例：「光[?]作用」
+`.trim()
+    )
 
-    promptSections.push(`
+    promptSections.push(
+      `
+【空白答案處理（絕對禁止臆測）】
+✅ 正確
+- 完全未作答（空白方格/空白行）→ 輸出「未作答」
+- 只寫了部分 → 輸出可見部分（不補全）
+- 無意義符號（如 ???）→ 原樣輸出
 
-【空白答案處理 - 絕對禁止臆測】
+❌ 禁止
+- 禁止為空白生成內容
+- 禁止推測學生想寫什麼
+- 禁止補全或修正
 
-✅ 正確處理空白：
-- 學生完全未作答（空白方格/空白行）→ 輸出「未作答」
-- 學生只寫了部分（如：只寫 2 個字）→ 輸出那 2 個字（不補全）
-- 學生寫了無意義符號（如：???）→ 原樣輸出「???」
+判斷標準：
+- 填寫區域有筆跡 → 抄寫筆跡內容
+- 無筆跡 → 輸出「未作答」
+- 有筆跡但完全看不出是什麼 → 輸出「無法辨識」
+`.trim()
+    )
 
-❌ 嚴格禁止：
-- 禁止為空白答案生成任何文字內容
-- 禁止推測學生「可能想寫什麼」
-- 禁止根據上下文補全答案
-- 禁止將不完整句子「修正」成完整句
-
-🔍 判斷標準：
-- 圖片中學生填寫區域是否有筆跡？
-  · 有 → 抄寫筆跡內容（不修改）
-  · 無 → 輸出「未作答」（不臆測）
-`.trim())
-
-    promptSections.push(`
-
+    promptSections.push(
+      `
 【低成就學生答案處理】
-
 核心原則：保真 > 優化，寧可記錄錯誤，不可美化答案
 
-✅ 正確處理：
-- 學生寫「給媽媽準備了一個禮物」→ 輸出「給媽媽準備了一個禮物」
-- 學生寫「不要讓媽媽著涼」→ 輸出「不要讓媽媽著涼」（不擴寫）
-- 學生寫「勾選動作、勾選想法」→ 輸出「勾選動作、勾選想法」（不改寫）
+✅ 正確
+- 原樣輸出，不擴寫、不書面化、不補完、不修正
+`.trim()
+    )
 
-❌ 嚴格禁止：
-- 禁止將簡短答案「擴寫」成詳細答案
-- 禁止將口語化答案「書面化」
-- 禁止將不完整答案「補完」
-- 禁止將錯誤答案「修正」成正確答案
-
-記住：你的任務是「如實記錄學生作答」，而非「幫學生改作業」。
-`.trim())
-
-    promptSections.push(`
-
+    promptSections.push(
+      `
 【單題擷取信心率（0-100）】
-- 定義：只根據「擷取學生答案時的猶豫程度」給分，不是圖片清晰度，也不是比對正確答案。
-- 100 分（絕對直覺）：答案只有唯一一種解釋，不需推測即可鎖定答案。
-- 80-99 分（微小雜訊）：極短瞬間曾考慮雜訊/筆誤，但可排除其他可能。
-- 60-79 分（主要歧義）：在兩個或多個答案間猶豫，需要依賴上下文或筆劃做最可能猜測。
-- 0-59 分（純粹猜測）：多個候選可能性接近，主觀上非常困惑。
-- 在輸出 JSON 前，請在內部針對每一題做「候選人競爭分析」：
-  1. 我第一眼看到的字元是什麼？
-  2. 是否存在第二候選字元？
-  3. 若有第二候選，兩者相似度有多高？
-  以上分析僅供內部使用，禁止在輸出中呈現。
+- 定義：只反映「擷取時的猶豫程度」（字跡清晰度），與答案正確性無關
+- 100：唯一解釋，不需推測
+- 80-99：小雜訊但可排除
+- 60-79：有兩個以上候選，需要比筆劃
+- 0-59：幾乎在猜
 
-【信心率在機械式擷取中的意義】
-- 信心率反映「字跡清晰度」，與「答案正確性」無關
-- 範例：
-  · 字跡「光和作用」（清晰可見）→ 信心率 95（字清楚）
-  · 字跡「光合作用」（模糊）→ 信心率 70（有雜訊）
-  · 字跡「光[?]作用」（部分無法辨識）→ 信心率 40
+常見誤區：
+- ❌ 看到錯字就給低信心
+- ✅ 字很清楚但答案錯，也應給高信心
+`.trim()
+    )
 
-- 常見誤區：
-  ❌ 看到「光和作用」→ 信心率 20（因答案錯誤）
-  ✅ 看到「光和作用」→ 信心率 90（因字跡清晰）
-`.trim())
-
-    // 要求輸出統一的 JSON 結構（所有科目通用）
-    promptSections.push(`
+    promptSections.push(
+      `
+【最終硬規則（輸出前自我檢查）】
+- studentAnswer 必須能在圖片中逐字逐畫對應到學生筆跡
+- 若你想「修正錯字、補全、換詞、變通語序、抓重點」→ 一律只能寫在 reason，不得改動 studentAnswer
 
 回傳純 JSON：
 {
@@ -639,8 +643,9 @@ ${lines}
   "suggestions": [建議]
 }
 
-若為「再次批改模式」，details 請只回傳被要求重新批改的題號。
-`.trim())
+若為「再次批改模式」，details 只回傳被要求重新批改的題號。
+`.trim()
+    )
 
     const prompt = promptSections.join('\n\n')
     requestParts.push(prompt)
@@ -658,12 +663,13 @@ ${lines}
     if (!parsed.details || !Array.isArray(parsed.details)) {
       reviewReasons.push('缺少逐題詳解')
     }
-    if (parsed.totalScore === 0) {
-      reviewReasons.push('總分為 0，請複核')
+    if (parsed.totalScore === 0 && (parsed.details?.length ?? 0) === 0) {
+      reviewReasons.push('總分為 0 且缺少逐題詳解，請複核')
     }
     if ((parsed.mistakes?.length ?? 0) === 0 && (parsed.details?.length ?? 0) === 0) {
       reviewReasons.push('未偵測到題目或錯誤，請確認解析是否成功')
     }
+
     const textBlob = [
       ...(parsed.feedback ?? []),
       ...(parsed.suggestions ?? []),
@@ -671,6 +677,7 @@ ${lines}
     ]
       .join(' ')
       .toLowerCase()
+
     if (/[?？]|模糊|無法|不確定|看不清楚|not sure|uncertain/.test(textBlob)) {
       reviewReasons.push('模型信心不明或表述不確定')
     }
@@ -687,76 +694,50 @@ ${lines}
     }
 
     // 步驟 3：自動重試缺失的題目（除非明確跳過）
-    if (
-      missingQuestionIds.length > 0 &&
-      !options?.skipMissingRetry &&
-      !options?.regrade?.mode
-    ) {
+    if (missingQuestionIds.length > 0 && !options?.skipMissingRetry && !options?.regrade?.mode) {
       console.log(`🔄 自動重試批改缺失的 ${missingQuestionIds.length} 題...`)
 
       try {
-        const retryResult = await gradeSubmission(
-          submissionImage,
-          answerKeyImage,
-          answerKey,
-          {
-            ...options,
-            skipMissingRetry: true, // 防止無限遞迴
-            regrade: {
-              questionIds: missingQuestionIds,
-              previousDetails: parsed.details,
-              mode: 'missing'
-            }
+        const retryResult = await gradeSubmission(submissionImage, answerKeyImage, answerKey, {
+          ...options,
+          skipMissingRetry: true,
+          regrade: {
+            questionIds: missingQuestionIds,
+            previousDetails: parsed.details,
+            mode: 'missing'
           }
-        )
+        })
 
-        // 合併重試結果
         if (retryResult.details && Array.isArray(retryResult.details)) {
-          const retryDetailsMap = new Map(
-            retryResult.details.map(d => [d.questionId, d])
-          )
+          const retryDetailsMap = new Map(retryResult.details.map((d) => [d.questionId, d]))
 
-          parsed.details = (parsed.details ?? []).map(detail => {
-            if (
-              missingQuestionIds.includes(detail.questionId ?? '') &&
-              retryDetailsMap.has(detail.questionId ?? '')
-            ) {
-              const retryDetail = retryDetailsMap.get(detail.questionId ?? '')
-              // 只有當重試結果不是空答案時才替換
-              if (
-                retryDetail &&
-                retryDetail.studentAnswer !== '未作答/無法辨識' &&
-                retryDetail.studentAnswer !== '未作答' &&
-                retryDetail.studentAnswer !== '無法辨識'
-              ) {
-                console.log(`✅ 重試成功辨識題目 ${detail.questionId}`)
+          parsed.details = (parsed.details ?? []).map((detail) => {
+            const qid = detail.questionId ?? ''
+            if (missingQuestionIds.includes(qid) && retryDetailsMap.has(qid)) {
+              const retryDetail = retryDetailsMap.get(qid)
+              // ✅ 只有重試不是空答案才替換
+              if (retryDetail && !isEmptyStudentAnswer(retryDetail.studentAnswer)) {
+                console.log(`✅ 重試成功辨識題目 ${qid}`)
                 return retryDetail
               }
             }
             return detail
           })
 
-          // 重新計算 totalScore
-          parsed.totalScore = parsed.details.reduce(
-            (sum, d) => sum + (d.score ?? 0),
-            0
-          )
+          parsed.totalScore = (parsed.details ?? []).reduce((sum, d) => sum + (d.score ?? 0), 0)
 
-          // 更新 reviewReasons
           const stillMissingIds = (parsed.details ?? [])
             .filter(
-              d =>
-                missingQuestionIds.includes(d.questionId ?? '') &&
-                (d.studentAnswer === '未作答/無法辨識' ||
-                  d.studentAnswer === '未作答' ||
-                  d.studentAnswer === '無法辨識')
+              (d) => missingQuestionIds.includes(d.questionId ?? '') && isEmptyStudentAnswer(d.studentAnswer)
             )
-            .map(d => d.questionId)
+            .map((d) => d.questionId)
 
           if (stillMissingIds.length < missingQuestionIds.length) {
-            parsed.reviewReasons = (parsed.reviewReasons ?? []).map(reason =>
+            parsed.reviewReasons = (parsed.reviewReasons ?? []).map((reason) =>
               reason.includes('AI 遺漏')
-                ? `AI 遺漏 ${missingQuestionIds.length} 題，重試後仍有 ${stillMissingIds.length} 題無法辨識（${stillMissingIds.join(', ')}）`
+                ? `AI 遺漏 ${missingQuestionIds.length} 題，重試後仍有 ${stillMissingIds.length} 題無法辨識（${stillMissingIds.join(
+                    ', '
+                  )}）`
                 : reason
             )
           }
@@ -770,10 +751,7 @@ ${lines}
   } catch (error) {
     console.error(`❌ ${currentModelName} 批改失敗:`, error)
 
-    if (
-      (error as any).message?.includes('404') ||
-      (error as any).message?.includes('not found')
-    ) {
+    if ((error as any).message?.includes('404') || (error as any).message?.includes('not found')) {
       return {
         totalScore: 0,
         mistakes: [],
@@ -805,7 +783,6 @@ export async function gradeMultipleSubmissions(
 ) {
   console.log(`📝 開始批量批改 ${submissions.length} 份作業`)
 
-  // 先快速偵測可用模型（只做一次）
   const workingModel = await diagnoseModels()
   if (workingModel) {
     currentModelName = workingModel
@@ -831,26 +808,26 @@ export async function gradeMultipleSubmissions(
       const result = await gradeSubmission(sub.imageBlob, answerKeyBlob, answerKey, options)
       console.log(`📊 批改結果: 得分 ${result.totalScore}`)
 
-      // 重要：保留 imageBlob 和 imageBase64，確保批改後仍可預覽
       console.log(`💾 儲存批改結果到資料庫...`)
       await db.submissions.update(sub.id!, {
         status: 'graded',
         score: result.totalScore,
         gradingResult: result,
         gradedAt: Date.now(),
-        imageBlob: sub.imageBlob,      // 保留圖片 Blob
-        imageBase64: sub.imageBase64   // 保留圖片 Base64
+        imageBlob: sub.imageBlob,
+        imageBase64: sub.imageBase64
       })
 
       successCount++
-      console.log(`✅ 批改成功 (${i + 1}/${submissions.length}): ${sub.id}, 得分: ${result.totalScore}, 累計成功: ${successCount}`)
+      console.log(
+        `✅ 批改成功 (${i + 1}/${submissions.length}): ${sub.id}, 得分: ${result.totalScore}, 累計成功: ${successCount}`
+      )
     } catch (e) {
       failCount++
       console.error(`❌ 批改作業失敗 (${i + 1}/${submissions.length}): ${sub.id}`, e)
       console.error(`   累計失敗: ${failCount}`)
     }
 
-    // 簡單延遲，避免打太快
     if (i < submissions.length - 1) {
       // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 2000))
@@ -875,13 +852,12 @@ export async function extractAnswerKeyFromImage(
   console.log('🧾 開始從答案卷圖片抽取 AnswerKey...')
   const imageBase64 = await blobToBase64(answerSheetImage)
 
-  // 向後兼容：如果有 allowedQuestionTypes，遷移為 priorWeightTypes
   let priorWeightTypes = opts?.priorWeightTypes
   if (!priorWeightTypes && opts?.allowedQuestionTypes && opts.allowedQuestionTypes.length > 0) {
     const { migrateLegacyQuestionType } = await import('./db')
-    priorWeightTypes = Array.from(
-      new Set(opts.allowedQuestionTypes.map(migrateLegacyQuestionType))
-    ).sort() as import('./db').QuestionCategoryType[]
+    priorWeightTypes = Array.from(new Set(opts.allowedQuestionTypes.map(migrateLegacyQuestionType))).sort() as import(
+      './db'
+    ).QuestionCategoryType[]
     console.log('📦 已自動遷移 allowedQuestionTypes 為 priorWeightTypes:', priorWeightTypes)
   }
 
@@ -917,11 +893,11 @@ export async function reanalyzeQuestions(
 
   const imageBase64 = await blobToBase64(answerSheetImage)
 
-  // 特殊 Prompt：只針對指定題號重新分析
-  const questionIds = markedQuestions.map(q => q.id).join(', ')
+  const questionIds = markedQuestions.map((q) => q.id).join(', ')
   const basePrompt = buildAnswerKeyPrompt(domain, priorWeightTypes)
 
-  const reanalyzePrompt = `${basePrompt}
+  const reanalyzePrompt = `
+${basePrompt}
 
 【重新分析模式 - 強制完整輸出】
 必須重新分析以下題號：${questionIds}（共 ${markedQuestions.length} 題）
@@ -934,7 +910,8 @@ export async function reanalyzeQuestions(
 
 其他題目請忽略，不要輸出。
 
-請仔細辨識這些題目的內容，重新判斷類型並提取答案。`
+請仔細辨識這些題目的內容，重新判斷類型並提取答案。
+`.trim()
 
   const text = (await generateGeminiText(currentModelName, [
     reanalyzePrompt,
@@ -945,26 +922,24 @@ export async function reanalyzeQuestions(
 
   const result = JSON.parse(text) as import('./db').AnswerKey
 
-  // Debug: 檢查是否有遺漏的題目
-  const requestedIds = markedQuestions.map(q => q.id)
-  const returnedIds = result.questions.map(q => q.id)
-  const missingIds = requestedIds.filter(id => !returnedIds.includes(id))
+  const requestedIds = markedQuestions.map((q) => q.id)
+  const returnedIds = result.questions.map((q) => q.id)
+  const missingIds = requestedIds.filter((id) => !returnedIds.includes(id))
 
   if (missingIds.length > 0) {
     console.warn(`⚠️ AI 遺漏了 ${missingIds.length} 題：${missingIds.join(', ')}`)
     console.warn(`要求分析：${requestedIds.join(', ')}`)
     console.warn(`實際回傳：${returnedIds.join(', ')}`)
 
-    // 自動補漏：為遺漏的題目創建佔位項
-    const placeholderQuestions = missingIds.map(id => {
-      const originalQuestion = markedQuestions.find(q => q.id === id)!
+    const placeholderQuestions = missingIds.map((id) => {
+      const originalQuestion = markedQuestions.find((q) => q.id === id)!
       return {
         id,
-        type: 2 as import('./db').QuestionCategoryType, // 預設 Type 2
+        type: 2 as import('./db').QuestionCategoryType,
         maxScore: originalQuestion.maxScore || 0,
         referenceAnswer: 'AI 無法從圖片中重新辨識此題，請手動編輯',
         acceptableAnswers: [],
-        needsReanalysis: true // 保持標記，提醒教師手動處理
+        needsReanalysis: true
       }
     })
 
@@ -976,11 +951,3 @@ export async function reanalyzeQuestions(
 
   return result.questions
 }
-
-
-
-
-
-
-
-
