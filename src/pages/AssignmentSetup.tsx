@@ -456,15 +456,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
           console.log('🖼️ 處理圖片檔案', { name: file.name, size: file.size, type: file.type })
           imageBlob = await fileToBlob(file)
 
-          // 激進壓縮：確保最終大小 < 1.5MB（Base64編碼後 < 2MB）
+          // 激進壓縮：多檔案時確保每個檔案 < 800KB（Base64編碼後 < 1MB）
           let compressionAttempts = 0
-          let targetSize = 1.5 * 1024 * 1024  // 1.5MB
+          let targetSize = 800 * 1024  // 800KB (更嚴格的限制)
 
           while (imageBlob.size > targetSize && compressionAttempts < 3) {
             console.log(`⚠️ ${file.name} 第 ${compressionAttempts + 1} 次壓縮...`, { currentSize: imageBlob.size })
 
-            const quality = 0.6 - (compressionAttempts * 0.15)  // 0.6, 0.45, 0.3
-            const maxWidth = 1600 - (compressionAttempts * 400)  // 1600, 1200, 800
+            const quality = 0.5 - (compressionAttempts * 0.15)  // 0.5, 0.35, 0.2
+            const maxWidth = 1400 - (compressionAttempts * 400)  // 1400, 1000, 600
 
             imageBlob = await compressImageFile(imageBlob, {
               maxWidth,
@@ -488,11 +488,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
           })
 
           // PDF 也需要壓縮檢查
-          if (imageBlob.size > 1.5 * 1024 * 1024) {
+          if (imageBlob.size > 800 * 1024) {
             console.log(`⚠️ ${file.name} PDF 轉換後仍過大，進行壓縮...`, { originalSize: imageBlob.size })
             imageBlob = await compressImageFile(imageBlob, {
-              maxWidth: 1200,
-              quality: 0.4,
+              maxWidth: 1000,
+              quality: 0.3,
               format: 'image/webp'
             })
             console.log('✅ PDF 壓縮完成', { compressedSize: imageBlob.size })
@@ -502,6 +502,24 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         }
 
         imageBlobs.push(imageBlob)
+      }
+
+      // 檢查總大小（Base64 編碼後會增加約 33%）
+      const totalSize = imageBlobs.reduce((sum, blob) => sum + blob.size, 0)
+      const estimatedBase64Size = totalSize * 1.33
+      const maxAllowedSize = 10 * 1024 * 1024  // 10MB（保守估計）
+
+      console.log('📊 檔案大小統計', {
+        檔案數量: imageBlobs.length,
+        總大小: `${(totalSize / 1024 / 1024).toFixed(2)} MB`,
+        Base64後預估: `${(estimatedBase64Size / 1024 / 1024).toFixed(2)} MB`
+      })
+
+      if (estimatedBase64Size > maxAllowedSize) {
+        setAnswerKeyError(
+          `檔案總大小過大（預估 ${(estimatedBase64Size / 1024 / 1024).toFixed(1)} MB），請減少檔案數量或選擇較小的圖片。建議一次上傳 2-3 個檔案。`
+        )
+        return
       }
 
       // Save first image blob for re-analysis
