@@ -340,14 +340,38 @@ export default function ScannerPage({
       return
     }
 
+    // 檢查是否有已完成的學生
+    const completedStudents = Array.from(capturedImages.entries())
+      .filter(([, data]) => data.blobs.length >= requiredPages)
+
+    if (completedStudents.length === 0) {
+      setError('沒有已完成的作業可以送出。請先完成至少一位學生的拍攝，或刪除未完成的作業。')
+      return
+    }
+
+    // 檢查未完成的學生
     const incompleteStudents = Array.from(capturedImages.entries())
       .filter(([, data]) => data.blobs.length < requiredPages)
-      .map(([studentId]) => students.find((s) => s.id === studentId))
-      .filter((s): s is Student => Boolean(s))
+      .map(([studentId, data]) => ({
+        student: students.find((s) => s.id === studentId),
+        photoCount: data.blobs.length
+      }))
+      .filter((item): item is { student: Student; photoCount: number } =>
+        Boolean(item.student)
+      )
 
     if (incompleteStudents.length > 0) {
-      const seats = incompleteStudents.map((s) => s.seatNumber).join(', ')
-      setError(`以下座號尚未拍滿 ${requiredPages} 張：${seats}`)
+      // 生成詳細的錯誤訊息，包含每個學生的進度
+      const details = incompleteStudents
+        .map(({ student, photoCount }) =>
+          `${student.seatNumber}號(${photoCount}/${requiredPages})`
+        )
+        .join('、')
+
+      setError(
+        `以下座號尚未拍滿 ${requiredPages} 張：${details}。` +
+        `請返回繼續掃描，或在預覽中刪除未完成的作業。`
+      )
       return
     }
 
@@ -530,15 +554,16 @@ export default function ScannerPage({
       }
 
       newMap.delete(studentId)
+
+      // ✅ 使用更新後的 newMap 而不是舊的 capturedImages，避免 stale closure bug
+      if (previewStudentId === studentId) {
+        const remaining = Array.from(newMap.keys())
+        setPreviewStudentId(remaining[0] ?? null)
+      }
+
       return newMap
     })
-
-    // 如果刪除的是當前預覽的學生，切換到第一個
-    if (previewStudentId === studentId) {
-      const remaining = Array.from(capturedImages.keys()).filter(id => id !== studentId)
-      setPreviewStudentId(remaining[0] ?? null)
-    }
-  }, [capturedImages, previewStudentId])
+  }, [previewStudentId])
 
   /**
    * 觸發文件選擇
@@ -600,7 +625,11 @@ export default function ScannerPage({
   const completedEntries = Array.from(capturedImages.entries()).filter(
     ([, data]) => data.blobs.length >= requiredPages
   )
+  const incompleteEntries = Array.from(capturedImages.entries()).filter(
+    ([, data]) => data.blobs.length > 0 && data.blobs.length < requiredPages
+  )
   const completedCount = completedEntries.length
+  const incompleteCount = incompleteEntries.length
   const previewEntry =
     completedEntries.find(([studentId]) => studentId === previewStudentId) ??
     completedEntries[0]
@@ -627,9 +656,39 @@ export default function ScannerPage({
       <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50">
         <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto p-6">
           <h2 className="text-2xl font-bold text-gray-900 mb-4">確認送出作業</h2>
-          <p className="text-gray-600 mb-6">
-            已完成 {completedCount} 份作業（每份 {requiredPages} 張），請確認後送出
-          </p>
+
+          {/* 摘要統計 */}
+          <div className="bg-gray-100 rounded-lg p-3 mb-4 flex items-center justify-between">
+            <div className="flex gap-4">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                <span className="text-sm text-gray-700">
+                  已完成：<span className="font-semibold">{completedCount}</span> 份
+                </span>
+              </div>
+
+              {incompleteCount > 0 && (
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-amber-500"></div>
+                  <span className="text-sm text-gray-700">
+                    未完成：<span className="font-semibold">{incompleteCount}</span> 份
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">
+                  總計：<span className="font-semibold">{capturedImages.size}</span> 份
+                </span>
+              </div>
+            </div>
+
+            {incompleteCount > 0 && (
+              <div className="text-xs text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                ⚠️ 有未完成的作業
+              </div>
+            )}
+          </div>
 
           {/* 縮圖網格 */}
           <div className="grid lg:grid-cols-[1.4fr_1fr] gap-4 mb-6">
@@ -732,6 +791,62 @@ export default function ScannerPage({
             </div>
           </div>
 
+          {/* 未完成清單 */}
+          {incompleteCount > 0 && (
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold text-amber-700 mb-3">
+                未完成清單（{incompleteCount} 份）
+              </h3>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                {incompleteEntries.map(([studentId, imageData]) => {
+                  const student = students.find((s) => s.id === studentId)
+                  if (!student) return null
+
+                  return (
+                    <div
+                      key={studentId}
+                      className="relative group border-2 border-amber-300 rounded-lg overflow-hidden bg-amber-50"
+                    >
+                      {/* 縮圖 */}
+                      <div className="aspect-[3/4] bg-white relative">
+                        <img
+                          src={imageData.urls[0]}
+                          alt={`${student.name} 的作業`}
+                          className="w-full h-full object-contain"
+                        />
+                        {/* 進度標記 */}
+                        <div className="absolute top-1 left-1 bg-amber-500 text-white text-xs px-1.5 py-0.5 rounded">
+                          {imageData.blobs.length}/{requiredPages}
+                        </div>
+                      </div>
+
+                      {/* 學生資訊 */}
+                      <div className="p-1.5 text-center bg-amber-50">
+                        <p className="text-xs font-medium text-amber-800">
+                          {student.seatNumber}號 {student.name}
+                        </p>
+                      </div>
+
+                      {/* 刪除按鈕 */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`確定要刪除 ${student.seatNumber}號 ${student.name} 的未完成作業嗎？`)) {
+                            handleDeleteStudentImages(studentId)
+                          }
+                        }}
+                        className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                        title="刪除此作業"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
               {error}
@@ -748,10 +863,11 @@ export default function ScannerPage({
             </button>
             <button
               onClick={handleBatchSubmit}
-              disabled={isSubmitting}
-              className="flex-1 py-4 bg-green-600 text-white rounded-xl font-bold text-lg hover:bg-green-700 disabled:opacity-50"
+              disabled={isSubmitting || completedCount === 0}
+              className="flex-1 py-4 bg-green-600 text-white rounded-xl font-bold text-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={completedCount === 0 ? '沒有已完成的作業可以送出' : ''}
             >
-              {isSubmitting ? '送出中...' : '確認送出'}
+              {isSubmitting ? '送出中...' : `確認送出 ${completedCount} 份作業`}
             </button>
           </div>
         </div>
