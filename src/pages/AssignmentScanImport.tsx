@@ -12,7 +12,8 @@ interface AssignmentScanImportProps {
 
 export default function AssignmentScanImport({
   assignmentId,
-  onBack
+  onBack,
+  onUploadComplete
 }: AssignmentScanImportProps) {
   const [assignment, setAssignment] = useState<Assignment | null>(null)
   const [pagesPerStudent, setPagesPerStudent] = useState<number>(1)
