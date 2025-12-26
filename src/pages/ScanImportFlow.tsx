@@ -33,6 +33,11 @@ export default function ScanImportFlow({
   const [capturedData, setCapturedData] = useState<Map<string, Blob[]>>(new Map())
   const [isSaving, setIsSaving] = useState(false)
 
+  // 調試：檢查 pagesPerStudent
+  useEffect(() => {
+    console.log('📋 ScanImportFlow - pagesPerStudent:', pagesPerStudent)
+  }, [pagesPerStudent])
+
   // 載入學生名單
   useEffect(() => {
     const load = async () => {

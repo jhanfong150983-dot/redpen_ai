@@ -29,7 +29,9 @@ export default function AssignmentScanImport({
           return
         }
         setAssignment(a)
-        setPagesPerStudent(Math.max(1, a.totalPages || 1))
+        const pages = Math.max(1, a.totalPages || 1)
+        console.log('📋 Assignment totalPages:', a.totalPages, '-> pagesPerStudent:', pages)
+        setPagesPerStudent(pages)
       } catch (e) {
         console.error(e)
         setError('載入作業資訊時發生錯誤。')

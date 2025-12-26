@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import Webcam from 'react-webcam'
 import { Camera, Upload, ArrowLeft, Loader, AlertCircle, CheckCircle } from 'lucide-react'
 import { compressImage } from '@/lib/imageCompression'
@@ -26,6 +26,31 @@ export default function CameraCapturePage({
   const [isProcessing, setIsProcessing] = useState(false)
   const [captureSuccess, setCaptureSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isLandscape, setIsLandscape] = useState(false)
+
+  // 調試：檢查 props
+  useEffect(() => {
+    console.log('📸 CameraCapturePage props:', {
+      seatNumber,
+      name,
+      pagesPerStudent,
+      currentPageCount
+    })
+  }, [seatNumber, name, pagesPerStudent, currentPageCount])
+
+  // 監聽螢幕方向變化
+  useEffect(() => {
+    const updateLayout = () => {
+      setIsLandscape(window.innerWidth > window.innerHeight)
+    }
+    updateLayout()
+    window.addEventListener('resize', updateLayout)
+    window.addEventListener('orientationchange', updateLayout)
+    return () => {
+      window.removeEventListener('resize', updateLayout)
+      window.removeEventListener('orientationchange', updateLayout)
+    }
+  }, [])
 
   const handleCapture = useCallback(async () => {
     if (!webcamRef.current) return
@@ -134,7 +159,11 @@ export default function CameraCapturePage({
       {captureSuccess && (
         <>
           <div className="absolute inset-0 bg-green-500 bg-opacity-20 animate-pulse z-10" />
-          <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
+          <div className={`absolute ${
+            isLandscape
+              ? 'right-4 top-1/2 -translate-y-1/2'
+              : 'bottom-24 left-1/2 -translate-x-1/2'
+          } z-20`}>
             <div className="relative">
               <div className="absolute w-12 h-12 bg-white rounded-lg shadow-lg flex items-center justify-center animate-ping">
                 <Camera className="w-6 h-6 text-green-600" />
@@ -176,7 +205,11 @@ export default function CameraCapturePage({
       </div>
 
       {/* 座號 / 名稱資訊 */}
-      <div className="absolute left-4 bottom-24 text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]">
+      <div
+        className={`absolute left-4 ${
+          isLandscape ? 'bottom-4' : 'bottom-24'
+        } text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]`}
+      >
         <div className="text-[11px] text-white/80">座號 {seatNumber}</div>
         <div className="text-sm font-semibold">{name}</div>
         <div className="text-[11px] text-white/80">
@@ -194,8 +227,14 @@ export default function CameraCapturePage({
         </div>
       )}
 
-      {/* 操作按鈕：底部居中 */}
-      <div className="absolute left-0 right-0 bottom-5 flex flex-row justify-center items-center gap-3">
+      {/* 操作按鈕：直式在下方、橫式在右側 */}
+      <div
+        className={`absolute ${
+          isLandscape
+            ? 'right-4 top-1/2 -translate-y-1/2 flex-col'
+            : 'left-0 right-0 bottom-5 flex-row justify-center'
+        } flex items-center gap-3`}
+      >
         <button
           onClick={triggerFileUpload}
           disabled={isProcessing}
