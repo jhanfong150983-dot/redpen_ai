@@ -1540,7 +1540,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
               <div className="pt-4 border-t border-gray-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-gray-800">
-                    標準答案（選填）
+                    標準答案
                   </h3>
                   <button
                     type="button"
@@ -1942,7 +1942,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   </button>
                   <button
                     type="submit"
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || getMissingFields.length > 0}
                     className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                   >
                     {isSubmitting ? '建立中…' : '建立作業'}
@@ -1950,7 +1950,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 </div>
                 {getMissingFields.length > 0 && (
                   <p className="text-xs text-gray-500">
-                    提醒：尚未填寫 {getMissingFields.join('、')}
+                    缺少：{getMissingFields.join('、')}
                   </p>
                 )}
               </div>
