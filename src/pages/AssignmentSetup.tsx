@@ -404,6 +404,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setError('頁數需介於 1-100')
       return
     }
+    if (!answerKey) {
+      setError('請先上傳並設定標準答案')
+      return
+    }
     // Prior Weight 現在是選填，不再強制要求
 
     setIsSubmitting(true)

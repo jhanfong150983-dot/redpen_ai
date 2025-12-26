@@ -183,7 +183,7 @@ export default function AssignmentImport({
     const unmappedPages = pages.length - mappings.reduce((sum, m) => sum + (m.toIndex - m.fromIndex + 1), 0)
     const unmappedCopies = Math.floor(unmappedPages / pagesPerStudent)
 
-    const effectiveStudents = students.length - missingSeatNumbers.length - absentSet.size
+    const effectiveStudents = students.length - absentSet.size
 
     // 情況A & B：缺考（未分配份數 < 有效學生數）
     if (unmappedCopies < effectiveStudents) {
@@ -341,7 +341,7 @@ export default function AssignmentImport({
     const totalPages = pages.length
     const unmappedPages = pages.length - mappings.reduce((sum, m) => sum + (m.toIndex - m.fromIndex + 1), 0)
     const unmappedCopies = Math.floor(unmappedPages / pagesPerStudent)
-    const effectiveStudents = students.length - missingSeatNumbers.length - absentSet.size
+    const effectiveStudents = students.length - absentSet.size
 
     // 情況A & B：缺考（未分配份數 < 有效學生數）
     if (unmappedCopies < effectiveStudents) {
@@ -595,7 +595,7 @@ export default function AssignmentImport({
                   學生列表
                 </h2>
                 <span className="text-xs text-gray-500">
-                  {mappings.length} / {students.length - missingSeatNumbers.length} 人
+                  {mappings.length} / {students.length} 人
                 </span>
               </div>
 
