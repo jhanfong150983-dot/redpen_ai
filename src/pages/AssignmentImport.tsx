@@ -181,14 +181,23 @@ export default function AssignmentImport({
 
   // 自動配對：當 pages、pagesPerStudent、startSeat 或 absentSet 變化時
   useEffect(() => {
-    if (pages.length > 0 && students.length > 0) {
-      // 延遲一下讓 state 更新完成
-      const timer = setTimeout(() => {
-        handleAutoMap()
-      }, 100)
-      return () => clearTimeout(timer)
+    if (pages.length === 0 || students.length === 0) {
+      return
     }
-  }, [pages.length, pagesPerStudent, startSeat, absentSet.size])
+
+    // 延遲一下讓 state 更新完成
+    const timer = setTimeout(() => {
+      handleAutoMap()
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [
+    pages.length,
+    pagesPerStudent,
+    startSeat,
+    absentSeatsInput,
+    students.length,
+    missingSeatNumbers.length
+  ])
 
   // 智能檢測缺考座號
   const absentSeatHint = useMemo(() => {
