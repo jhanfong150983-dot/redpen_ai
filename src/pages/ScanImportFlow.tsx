@@ -12,6 +12,7 @@ interface ScanImportFlowProps {
   assignmentId: string
   pagesPerStudent: number
   onBackToImportSelect?: () => void
+  onUploadComplete?: () => void
 }
 
 type ViewType = 'selection' | 'capture'
@@ -26,7 +27,8 @@ export default function ScanImportFlow({
   classroomId,
   assignmentId,
   pagesPerStudent,
-  onBackToImportSelect
+  onBackToImportSelect,
+  onUploadComplete
 }: ScanImportFlowProps) {
   const [students, setStudents] = useState<Student[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -106,9 +108,9 @@ export default function ScanImportFlow({
     if (!confirmed) return
 
     setIsSaving(true)
-    try {
-      let successCount = 0
+    let successCount = 0
 
+    try {
       for (const [studentId, blobs] of capturedData.entries()) {
         // 合併多頁為單一圖片（如果需要）
         let imageBlob: Blob
@@ -146,17 +148,20 @@ export default function ScanImportFlow({
         await db.submissions.add(submission)
         successCount += 1
       }
-
-      alert(`已成功建立 ${successCount} 份作業`)
-      requestSync()
-
-      // 清空已拍攝數據
-      setCapturedData(new Map())
     } catch (error) {
       console.error('送出作業失敗:', error)
       alert(error instanceof Error ? error.message : '送出作業失敗')
+      return
     } finally {
       setIsSaving(false)
+    }
+
+    if (successCount > 0) {
+      alert(`已成功建立 ${successCount} 份作業`)
+      requestSync()
+      // 清空已拍攝數據
+      setCapturedData(new Map())
+      onUploadComplete?.()
     }
   }
 

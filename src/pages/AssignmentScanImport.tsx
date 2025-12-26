@@ -7,6 +7,7 @@ import ScanImportFlow from './ScanImportFlow'
 interface AssignmentScanImportProps {
   assignmentId: string
   onBack?: () => void
+  onUploadComplete?: () => void
 }
 
 export default function AssignmentScanImport({
@@ -45,14 +46,15 @@ export default function AssignmentScanImport({
 
   if (!isLoading && assignment && !error) {
     return (
-      <ScanImportFlow
-        classroomId={assignment.classroomId}
-        assignmentId={assignment.id}
-        pagesPerStudent={pagesPerStudent}
-        onBackToImportSelect={onBack}
-      />
-    )
-  }
+        <ScanImportFlow
+          classroomId={assignment.classroomId}
+          assignmentId={assignment.id}
+          pagesPerStudent={pagesPerStudent}
+          onBackToImportSelect={onBack}
+          onUploadComplete={onUploadComplete}
+        />
+      )
+    }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">

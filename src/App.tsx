@@ -171,6 +171,7 @@ function App() {
       <AssignmentScanImport
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('assignment-import-select')}
+        onUploadComplete={() => setCurrentPage('home')}
       />
     )
   }
