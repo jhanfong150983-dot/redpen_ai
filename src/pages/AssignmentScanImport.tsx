@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader, AlertCircle, ArrowLeft } from 'lucide-react'
+import { Loader, AlertCircle } from 'lucide-react'
 import { db } from '@/lib/db'
 import type { Assignment } from '@/lib/db'
 import ScanImportFlow from './ScanImportFlow'
@@ -45,22 +45,12 @@ export default function AssignmentScanImport({
 
   if (!isLoading && assignment && !error) {
     return (
-      <div className="relative">
-        {onBack && (
-          <button
-            onClick={onBack}
-            className="fixed top-4 left-4 z-50 px-4 py-2 bg-white rounded-lg shadow-lg hover:shadow-xl transition-shadow text-sm font-medium text-gray-700 flex items-center gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            返回作業匯入
-          </button>
-        )}
-        <ScanImportFlow
-          classroomId={assignment.classroomId}
-          assignmentId={assignment.id}
-          pagesPerStudent={pagesPerStudent}
-        />
-      </div>
+      <ScanImportFlow
+        classroomId={assignment.classroomId}
+        assignmentId={assignment.id}
+        pagesPerStudent={pagesPerStudent}
+        onBackToImportSelect={onBack}
+      />
     )
   }
 

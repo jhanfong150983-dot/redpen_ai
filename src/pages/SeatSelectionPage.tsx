@@ -1,4 +1,4 @@
-import { CheckCircle, User } from 'lucide-react'
+import { CheckCircle, User, ArrowLeft } from 'lucide-react'
 import type { Student } from '@/lib/db'
 
 interface SeatSelectionPageProps {
@@ -7,6 +7,7 @@ interface SeatSelectionPageProps {
   pagesPerStudent: number
   onSelectStudent: (student: Student) => void
   onSubmit: () => void
+  onBack?: () => void
 }
 
 export default function SeatSelectionPage({
@@ -14,7 +15,8 @@ export default function SeatSelectionPage({
   capturedData,
   pagesPerStudent,
   onSelectStudent,
-  onSubmit
+  onSubmit,
+  onBack
 }: SeatSelectionPageProps) {
   const capturedCount = capturedData.size
   const totalStudents = students.length
@@ -27,6 +29,17 @@ export default function SeatSelectionPage({
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4 pb-24">
       <div className="max-w-4xl mx-auto pt-6">
+        {/* 返回按鈕 */}
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="mb-4 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            返回作業匯入
+          </button>
+        )}
+
         {/* 標題 */}
         <div className="bg-white rounded-2xl shadow-md p-5 mb-4">
           <h1 className="text-xl font-bold text-gray-900 mb-2">

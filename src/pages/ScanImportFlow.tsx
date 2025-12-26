@@ -11,6 +11,7 @@ interface ScanImportFlowProps {
   classroomId: string
   assignmentId: string
   pagesPerStudent: number
+  onBackToImportSelect?: () => void
 }
 
 type ViewType = 'selection' | 'capture'
@@ -24,7 +25,8 @@ interface SelectedStudent {
 export default function ScanImportFlow({
   classroomId,
   assignmentId,
-  pagesPerStudent
+  pagesPerStudent,
+  onBackToImportSelect
 }: ScanImportFlowProps) {
   const [students, setStudents] = useState<Student[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -203,6 +205,7 @@ export default function ScanImportFlow({
       pagesPerStudent={pagesPerStudent}
       onSelectStudent={handleSelectStudent}
       onSubmit={handleSubmit}
+      onBack={onBackToImportSelect}
     />
   )
 }

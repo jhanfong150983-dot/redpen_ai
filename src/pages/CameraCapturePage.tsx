@@ -213,7 +213,7 @@ export default function CameraCapturePage({
         <div className="text-[11px] text-white/80">座號 {seatNumber}</div>
         <div className="text-sm font-semibold">{name}</div>
         <div className="text-[11px] text-white/80">
-          第 {currentPageCount + 1} / {pagesPerStudent} 張
+          已完成 {currentPageCount} / {pagesPerStudent} 張
         </div>
       </div>
 
