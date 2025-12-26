@@ -411,24 +411,20 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     e.preventDefault()
     setError(null)
 
+    // 驗證邏輯保留，但不設置 error（實時提示已經告訴用戶）
     if (!selectedClassroomId) {
-      setError('請選擇班級')
       return
     }
     if (!assignmentTitle.trim()) {
-      setError('請輸入作業標題')
       return
     }
     if (!assignmentDomain) {
-      setError('請選擇作業領域')
       return
     }
     if (totalPages < 1 || totalPages > 100) {
-      setError('頁數需介於 1-100')
       return
     }
     if (!answerKey) {
-      setError('請先上傳並設定標準答案')
       return
     }
     // Prior Weight 現在是選填，不再強制要求
@@ -1357,6 +1353,12 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
             </div>
 
             <form onSubmit={handleSubmit} className="px-4 py-4 space-y-6">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 text-sm text-red-700 rounded-xl">
+                  {error}
+                </div>
+              )}
+
               <div className="space-y-4">
                 <div>
                   <label
