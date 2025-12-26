@@ -1583,8 +1583,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                       disabled={
                         answerKeyFile.length === 0 || isSubmitting || isExtractingAnswerKey
                       }
-                      className="mt-2 inline-flex items-center px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      className="mt-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                     >
+                      {isExtractingAnswerKey && (
+                        <Loader className="w-4 h-4 animate-spin" />
+                      )}
                       {isExtractingAnswerKey
                         ? 'AI 解析中…'
                         : `使用 AI 解析並合併答案${answerKeyFile.length > 0 ? ` (${answerKeyFile.length} 個檔案)` : ''}`}
@@ -2062,8 +2065,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     disabled={
                       !editAnswerKeyFile || isExtractingAnswerKeyEdit
                     }
-                    className="inline-flex items-center px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                   >
+                    {isExtractingAnswerKeyEdit && (
+                      <Loader className="w-4 h-4 animate-spin" />
+                    )}
                     {isExtractingAnswerKeyEdit
                       ? 'AI 解析中…'
                       : '使用 AI 解析並合併答案'}
