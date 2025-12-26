@@ -90,7 +90,7 @@ export default function AssignmentImport({
   const [pages, setPages] = useState<PagePreview[]>([])
   const [isUploading, setIsUploading] = useState(false)
 
-  const [pagesPerStudent, setPagesPerStudent] = useState(2)
+  const [pagesPerStudent, setPagesPerStudent] = useState(1)
   const [startSeat, setStartSeat] = useState(1)
   const [absentSeatsInput, setAbsentSeatsInput] = useState('')
   const [mappings, setMappings] = useState<MappingRow[]>([])
@@ -114,6 +114,8 @@ export default function AssignmentImport({
     }
     return missing
   }, [students])
+
+  const missingSeatSet = useMemo(() => new Set(missingSeatNumbers), [missingSeatNumbers])
 
   // 載入作業與班級、學生資料
   useEffect(() => {
@@ -162,6 +164,21 @@ export default function AssignmentImport({
     )
   }, [absentSeatsInput])
 
+  const targetStudents = useMemo(() => {
+    return students
+      .filter(
+        (s) =>
+          s.seatNumber >= startSeat &&
+          !absentSet.has(s.seatNumber) &&
+          !missingSeatSet.has(s.seatNumber)
+      )
+      .sort((a, b) => a.seatNumber - b.seatNumber)
+  }, [students, startSeat, absentSet, missingSeatSet])
+
+  const targetStudentCount = targetStudents.length
+  const assignedStudentCount = mappings.length
+  const missingStudentCount = Math.max(targetStudentCount - assignedStudentCount, 0)
+
   // 自動配對：當 pages、pagesPerStudent、startSeat 或 absentSet 變化時
   useEffect(() => {
     if (pages.length > 0 && students.length > 0) {
@@ -180,33 +197,38 @@ export default function AssignmentImport({
     }
 
     const totalPages = pages.length
-    const unmappedPages = pages.length - mappings.reduce((sum, m) => sum + (m.toIndex - m.fromIndex + 1), 0)
+    const mappedPages = mappings.reduce((sum, m) => sum + (m.toIndex - m.fromIndex + 1), 0)
+    const unmappedPages = totalPages - mappedPages
     const unmappedCopies = Math.floor(unmappedPages / pagesPerStudent)
 
-    const effectiveStudents = students.length - absentSet.size
-
-    // 情況A & B：缺考（未分配份數 < 有效學生數）
-    if (unmappedCopies < effectiveStudents) {
-      const missingCount = effectiveStudents - unmappedCopies
+    if (missingStudentCount > 0) {
       return {
         type: 'missing' as const,
-        count: missingCount,
-        message: `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${effectiveStudents} 人。代表有 ${missingCount} 人缺考，請填寫缺考座號（必填 ${missingCount} 位）`
+        count: missingStudentCount,
+        message: `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，預計 ${targetStudentCount} 位學生，已分配 ${assignedStudentCount} 位，少了 ${missingStudentCount} 位，代表部分學生未交，請填寫未交座號（必填 ${missingStudentCount} 位）`
       }
     }
 
-    // 情況C：多份（未分配份數 > 有效學生數）
-    if (unmappedCopies > effectiveStudents) {
-      const extraCount = unmappedCopies - effectiveStudents
+    if (unmappedCopies > targetStudentCount) {
+      const extraCount = unmappedCopies - targetStudentCount
       return {
         type: 'extra' as const,
         count: extraCount,
-        message: `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${effectiveStudents} 人。代表多 ${extraCount} 份，作業份數與學生人數不符，請再次確認。`
+        message: `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${targetStudentCount} 人。代表多 ${extraCount} 份，作業份數與學生人數不符，請再次確認。`
       }
     }
 
     return null
-  }, [pages.length, students.length, pagesPerStudent, missingSeatNumbers.length, absentSet.size, mappings])
+  }, [
+    pages.length,
+    students.length,
+    pagesPerStudent,
+    mappings,
+    targetStudents,
+    targetStudentCount,
+    assignedStudentCount,
+    missingStudentCount
+  ])
 
   const selectedMapping = mappings[selectedMappingIndex] ?? null
 
@@ -226,6 +248,8 @@ export default function AssignmentImport({
     })
     return pages.filter((p) => !used.has(p.index))
   }, [pages, mappings])
+
+  const isConfirmDisabled = isSaving || unusedPages.length > 0 || missingStudentCount > 0
 
   const handleFileChange = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -290,20 +314,10 @@ export default function AssignmentImport({
 
     setError(null)
 
-    const missingSeatSet = new Set(missingSeatNumbers)
-    const effectiveStudents = students
-      .filter(
-        (s) =>
-          s.seatNumber >= startSeat &&
-          !absentSet.has(s.seatNumber) &&
-          !missingSeatSet.has(s.seatNumber)
-      )
-      .sort((a, b) => a.seatNumber - b.seatNumber)
-
     const result: MappingRow[] = []
     let pageIndex = 0
 
-    for (const stu of effectiveStudents) {
+    for (const stu of targetStudents) {
       if (pageIndex >= pages.length) break
 
       const fromIndex = pageIndex
@@ -339,31 +353,29 @@ export default function AssignmentImport({
 
     // 檢查作業份數與學生人數是否匹配
     const totalPages = pages.length
-    const unmappedPages = pages.length - mappings.reduce((sum, m) => sum + (m.toIndex - m.fromIndex + 1), 0)
+    const mappedPages = mappings.reduce((sum, m) => sum + (m.toIndex - m.fromIndex + 1), 0)
+    const unmappedPages = totalPages - mappedPages
     const unmappedCopies = Math.floor(unmappedPages / pagesPerStudent)
-    const effectiveStudents = students.length - absentSet.size
 
-    // 情況A & B：缺考（未分配份數 < 有效學生數）
-    if (unmappedCopies < effectiveStudents) {
-      const missingCount = effectiveStudents - unmappedCopies
-      const message = `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${effectiveStudents} 人。\n\n代表有 ${missingCount} 人缺考，請填寫缺考座號（必填 ${missingCount} 位）。`
-
-      const input = prompt(message + '\n\n請輸入缺考座號（用逗號分隔，例如：3, 5, 12）：')
+    if (missingStudentCount > 0) {
+      const message = `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，預計 ${targetStudentCount} 位學生，已分配 ${assignedStudentCount} 位，少了 ${missingStudentCount} 位，代表部分學生未交，請填寫未交座號（必填 ${missingStudentCount} 位）。`
+      const input = prompt(
+        message + '\n\n請輸入未交座號（用逗號分隔，例如：3, 5, 12）：'
+      )
       if (input === null) {
-        // 用戶取消
         return
       }
 
-      // 更新缺考座號並重新自動配對
       setAbsentSeatsInput(input)
       setError('請重新檢查配對結果後再次點擊確認匯入')
       return
     }
 
-    // 情況C：多份（未分配份數 > 有效學生數）
-    if (unmappedCopies > effectiveStudents) {
-      const extraCount = unmappedCopies - effectiveStudents
-      const confirmed = confirm(`供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${effectiveStudents} 人。\n\n代表多 ${extraCount} 份，作業份數與學生人數不符。\n\n是否仍要繼續匯入？`)
+    if (unmappedCopies > targetStudentCount) {
+      const extraCount = unmappedCopies - targetStudentCount
+      const confirmed = confirm(
+        `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${targetStudentCount} 人。\n\n代表多 ${extraCount} 份，作業份數與學生人數不符。\n\n是否仍要繼續匯入？`
+      )
       if (!confirmed) {
         return
       }
@@ -540,7 +552,7 @@ export default function AssignmentImport({
                 </div>
                 <div>
                   <label className="block text-[11px] font-medium text-gray-600 mb-1">
-                    起始座號
+                    起始頁號
                   </label>
                   <NumericInput
                     min={1}
@@ -645,7 +657,7 @@ export default function AssignmentImport({
                 <button
                   type="button"
                   onClick={handleSaveMappings}
-                  disabled={isSaving}
+                  disabled={isConfirmDisabled}
                   className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                 >
                   {isSaving ? (
