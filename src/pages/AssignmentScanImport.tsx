@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Loader, AlertCircle } from 'lucide-react'
+import { Loader, AlertCircle, ArrowLeft } from 'lucide-react'
 import { db } from '@/lib/db'
-import type { Assignment, Classroom } from '@/lib/db'
-import ScannerPage from './ScannerPage'
+import type { Assignment } from '@/lib/db'
+import ScanImportFlow from './ScanImportFlow'
 
 interface AssignmentScanImportProps {
   assignmentId: string
@@ -14,8 +14,6 @@ export default function AssignmentScanImport({
   onBack
 }: AssignmentScanImportProps) {
   const [assignment, setAssignment] = useState<Assignment | null>(null)
-  const [classroom, setClassroom] = useState<Classroom | null>(null)
-  const [maxSeat, setMaxSeat] = useState<number>(30)
   const [pagesPerStudent, setPagesPerStudent] = useState<number>(1)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -32,19 +30,6 @@ export default function AssignmentScanImport({
         }
         setAssignment(a)
         setPagesPerStudent(Math.max(1, a.totalPages || 1))
-
-        const c = await db.classrooms.get(a.classroomId)
-        if (!c) {
-          setError('找不到此作業所屬的班級。')
-          return
-        }
-        setClassroom(c)
-
-        const studentCount = await db.students
-          .where('classroomId')
-          .equals(a.classroomId)
-          .count()
-        setMaxSeat(studentCount || 30)
       } catch (e) {
         console.error(e)
         setError('載入作業資訊時發生錯誤。')
@@ -56,21 +41,21 @@ export default function AssignmentScanImport({
     void load()
   }, [assignmentId])
 
-  if (!isLoading && assignment && classroom && !error) {
+  if (!isLoading && assignment && !error) {
     return (
-      <div>
+      <div className="relative">
         {onBack && (
           <button
             onClick={onBack}
-            className="fixed top-4 left-4 z-50 px-4 py-2 bg-white rounded-lg shadow-lg hover:shadow-xl transition-shadow text-sm font-medium text-gray-700"
+            className="fixed top-4 left-4 z-50 px-4 py-2 bg-white rounded-lg shadow-lg hover:shadow-xl transition-shadow text-sm font-medium text-gray-700 flex items-center gap-2"
           >
+            <ArrowLeft className="w-4 h-4" />
             返回作業匯入
           </button>
         )}
-        <ScannerPage
+        <ScanImportFlow
           classroomId={assignment.classroomId}
           assignmentId={assignment.id}
-          maxSeat={maxSeat}
           pagesPerStudent={pagesPerStudent}
         />
       </div>
