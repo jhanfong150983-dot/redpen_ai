@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, type ChangeEvent, type FormEvent } from 'react'
+﻿import { useState, useEffect, useMemo, type ChangeEvent, type FormEvent } from 'react'
 import {
   BookOpen,
   Plus,
@@ -147,6 +147,29 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     setAnswerKeyError(null)
     setAnswerKeyNotice(null)
   }
+
+  // 實時驗證 - 檢查缺少的必填欄位
+  const getMissingFields = useMemo(() => {
+    const missing: string[] = []
+
+    if (!selectedClassroomId) {
+      missing.push('班級')
+    }
+    if (!assignmentTitle.trim()) {
+      missing.push('作業標題')
+    }
+    if (!assignmentDomain) {
+      missing.push('作業領域')
+    }
+    if (totalPages < 1 || totalPages > 100) {
+      missing.push('每生頁數')
+    }
+    if (!answerKey) {
+      missing.push('標準答案')
+    }
+
+    return missing
+  }, [selectedClassroomId, assignmentTitle, assignmentDomain, totalPages, answerKey])
 
   // Prior Weight 管理函數
   const togglePriorWeight = (type: QuestionCategoryType) => {
@@ -1903,24 +1926,31 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 )}
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsCreateModalOpen(false)
-                    resetForm()
-                  }}
-                  className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                >
-                  {isSubmitting ? '建立中…' : '建立作業'}
-                </button>
+              <div className="flex flex-col items-end gap-2 pt-2">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreateModalOpen(false)
+                      resetForm()
+                    }}
+                    className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? '建立中…' : '建立作業'}
+                  </button>
+                </div>
+                {getMissingFields.length > 0 && (
+                  <p className="text-xs text-gray-500">
+                    提醒：尚未填寫 {getMissingFields.join('、')}
+                  </p>
+                )}
               </div>
             </form>
           </div>
