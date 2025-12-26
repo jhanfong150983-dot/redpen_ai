@@ -26,7 +26,7 @@ import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { extractAnswerKeyFromImage, extractAnswerKeyFromImages, reanalyzeQuestions } from '@/lib/gemini'
 import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
-import { compressImageFile } from '@/lib/imageCompression'
+import { compressImageFile, validateBlobSize } from '@/lib/imageCompression'
 
 interface AssignmentSetupProps {
   onBack?: () => void
@@ -349,6 +349,14 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
         console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
       }
 
+      // 驗證檔案大小
+      const validation = validateBlobSize(imageBlob, 1.5)
+      if (!validation.valid) {
+        setErr(validation.message || '檔案過大')
+        setBusy(false)
+        return
+      }
+
       // Save image blob for re-analysis if callback provided
       if (onImageBlobReady) {
         console.log('💾 保存答案卷圖片 blob 用於重新分析', { blobSize: imageBlob.size })
@@ -499,6 +507,14 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
           }
 
           console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
+        }
+
+        // 驗證單檔大小
+        const validation = validateBlobSize(imageBlob, 1.5)
+        if (!validation.valid) {
+          setAnswerKeyError(`${file.name}: ${validation.message}`)
+          setIsExtractingAnswerKey(false)
+          return
         }
 
         imageBlobs.push(imageBlob)
@@ -1499,7 +1515,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    可多次上傳合併；重複題號會自動加上後綴。
+                    檔案大小限制：單檔壓縮後需小於 1.5 MB。可多次上傳合併；重複題號會自動加上後綴。
                   </p>
                   <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mt-2">
                     <p className="text-xs text-blue-800">
@@ -1973,7 +1989,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                   className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  可多次上傳，題目會合併；重複題號會自動加上後綴。
+                  檔案大小限制：單檔壓縮後需小於 1.5 MB。可多次上傳，題目會合併；重複題號會自動加上後綴。
                 </p>
                 <p className="text-xs text-amber-600 mt-1">
                   💡 若要使用「重新分析」功能，請先上傳答案卷並點擊「AI 解析」

@@ -5,7 +5,7 @@ import { useSeatController } from '@/hooks/useSeatController'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
-import { compressImage, blobToBase64 } from '@/lib/imageCompression'
+import { compressImage, blobToBase64, validateBlobSize } from '@/lib/imageCompression'
 import { convertPdfToImage, getFileType } from '@/lib/pdfToImage'
 import type { Student, Submission } from '@/lib/db'
 
@@ -245,6 +245,12 @@ export default function ScannerPage({
 
       console.log(`✅ 壓縮完成: ${(compressedBlob.size / 1024).toFixed(2)} KB`)
 
+      // 2.5. 驗證檔案大小
+      const validation = validateBlobSize(compressedBlob, 1.5)
+      if (!validation.valid) {
+        throw new Error(validation.message || '檔案過大')
+      }
+
       // 3. 暫存圖片
       await storeImage(compressedBlob)
 
@@ -303,6 +309,12 @@ export default function ScannerPage({
 
         console.log(`✅ 圖片壓縮完成: ${(imageBlob.size / 1024).toFixed(2)} KB, type: ${imageBlob.type}`)
 
+        // 驗證檔案大小
+        const validation = validateBlobSize(imageBlob, 1.5)
+        if (!validation.valid) {
+          throw new Error(validation.message || '檔案過大')
+        }
+
       } else if (fileType === 'pdf') {
         // 處理 PDF 文件
         console.log('📄 處理 PDF 文件...')
@@ -315,6 +327,12 @@ export default function ScannerPage({
         })
 
         console.log(`✅ PDF 轉換完成: ${(imageBlob.size / 1024).toFixed(2)} KB, type: ${imageBlob.type}`)
+
+        // 驗證檔案大小
+        const validation = validateBlobSize(imageBlob, 1.5)
+        if (!validation.valid) {
+          throw new Error(validation.message || '檔案過大')
+        }
 
       } else {
         throw new Error('不支援的文件格式，請上傳圖片或 PDF 文件')

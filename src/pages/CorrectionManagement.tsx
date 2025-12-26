@@ -25,6 +25,8 @@ interface CorrectionCard {
   correctionCount: number
   mistakes: CorrectionItem[]
   imageUrl?: string
+  score: number | null
+  totalScore: number | null
 }
 
 const escapeXml = (v: string) =>
@@ -101,7 +103,9 @@ export default function CorrectionManagement({
             seatNumber: student?.seatNumber ?? null,
             correctionCount: s.correctionCount ?? 0,
             mistakes: items,
-            imageUrl
+            imageUrl,
+            score: s.score ?? null,
+            totalScore: a.answerKey?.totalScore ?? null
           })
           return acc
         }, [])
@@ -201,6 +205,12 @@ export default function CorrectionManagement({
       const sheetName = escapeXml(sheetNameRaw || `sheet${idx + 1}`)
       const titleLine = `作業標題：${assignment?.title || ''}`
       const seatNameLine = `座號：${seat || '—'}    姓名：${name}`
+      const scoreLine =
+        c.score !== null && c.totalScore !== null
+          ? `得分：${c.score} / ${c.totalScore}`
+          : c.totalScore !== null
+          ? `得分：尚未批改（總分：${c.totalScore}）`
+          : `得分：尚未批改`
         const divider = '-----------------------------------------'
         const mistakesRows = c.mistakes
           .filter((m) => !m.done)
@@ -223,6 +233,9 @@ export default function CorrectionManagement({
             </Row>
             <Row>
               <Cell ss:MergeAcross="2" ss:StyleID="card"><Data ss:Type="String">${escapeXml(seatNameLine)}</Data></Cell>
+            </Row>
+            <Row>
+              <Cell ss:MergeAcross="2" ss:StyleID="card"><Data ss:Type="String">${escapeXml(scoreLine)}</Data></Cell>
             </Row>
             <Row>
               <Cell ss:MergeAcross="2" ss:StyleID="card"><Data ss:Type="String">${escapeXml(divider)}</Data></Cell>
@@ -328,6 +341,12 @@ export default function CorrectionManagement({
       targets.forEach((c) => {
         const seat = c.seatNumber != null ? c.seatNumber.toString() : '—'
         const name = c.studentName
+        const scoreText =
+          c.score !== null && c.totalScore !== null
+            ? `${c.score} / ${c.totalScore}`
+            : c.totalScore !== null
+            ? `尚未批改（總分：${c.totalScore}）`
+            : `尚未批改`
         const card = document.createElement('div')
         card.style.border = '1px solid #000'
         card.style.padding = '16px'
@@ -342,6 +361,7 @@ export default function CorrectionManagement({
           <div style="font-weight:bold;margin-bottom:6px;">座號：${escapeHtml(
             seat
           )}　　姓名：${escapeHtml(name)}</div>
+          <div style="font-weight:bold;color:#059669;margin-bottom:6px;">得分：${escapeHtml(scoreText)}</div>
           <div style="margin-bottom:8px;">-----------------------------------------</div>
           <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
             <colgroup>

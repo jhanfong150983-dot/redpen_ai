@@ -15,9 +15,9 @@ import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import {
   convertPdfToImages,
-  fileToBlob,
   getFileType
 } from '@/lib/pdfToImage'
+import { validateBlobSize } from '@/lib/imageCompression'
 
 interface AssignmentImportProps {
   assignmentId: string
@@ -99,6 +99,22 @@ export default function AssignmentImport({
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
+  // 計算班級中缺少的座號（跳號）
+  const missingSeatNumbers = useMemo(() => {
+    if (students.length === 0) return []
+
+    const existingSeats = new Set(students.map(s => s.seatNumber))
+    const minSeat = Math.min(...students.map(s => s.seatNumber))
+    const maxSeat = Math.max(...students.map(s => s.seatNumber))
+
+    const missing: number[] = []
+    for (let i = minSeat; i <= maxSeat; i++) {
+      if (!existingSeats.has(i)) {
+        missing.push(i)
+      }
+    }
+    return missing
+  }, [students])
 
   // 載入作業與班級、學生資料
   useEffect(() => {
@@ -184,26 +200,22 @@ export default function AssignmentImport({
 
       const type = getFileType(first)
 
-      let blobs: Blob[] = []
+      if (type !== 'pdf') {
+        throw new Error('僅支援 PDF 檔案。請將圖片轉換為 PDF 後再上傳。')
+      }
 
-      if (type === 'pdf') {
-        blobs = await convertPdfToImages(first, {
-          scale: 2,
-          format: 'image/webp',
-          quality: 0.8
-        })
-      } else if (type === 'image') {
-        const list: Blob[] = []
-        // 多張圖片視為多頁
-        // eslint-disable-next-line no-restricted-syntax
-        for (const f of Array.from(files)) {
-          // eslint-disable-next-line no-await-in-loop
-          const blob = await fileToBlob(f)
-          list.push(blob)
+      const blobs = await convertPdfToImages(first, {
+        scale: 2,
+        format: 'image/webp',
+        quality: 0.8
+      })
+
+      // 驗證每一頁的大小
+      for (let i = 0; i < blobs.length; i++) {
+        const validation = validateBlobSize(blobs[i], 1.5)
+        if (!validation.valid) {
+          throw new Error(`第 ${i + 1} 頁：${validation.message}`)
         }
-        blobs = list
-      } else {
-        throw new Error('不支援的檔案格式，請上傳 PDF 或圖片檔')
       }
 
       const previews: PagePreview[] = blobs.map((blob, idx) => ({
@@ -223,7 +235,7 @@ export default function AssignmentImport({
 
   const handleAutoMap = () => {
     if (pages.length === 0) {
-      setError('請先上傳 PDF 或圖片檔')
+      setError('請先上傳 PDF 檔案')
       return
     }
     if (!students.length) {
@@ -233,9 +245,13 @@ export default function AssignmentImport({
 
     setError(null)
 
+    const missingSeatSet = new Set(missingSeatNumbers)
     const effectiveStudents = students
       .filter(
-        (s) => s.seatNumber >= startSeat && !absentSet.has(s.seatNumber)
+        (s) =>
+          s.seatNumber >= startSeat &&
+          !absentSet.has(s.seatNumber) &&
+          !missingSeatSet.has(s.seatNumber)
       )
       .sort((a, b) => a.seatNumber - b.seatNumber)
 
@@ -393,12 +409,11 @@ export default function AssignmentImport({
           <div className="grid md:grid-cols-3 gap-4 text-sm">
             <div className="md:col-span-1">
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                上傳 PDF 或圖片檔
+                上傳 PDF 檔案
               </label>
               <input
                 type="file"
-                accept="application/pdf,image/*"
-                multiple
+                accept="application/pdf"
                 onChange={handleFileChange}
                 disabled={isUploading}
                 className="block w-full text-xs text-gray-700
@@ -407,6 +422,9 @@ export default function AssignmentImport({
                   file:bg-indigo-50 file:text-indigo-700
                   hover:file:bg-indigo-100"
               />
+              <p className="text-xs text-gray-500 mt-1">
+                檔案大小限制：單檔壓縮後需小於 1.5 MB
+              </p>
               {fileName && (
                 <p className="mt-1 text-xs text-gray-500">已選擇：{fileName}</p>
               )}
@@ -465,6 +483,28 @@ export default function AssignmentImport({
                   這些座號會被跳過，不會配對任何頁面。
                 </p>
               </div>
+
+              {/* 顯示班級中缺少的座號 */}
+              {missingSeatNumbers.length > 0 && (
+                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-xs text-blue-800 font-medium mb-1">
+                    班級中缺少的座號（僅供參考）：
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {missingSeatNumbers.map(seat => (
+                      <span
+                        key={seat}
+                        className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs"
+                      >
+                        {seat}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-xs text-blue-600 mt-1">
+                    這些座號在班級管理中不存在，系統會自動跳過。
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col justify-between text-xs text-gray-500">
@@ -501,71 +541,10 @@ export default function AssignmentImport({
           </div>
         </div>
 
-        {/* 2. 左側預覽 + 右側配對結果 */}
-        <div className="grid lg:grid-cols-2 gap-4 mb-6">
-          {/* 左：大圖預覽 + 縮圖列 */}
-          <div className="bg-white rounded-2xl shadow-md p-4 flex flex-col gap-3 min-h-[320px]">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-700">頁面預覽</h2>
-              {selectedMapping && (
-                <p className="text-xs text-gray-500">
-                  顯示：第 {selectedMapping.fromIndex + 1}
-                  {selectedMapping.toIndex === selectedMapping.fromIndex
-                    ? ''
-                    : `–${selectedMapping.toIndex + 1}`}
-                  頁
-                </p>
-              )}
-            </div>
-
-            <div
-              className={`flex-1 border border-dashed border-gray-200 rounded-xl flex items-center justify-center bg-slate-50 ${
-                selectedMapping ? 'cursor-pointer' : 'cursor-default'
-              }`}
-              onClick={() => {
-                if (selectedMapping) setIsPreviewModalOpen(true)
-              }}
-            >
-              {selectedMapping && pagesInSelectedRange.length > 0 ? (
-                <div className="flex gap-3">
-                  {pagesInSelectedRange.map((p) => (
-                    // eslint-disable-next-line jsx-a11y/img-redundant-alt
-                    <img
-                      key={p.index}
-                      src={p.url}
-                      alt={`第 ${p.index + 1} 頁預覽`}
-                      className="w-32 h-44 rounded-lg shadow-md object-contain bg-white border border-gray-200"
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs text-gray-400 flex flex-col items-center gap-1">
-                  <FileImage className="w-5 h-5" />
-                  <span>尚未產生配對結果</span>
-                </div>
-              )}
-            </div>
-
-            {/* 縮圖列（僅顯示頁碼方塊示意） */}
-            {pages.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs text-gray-500 mb-1">所有頁面（示意）：</p>
-                <div className="flex gap-1 overflow-x-auto pb-1">
-                  {pages.map((p) => (
-                    <div
-                      key={p.index}
-                      className="w-10 h-14 rounded-md flex items-center justify-center text-[10px] text-gray-700 border border-gray-200 bg-gray-50"
-                    >
-                      {p.index + 1}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* 右：配對結果表 */}
-          <div className="bg-white rounded-2xl shadow-md p-4 min-h-[320px]">
+        {/* 2. 配對結果表 + 預覽區 */}
+        <div className="space-y-4 mb-6">
+          {/* 配對結果表（放在最上方） */}
+          <div className="bg-white rounded-2xl shadow-md p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold text-gray-700">
                 自動配對結果
@@ -578,24 +557,24 @@ export default function AssignmentImport({
             </div>
 
             {mappings.length === 0 ? (
-              <p className="text-xs text-gray-500">
+              <p className="text-sm text-gray-500">
                 請先上傳檔案並按下「產生自動配對結果」。
               </p>
             ) : (
-              <div className="border border-gray-200 rounded-xl overflow-hidden text-xs">
-                <div className="grid grid-cols-4 bg-gray-50 px-3 py-2 font-semibold text-gray-700">
+              <div className="border border-gray-200 rounded-xl overflow-hidden text-sm">
+                <div className="grid grid-cols-4 bg-gray-50 px-4 py-3 font-semibold text-gray-700">
                   <div>頁碼範圍</div>
                   <div>座號</div>
                   <div>學生姓名</div>
                   <div>檢視</div>
                 </div>
-                <div className="max-h-60 overflow-auto">
+                <div className="max-h-80 overflow-auto">
                   {mappings.map((m, idx) => (
                     <button
                       key={`${m.fromIndex}-${m.seatNumber}`}
                       type="button"
                       onClick={() => setSelectedMappingIndex(idx)}
-                      className={`grid grid-cols-4 w-full px-3 py-2 text-left border-t border-gray-100 ${
+                      className={`grid grid-cols-4 w-full px-4 py-3 text-left border-t border-gray-100 ${
                         idx === selectedMappingIndex
                           ? 'bg-indigo-50 text-indigo-800'
                           : 'bg-white hover:bg-gray-50 text-gray-700'
@@ -609,15 +588,14 @@ export default function AssignmentImport({
                       </div>
                       <div>{m.seatNumber}</div>
                       <div>{m.name}</div>
-                      <div className="text-right">
-                        {idx === selectedMappingIndex ? '✓ 已選取' : '檢視'}
-                      </div>
+                      <div className="text-indigo-600 underline">點擊檢視</div>
                     </button>
                   ))}
                 </div>
               </div>
             )}
 
+            {/* 確認匯入按鈕 */}
             {mappings.length > 0 && (
               <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
                 <span>已配對 {mappings.length} 位學生</span>
@@ -636,6 +614,70 @@ export default function AssignmentImport({
                     '確認匯入'
                   )}
                 </button>
+              </div>
+            )}
+          </div>
+
+          {/* 頁面預覽區（放在下方） */}
+          <div className="bg-white rounded-2xl shadow-md p-4 flex flex-col gap-3 min-h-[320px]">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-700">頁面預覽</h2>
+              {selectedMapping && (
+                <p className="text-xs text-gray-500">
+                  顯示：第 {selectedMapping.fromIndex + 1}
+                  {selectedMapping.toIndex === selectedMapping.fromIndex
+                    ? ''
+                    : `–${selectedMapping.toIndex + 1}`}
+                  頁
+                </p>
+              )}
+            </div>
+
+            {selectedMapping && pagesInSelectedRange.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {pagesInSelectedRange.map((p) => (
+                  <div
+                    key={p.index}
+                    className="border border-gray-200 rounded-xl overflow-hidden cursor-pointer hover:shadow-lg transition-shadow"
+                    onClick={() => setIsPreviewModalOpen(true)}
+                  >
+                    <div className="bg-gray-50 px-3 py-2 text-sm text-gray-700 font-medium">
+                      第 {p.index + 1} 頁
+                    </div>
+                    <div className="aspect-[3/4] bg-white">
+                      {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
+                      <img
+                        src={p.url}
+                        alt={`第 ${p.index + 1} 頁預覽`}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex-1 border border-dashed border-gray-200 rounded-xl flex items-center justify-center bg-slate-50 min-h-[200px]">
+                <div className="text-xs text-gray-400 flex flex-col items-center gap-1">
+                  <FileImage className="w-5 h-5" />
+                  <span>尚未產生配對結果</span>
+                </div>
+              </div>
+            )}
+
+            {/* 縮圖列（僅顯示頁碼方塊示意） */}
+            {pages.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs text-gray-500 mb-1">所有頁面（示意）：</p>
+                <div className="flex gap-1 overflow-x-auto pb-1">
+                  {pages.map((p) => (
+                    <div
+                      key={p.index}
+                      className="w-10 h-14 rounded-md flex items-center justify-center text-[10px] text-gray-700 border border-gray-200 bg-gray-50"
+                    >
+                      {p.index + 1}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -675,37 +717,29 @@ export default function AssignmentImport({
               </button>
             </div>
             <div className="p-4 bg-gray-50 overflow-y-auto max-h-[85vh]">
-              {pages.length === 0 ? (
+              {!selectedMapping || pagesInSelectedRange.length === 0 ? (
                 <p className="text-sm text-gray-500">尚未產生配對結果。</p>
               ) : (
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {pages.map((p) => {
-                    const isMapped =
-                      selectedMapping &&
-                      p.index >= selectedMapping.fromIndex &&
-                      p.index <= selectedMapping.toIndex
-
-                    return (
-                      <div
-                        key={p.index}
-                        className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
-                      >
-                        <div className="flex items-center justify-between px-3 py-2 text-xs text-gray-600 bg-gray-50 border-b border-gray-100">
-                          <span>第 {p.index + 1} 頁</span>
-                          {isMapped && (
-                            <span className="text-indigo-600 font-semibold">已配對</span>
-                          )}
-                        </div>
-                        <div className="bg-white flex items-center justify-center">
-                          <img
-                            src={p.url}
-                            alt={`第 ${p.index + 1} 頁預覽`}
-                            className="max-h-[70vh] w-full object-contain bg-white"
-                          />
-                        </div>
+                <div className="grid sm:grid-cols-1 md:grid-cols-2 gap-4">
+                  {pagesInSelectedRange.map((p) => (
+                    <div
+                      key={p.index}
+                      className="bg-white rounded-xl border border-gray-200 shadow-md overflow-hidden"
+                    >
+                      <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                        <p className="text-sm font-medium text-gray-700">
+                          第 {p.index + 1} 頁 · 配對給 {selectedMapping.seatNumber} 號
+                        </p>
                       </div>
-                    )
-                  })}
+                      <div className="bg-white flex items-center justify-center p-4">
+                        <img
+                          src={p.url}
+                          alt={`第 ${p.index + 1} 頁預覽`}
+                          className="max-h-[75vh] w-full object-contain bg-white"
+                        />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

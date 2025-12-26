@@ -144,3 +144,45 @@ export async function compressImageFile(
   const dataUrl = await blobToBase64(file);
   return await compressImage(dataUrl, options);
 }
+
+/**
+ * 格式化檔案大小為可讀字串
+ * @param bytes - 檔案大小（位元組）
+ * @returns 格式化後的字串 (例如: "1.23 MB", "456.78 KB")
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B'
+
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+
+  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
+}
+
+/**
+ * 驗證 Blob 大小是否超過限制
+ * @param blob - 要檢查的 Blob 物件
+ * @param maxSizeMB - 最大允許大小（MB），預設 1.5 MB
+ * @returns 驗證結果物件
+ */
+export function validateBlobSize(
+  blob: Blob,
+  maxSizeMB: number = 1.5
+): { valid: boolean; sizeMB: number; maxSizeMB: number; message?: string } {
+  const sizeBytes = blob.size
+  const sizeMB = sizeBytes / (1024 * 1024)
+  const valid = sizeMB <= maxSizeMB
+
+  let message: string | undefined
+  if (!valid) {
+    message = `壓縮後檔案仍過大（${formatFileSize(sizeBytes)}），超過限制 ${maxSizeMB} MB。\n建議：\n1. 使用解析度較低的圖片\n2. 裁切掉不必要的空白區域\n3. 使用 PDF 格式並調低掃描解析度`
+  }
+
+  return {
+    valid,
+    sizeMB: parseFloat(sizeMB.toFixed(2)),
+    maxSizeMB,
+    message
+  }
+}
