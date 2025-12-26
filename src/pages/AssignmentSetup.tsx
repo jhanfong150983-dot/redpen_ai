@@ -432,6 +432,29 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
   const handleAnswerKeyFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
+
+    // 立即檢查原始檔案總大小
+    const totalOriginalSize = files.reduce((sum, file) => sum + file.size, 0)
+    const totalOriginalSizeMB = totalOriginalSize / (1024 * 1024)
+
+    // 原始檔案限制 20MB（壓縮後預估會小於 8MB）
+    const maxOriginalSizeMB = 20
+
+    if (totalOriginalSizeMB > maxOriginalSizeMB) {
+      setAnswerKeyError(
+        `選擇的檔案總大小過大（${totalOriginalSizeMB.toFixed(1)} MB），超過限制 ${maxOriginalSizeMB} MB。\n` +
+        `目前選擇：${files.length} 個檔案\n` +
+        `建議：\n` +
+        `1. 一次只選擇 1-2 個檔案\n` +
+        `2. 使用較低解析度的圖片或掃描設定\n` +
+        `3. 分批上傳後系統會自動合併題目`
+      )
+      setAnswerKeyFile([])
+      // 清空 input 以便重新選擇
+      e.target.value = ''
+      return
+    }
+
     setAnswerKeyFile(files)
     setAnswerKeyError(null)
     setAnswerKeyNotice(null)
