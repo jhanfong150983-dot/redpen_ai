@@ -4,7 +4,6 @@ import {
   FileImage,
   Loader,
   Settings,
-  Sparkles,
   Users,
   X
 } from 'lucide-react'
@@ -162,6 +161,52 @@ export default function AssignmentImport({
         .map((s) => Number.parseInt(s, 10))
     )
   }, [absentSeatsInput])
+
+  // 自動配對：當 pages、pagesPerStudent、startSeat 或 absentSet 變化時
+  useEffect(() => {
+    if (pages.length > 0 && students.length > 0) {
+      // 延遲一下讓 state 更新完成
+      const timer = setTimeout(() => {
+        handleAutoMap()
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [pages.length, pagesPerStudent, startSeat, absentSet.size])
+
+  // 智能檢測缺考座號
+  const absentSeatHint = useMemo(() => {
+    if (pages.length === 0 || students.length === 0 || pagesPerStudent <= 0) {
+      return null
+    }
+
+    const totalPages = pages.length
+    const unmappedPages = pages.length - mappings.reduce((sum, m) => sum + (m.toIndex - m.fromIndex + 1), 0)
+    const unmappedCopies = Math.floor(unmappedPages / pagesPerStudent)
+
+    const effectiveStudents = students.length - missingSeatNumbers.length - absentSet.size
+
+    // 情況A & B：缺考（未分配份數 < 有效學生數）
+    if (unmappedCopies < effectiveStudents) {
+      const missingCount = effectiveStudents - unmappedCopies
+      return {
+        type: 'missing' as const,
+        count: missingCount,
+        message: `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${effectiveStudents} 人。代表有 ${missingCount} 人缺考，請填寫缺考座號（必填 ${missingCount} 位）`
+      }
+    }
+
+    // 情況C：多份（未分配份數 > 有效學生數）
+    if (unmappedCopies > effectiveStudents) {
+      const extraCount = unmappedCopies - effectiveStudents
+      return {
+        type: 'extra' as const,
+        count: extraCount,
+        message: `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${effectiveStudents} 人。代表多 ${extraCount} 份，作業份數與學生人數不符，請再次確認。`
+      }
+    }
+
+    return null
+  }, [pages.length, students.length, pagesPerStudent, missingSeatNumbers.length, absentSet.size, mappings])
 
   const selectedMapping = mappings[selectedMappingIndex] ?? null
 
@@ -482,13 +527,43 @@ export default function AssignmentImport({
                 <p className="mt-1 text-[11px] text-gray-500">
                   這些座號會被跳過，不會配對任何頁面。
                 </p>
+
+                {/* 智能缺考提示 */}
+                {absentSeatHint && (
+                  <div
+                    className={`mt-2 p-2 border rounded-lg ${
+                      absentSeatHint.type === 'missing'
+                        ? 'bg-amber-50 border-amber-300'
+                        : 'bg-red-50 border-red-300'
+                    }`}
+                  >
+                    <p
+                      className={`text-xs font-medium ${
+                        absentSeatHint.type === 'missing'
+                          ? 'text-amber-800'
+                          : 'text-red-800'
+                      }`}
+                    >
+                      {absentSeatHint.type === 'missing' ? '⚠️ 檢測到缺考' : '❌ 作業份數異常'}
+                    </p>
+                    <p
+                      className={`text-xs mt-1 ${
+                        absentSeatHint.type === 'missing'
+                          ? 'text-amber-700'
+                          : 'text-red-700'
+                      }`}
+                    >
+                      {absentSeatHint.message}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* 顯示班級中缺少的座號 */}
               {missingSeatNumbers.length > 0 && (
                 <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
                   <p className="text-xs text-blue-800 font-medium mb-1">
-                    班級中缺少的座號（僅供參考）：
+                    班級中缺少的座號：
                   </p>
                   <div className="flex flex-wrap gap-1">
                     {missingSeatNumbers.map(seat => (
@@ -507,103 +582,78 @@ export default function AssignmentImport({
               )}
             </div>
 
-            <div className="flex flex-col justify-between text-xs text-gray-500">
-              <div className="mb-2 space-y-1">
-                <p>
-                  建議先將紙本考卷依座號大致排序後再掃描，
-                  搭配「每位學生頁數」與「缺考座號」可快速自動配對。
-                </p>
-                {unusedPages.length > 0 && (
-                  <p className="text-amber-600">
-                    目前有 {unusedPages.length} 頁未被配對（可在下方確認）。
-                  </p>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={handleAutoMap}
-                disabled={pages.length === 0 || isUploading}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-              >
-                {isUploading ? (
-                  <>
-                    <Loader className="w-4 h-4 animate-spin" />
-                    處理檔案中...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    產生自動配對結果
-                  </>
-                )}
-              </button>
+            <div className="text-xs text-gray-500">
+              <p>
+                建議先將紙本考卷依座號大致排序後再掃描。
+                上傳 PDF 後會自動配對，請在下方檢查每位學生的分配結果。
+              </p>
             </div>
           </div>
         </div>
 
-        {/* 2. 配對結果表 + 預覽區 */}
-        <div className="space-y-4 mb-6">
-          {/* 配對結果表（放在最上方） */}
-          <div className="bg-white rounded-2xl shadow-md p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-700">
-                自動配對結果
-              </h2>
-              {unusedPages.length > 0 && (
-                <p className="text-xs text-amber-600">
-                  尚有 {unusedPages.length} 頁未分配
-                </p>
-              )}
-            </div>
-
-            {mappings.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                請先上傳檔案並按下「產生自動配對結果」。
-              </p>
-            ) : (
-              <div className="border border-gray-200 rounded-xl overflow-hidden text-sm">
-                <div className="grid grid-cols-4 bg-gray-50 px-4 py-3 font-semibold text-gray-700">
-                  <div>頁碼範圍</div>
-                  <div>座號</div>
-                  <div>學生姓名</div>
-                  <div>檢視</div>
-                </div>
-                <div className="max-h-80 overflow-auto">
-                  {mappings.map((m, idx) => (
-                    <button
-                      key={`${m.fromIndex}-${m.seatNumber}`}
-                      type="button"
-                      onClick={() => setSelectedMappingIndex(idx)}
-                      className={`grid grid-cols-4 w-full px-4 py-3 text-left border-t border-gray-100 ${
-                        idx === selectedMappingIndex
-                          ? 'bg-indigo-50 text-indigo-800'
-                          : 'bg-white hover:bg-gray-50 text-gray-700'
-                      }`}
-                    >
-                      <div>
-                        第 {m.fromIndex + 1}
-                        {m.toIndex === m.fromIndex
-                          ? ''
-                          : `–${m.toIndex + 1}`} 頁
-                      </div>
-                      <div>{m.seatNumber}</div>
-                      <div>{m.name}</div>
-                      <div className="text-indigo-600 underline">點擊檢視</div>
-                    </button>
-                  ))}
-                </div>
+        {/* 2. 左右分欄：左側學生列表 + 右側預覽 */}
+        {mappings.length > 0 && (
+          <div className="grid lg:grid-cols-[350px_1fr] gap-4 mb-6">
+            {/* 左側：學生選單 */}
+            <div className="bg-white rounded-2xl shadow-md p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <Users className="w-4 h-4" />
+                  學生列表
+                </h2>
+                <span className="text-xs text-gray-500">
+                  {mappings.length} / {students.length - missingSeatNumbers.length} 人
+                </span>
               </div>
-            )}
 
-            {/* 確認匯入按鈕 */}
-            {mappings.length > 0 && (
-              <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                <span>已配對 {mappings.length} 位學生</span>
+              <div className="max-h-[600px] overflow-y-auto space-y-1">
+                {mappings.map((m, idx) => (
+                  <button
+                    key={`${m.seatNumber}-${m.studentId}`}
+                    type="button"
+                    onClick={() => setSelectedMappingIndex(idx)}
+                    className={`w-full px-3 py-2.5 rounded-lg text-left transition-colors ${
+                      idx === selectedMappingIndex
+                        ? 'bg-indigo-50 border-2 border-indigo-500'
+                        : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className={`text-sm font-semibold ${
+                          idx === selectedMappingIndex ? 'text-indigo-900' : 'text-gray-900'
+                        }`}>
+                          {m.seatNumber} 號
+                        </span>
+                        <span className={`ml-2 text-sm ${
+                          idx === selectedMappingIndex ? 'text-indigo-700' : 'text-gray-700'
+                        }`}>
+                          {m.name}
+                        </span>
+                      </div>
+                      <span className={`text-xs ${
+                        idx === selectedMappingIndex ? 'text-indigo-600' : 'text-gray-500'
+                      }`}>
+                        第 {m.fromIndex + 1}
+                        {m.toIndex === m.fromIndex ? '' : `–${m.toIndex + 1}`} 頁
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* 確認匯入按鈕 */}
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                {unusedPages.length > 0 && absentSeatHint?.type === 'extra' && (
+                  <p className="text-xs text-red-600 mb-2">
+                    ⚠️ 尚有 {unusedPages.length} 頁未分配
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={handleSaveMappings}
                   disabled={isSaving}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                 >
                   {isSaving ? (
                     <>
@@ -615,10 +665,9 @@ export default function AssignmentImport({
                   )}
                 </button>
               </div>
-            )}
-          </div>
+            </div>
 
-          {/* 頁面預覽區（放在下方） */}
+            {/* 右側：頁面預覽 */}
           <div className="bg-white rounded-2xl shadow-md p-4 flex flex-col gap-3 min-h-[320px]">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-700">頁面預覽</h2>
@@ -681,7 +730,8 @@ export default function AssignmentImport({
               </div>
             )}
           </div>
-        </div>
+          </div>
+        )}
 
       </div>
       {isPreviewModalOpen && (

@@ -523,18 +523,24 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       // 檢查總大小（Base64 編碼後會增加約 33%）
       const totalSize = imageBlobs.reduce((sum, blob) => sum + blob.size, 0)
       const estimatedBase64Size = totalSize * 1.33
-      const maxAllowedSize = 15 * 1024 * 1024  // 15MB（提高限制以保持品質）
+      const maxAllowedSize = 8 * 1024 * 1024  // 8MB（避免 Gemini API 413 錯誤）
 
       console.log('📊 檔案大小統計', {
         檔案數量: imageBlobs.length,
         總大小: `${(totalSize / 1024 / 1024).toFixed(2)} MB`,
-        Base64後預估: `${(estimatedBase64Size / 1024 / 1024).toFixed(2)} MB`
+        Base64後預估: `${(estimatedBase64Size / 1024 / 1024).toFixed(2)} MB`,
+        限制: '8 MB'
       })
 
       if (estimatedBase64Size > maxAllowedSize) {
         setAnswerKeyError(
-          `檔案總大小過大（預估 ${(estimatedBase64Size / 1024 / 1024).toFixed(1)} MB），請減少檔案數量。建議：為保持最佳辨識品質，一次上傳 1-2 個檔案。`
+          `檔案總大小過大（預估 ${(estimatedBase64Size / 1024 / 1024).toFixed(1)} MB），超過 AI 處理限制 8 MB。\n` +
+          `建議：\n` +
+          `1. 一次只上傳 1 個檔案\n` +
+          `2. 降低圖片解析度或使用較低品質的掃描設定\n` +
+          `3. 如果是多頁答案卷，可分批上傳後自動合併`
         )
+        setIsExtractingAnswerKey(false)
         return
       }
 
