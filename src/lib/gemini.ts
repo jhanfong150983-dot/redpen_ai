@@ -57,6 +57,11 @@ async function generateGeminiText(
   }
 
   if (!response.ok) {
+    // 特別處理 413 錯誤（檔案過大）
+    if (response.status === 413) {
+      throw new Error('檔案總大小過大，超過 AI 處理限制。建議分批上傳檔案。')
+    }
+
     const message =
       data?.error?.message ||
       data?.error ||

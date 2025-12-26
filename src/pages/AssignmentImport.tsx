@@ -337,6 +337,38 @@ export default function AssignmentImport({
       return
     }
 
+    // 檢查作業份數與學生人數是否匹配
+    const totalPages = pages.length
+    const unmappedPages = pages.length - mappings.reduce((sum, m) => sum + (m.toIndex - m.fromIndex + 1), 0)
+    const unmappedCopies = Math.floor(unmappedPages / pagesPerStudent)
+    const effectiveStudents = students.length - missingSeatNumbers.length - absentSet.size
+
+    // 情況A & B：缺考（未分配份數 < 有效學生數）
+    if (unmappedCopies < effectiveStudents) {
+      const missingCount = effectiveStudents - unmappedCopies
+      const message = `供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${effectiveStudents} 人。\n\n代表有 ${missingCount} 人缺考，請填寫缺考座號（必填 ${missingCount} 位）。`
+
+      const input = prompt(message + '\n\n請輸入缺考座號（用逗號分隔，例如：3, 5, 12）：')
+      if (input === null) {
+        // 用戶取消
+        return
+      }
+
+      // 更新缺考座號並重新自動配對
+      setAbsentSeatsInput(input)
+      setError('請重新檢查配對結果後再次點擊確認匯入')
+      return
+    }
+
+    // 情況C：多份（未分配份數 > 有效學生數）
+    if (unmappedCopies > effectiveStudents) {
+      const extraCount = unmappedCopies - effectiveStudents
+      const confirmed = confirm(`供 ${totalPages} 頁，每位學生 ${pagesPerStudent} 頁，未分配 ${unmappedCopies} 份，學生數 ${effectiveStudents} 人。\n\n代表多 ${extraCount} 份，作業份數與學生人數不符。\n\n是否仍要繼續匯入？`)
+      if (!confirmed) {
+        return
+      }
+    }
+
     setError(null)
     setIsSaving(true)
 
@@ -426,7 +458,7 @@ export default function AssignmentImport({
                 電子檔匯入 - {assignment?.title}
               </h1>
               <p className="text-xs text-gray-500 mt-1">
-                班級：{classroom?.name} · 學生數：{students.length}
+                班級：{classroom?.name} · 學生數：{students.length} 人
               </p>
             </div>
           </div>
@@ -470,10 +502,16 @@ export default function AssignmentImport({
               <p className="text-xs text-gray-500 mt-1">
                 檔案大小限制：單檔壓縮後需小於 1.5 MB
               </p>
-              {fileName && (
+              {isUploading && (
+                <div className="mt-2 flex items-center gap-2 text-xs text-indigo-600">
+                  <Loader className="w-4 h-4 animate-spin" />
+                  <span>處理 PDF 中，請稍候...</span>
+                </div>
+              )}
+              {!isUploading && fileName && (
                 <p className="mt-1 text-xs text-gray-500">已選擇：{fileName}</p>
               )}
-              {pages.length > 0 && (
+              {!isUploading && pages.length > 0 && (
                 <p className="mt-1 text-xs text-gray-500">
                   已拆出 {pages.length} 頁影像
                 </p>
@@ -512,51 +550,6 @@ export default function AssignmentImport({
                     className="w-full px-2 py-1 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   />
                 </div>
-              </div>
-              <div className="mt-2">
-                <label className="block text-[11px] font-medium text-gray-600 mb-1">
-                  缺考座號（選填）
-                </label>
-                <input
-                  type="text"
-                  value={absentSeatsInput}
-                  onChange={(e) => setAbsentSeatsInput(e.target.value)}
-                  placeholder="例如：3, 5, 12"
-                  className="w-full px-2 py-1 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                />
-                <p className="mt-1 text-[11px] text-gray-500">
-                  這些座號會被跳過，不會配對任何頁面。
-                </p>
-
-                {/* 智能缺考提示 */}
-                {absentSeatHint && (
-                  <div
-                    className={`mt-2 p-2 border rounded-lg ${
-                      absentSeatHint.type === 'missing'
-                        ? 'bg-amber-50 border-amber-300'
-                        : 'bg-red-50 border-red-300'
-                    }`}
-                  >
-                    <p
-                      className={`text-xs font-medium ${
-                        absentSeatHint.type === 'missing'
-                          ? 'text-amber-800'
-                          : 'text-red-800'
-                      }`}
-                    >
-                      {absentSeatHint.type === 'missing' ? '⚠️ 檢測到缺考' : '❌ 作業份數異常'}
-                    </p>
-                    <p
-                      className={`text-xs mt-1 ${
-                        absentSeatHint.type === 'missing'
-                          ? 'text-amber-700'
-                          : 'text-red-700'
-                      }`}
-                    >
-                      {absentSeatHint.message}
-                    </p>
-                  </div>
-                )}
               </div>
 
               {/* 顯示班級中缺少的座號 */}
@@ -683,7 +676,7 @@ export default function AssignmentImport({
             </div>
 
             {selectedMapping && pagesInSelectedRange.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {pagesInSelectedRange.map((p) => (
                   <div
                     key={p.index}
@@ -709,23 +702,6 @@ export default function AssignmentImport({
                 <div className="text-xs text-gray-400 flex flex-col items-center gap-1">
                   <FileImage className="w-5 h-5" />
                   <span>尚未產生配對結果</span>
-                </div>
-              </div>
-            )}
-
-            {/* 縮圖列（僅顯示頁碼方塊示意） */}
-            {pages.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs text-gray-500 mb-1">所有頁面（示意）：</p>
-                <div className="flex gap-1 overflow-x-auto pb-1">
-                  {pages.map((p) => (
-                    <div
-                      key={p.index}
-                      className="w-10 h-14 rounded-md flex items-center justify-center text-[10px] text-gray-700 border border-gray-200 bg-gray-50"
-                    >
-                      {p.index + 1}
-                    </div>
-                  ))}
                 </div>
               </div>
             )}

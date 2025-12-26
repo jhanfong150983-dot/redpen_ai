@@ -433,21 +433,16 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const handleAnswerKeyFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
 
-    // 立即檢查原始檔案總大小
+    // 立即檢查原始檔案總大小（避免 Gemini API 413 錯誤）
     const totalOriginalSize = files.reduce((sum, file) => sum + file.size, 0)
     const totalOriginalSizeMB = totalOriginalSize / (1024 * 1024)
 
-    // 原始檔案限制 20MB（壓縮後預估會小於 8MB）
-    const maxOriginalSizeMB = 20
+    // 原始檔案限制 2.5MB（經測試，超過此大小容易導致 413 錯誤）
+    const maxOriginalSizeMB = 2.5
 
     if (totalOriginalSizeMB > maxOriginalSizeMB) {
       setAnswerKeyError(
-        `選擇的檔案總大小過大（${totalOriginalSizeMB.toFixed(1)} MB），超過限制 ${maxOriginalSizeMB} MB。\n` +
-        `目前選擇：${files.length} 個檔案\n` +
-        `建議：\n` +
-        `1. 一次只選擇 1-2 個檔案\n` +
-        `2. 使用較低解析度的圖片或掃描設定\n` +
-        `3. 分批上傳後系統會自動合併題目`
+        `檔案總大小過大（${totalOriginalSizeMB.toFixed(1)} MB），超過限制 ${maxOriginalSizeMB} MB。\n建議分批上傳檔案。`
       )
       setAnswerKeyFile([])
       // 清空 input 以便重新選擇
@@ -546,22 +541,18 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       // 檢查總大小（Base64 編碼後會增加約 33%）
       const totalSize = imageBlobs.reduce((sum, blob) => sum + blob.size, 0)
       const estimatedBase64Size = totalSize * 1.33
-      const maxAllowedSize = 8 * 1024 * 1024  // 8MB（避免 Gemini API 413 錯誤）
+      const maxAllowedSize = 2 * 1024 * 1024  // 2MB（經測試，超過此大小容易導致 413 錯誤）
 
       console.log('📊 檔案大小統計', {
         檔案數量: imageBlobs.length,
         總大小: `${(totalSize / 1024 / 1024).toFixed(2)} MB`,
         Base64後預估: `${(estimatedBase64Size / 1024 / 1024).toFixed(2)} MB`,
-        限制: '8 MB'
+        限制: '2 MB'
       })
 
       if (estimatedBase64Size > maxAllowedSize) {
         setAnswerKeyError(
-          `檔案總大小過大（預估 ${(estimatedBase64Size / 1024 / 1024).toFixed(1)} MB），超過 AI 處理限制 8 MB。\n` +
-          `建議：\n` +
-          `1. 一次只上傳 1 個檔案\n` +
-          `2. 降低圖片解析度或使用較低品質的掃描設定\n` +
-          `3. 如果是多頁答案卷，可分批上傳後自動合併`
+          `檔案總大小過大（預估 ${(estimatedBase64Size / 1024 / 1024).toFixed(1)} MB），超過 AI 處理限制 2 MB。\n建議分批上傳檔案。`
         )
         setIsExtractingAnswerKey(false)
         return
@@ -1584,7 +1575,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     )}
                   </div>
                   {answerKeyError && (
-                    <p className="text-sm text-red-600 mt-1">{answerKeyError}</p>
+                    <p className="text-sm text-red-600 mt-1 whitespace-pre-line">{answerKeyError}</p>
                   )}
                   {answerKeyNotice && (
                     <p className="text-xs text-amber-600 mt-1">{answerKeyNotice}</p>
