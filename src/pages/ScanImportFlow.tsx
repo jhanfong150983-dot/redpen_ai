@@ -4,6 +4,7 @@ import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import type { Student, Submission } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
+import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
 import SeatSelectionPage from './SeatSelectionPage'
 import CameraCapturePage from './CameraCapturePage'
 
@@ -240,15 +241,10 @@ async function mergeImagesVertically(blobs: Blob[]): Promise<Blob> {
     bmp.close()
   })
 
-  const merged = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) resolve(blob)
-        else reject(new Error('無法產生合併影像'))
-      },
-      'image/webp',
-      0.85
-    )
+  // 使用安全的 toBlob 包裝器（帶自動 fallback 和 timeout 保護）
+  const merged = await safeToBlobWithFallback(canvas, {
+    format: 'image/webp', // 平板不支持時會自動 fallback 到 JPEG
+    quality: 0.85
   })
 
   return merged

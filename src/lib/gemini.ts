@@ -12,11 +12,60 @@ const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
 export const isGeminiAvailable = true
 
 // 工具：Blob 轉 Base64（去掉 data: 前綴）
-async function blobToBase64(blob: Blob): Promise<string> {
+/**
+ * 將 Blob 轉換為 Base64 字符串
+ *
+ * @param blob - 要轉換的 Blob
+ * @param timeoutMs - Timeout 時間（毫秒），預設 10 秒
+ * @returns Promise<string> - Base64 字符串（不含 data URL 前綴）
+ * @throws Error - 如果轉換失敗或超時
+ *
+ * 修復：添加 timeout 保護，避免平板Chrome記憶體受限時永久掛起
+ */
+async function blobToBase64(blob: Blob, timeoutMs: number = 10000): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onloadend = () => resolve((reader.result as string).split(',')[1])
-    reader.onerror = reject
+    let timeoutId: number | null = null
+
+    // 成功處理
+    reader.onloadend = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+      }
+      const result = reader.result as string
+      if (result) {
+        // 去掉 data URL 前綴，只保留 Base64 數據
+        const base64 = result.split(',')[1]
+        if (base64) {
+          resolve(base64)
+        } else {
+          reject(new Error('FileReader 返回的結果不包含有效的 Base64 數據'))
+        }
+      } else {
+        reject(new Error('FileReader 返回空結果'))
+      }
+    }
+
+    // 錯誤處理
+    reader.onerror = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+      }
+      reject(
+        new Error(`FileReader 錯誤: ${reader.error?.message || '未知錯誤'}`)
+      )
+    }
+
+    // Timeout 保護
+    timeoutId = window.setTimeout(() => {
+      timeoutId = null
+      reject(
+        new Error(
+          `FileReader 超時（${timeoutMs}ms）- 可能是記憶體不足、Blob 損壞，或設備性能受限`
+        )
+      )
+    }, timeoutMs)
+
     reader.readAsDataURL(blob)
   })
 }

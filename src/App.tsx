@@ -11,6 +11,7 @@ import CorrectionSelect from '@/pages/CorrectionSelect'
 import CorrectionManagement from '@/pages/CorrectionManagement'
 import Gradebook from '@/pages/Gradebook'
 import { SyncIndicator } from '@/components'
+import { checkWebPSupport } from '@/lib/webpSupport'
 import '@/lib/debug-sync'
 
 type Page =
@@ -94,6 +95,19 @@ function App() {
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
   }, [fetchAuth])
+
+  // 應用啟動時檢測 WebP 支持（用於平板Chrome兼容性）
+  useEffect(() => {
+    checkWebPSupport().then((supported) => {
+      console.log('📱 設備信息:')
+      console.log(`  User Agent: ${navigator.userAgent}`)
+      console.log(`  🎨 WebP 編碼支持: ${supported ? '是 ✅' : '否 ❌ (將使用 JPEG fallback)'}`)
+      console.log(`  螢幕尺寸: ${window.innerWidth}x${window.innerHeight}`)
+      console.log(
+        `  設備類型: ${window.innerWidth < 768 ? '手機/平板' : '桌面'}`
+      )
+    })
+  }, [])
 
   if (auth.status === 'loading') {
     return (

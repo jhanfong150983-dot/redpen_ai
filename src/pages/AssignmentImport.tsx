@@ -17,6 +17,7 @@ import {
   getFileType
 } from '@/lib/pdfToImage'
 import { validateBlobSize } from '@/lib/imageCompression'
+import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
 
 interface AssignmentImportProps {
   assignmentId: string
@@ -61,15 +62,10 @@ async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
     bmp.close()
   })
 
-  const merged = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) resolve(blob)
-        else reject(new Error('無法產生合併影像'))
-      },
-      'image/webp',
-      0.85
-    )
+  // 使用安全的 toBlob 包裝器（帶自動 fallback 和 timeout 保護）
+  const merged = await safeToBlobWithFallback(canvas, {
+    format: 'image/webp', // 平板不支持時會自動 fallback 到 JPEG
+    quality: 0.85
   })
 
   return merged

@@ -7,6 +7,7 @@ import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { compressImage, blobToBase64, validateBlobSize } from '@/lib/imageCompression'
 import { convertPdfToImage, getFileType } from '@/lib/pdfToImage'
+import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
 import type { Student, Submission } from '@/lib/db'
 
 interface ScannerPageProps {
@@ -50,21 +51,13 @@ async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
       bmp.close()
     })
 
-    const merged = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (blob) => {
-          if (blob && blob.size > 0) {
-            console.log(`✅ 合併完成: ${(blob.size / 1024).toFixed(2)} KB, type: ${blob.type}`)
-            resolve(blob)
-          } else {
-            reject(new Error('無法產生合併影像或影像為空'))
-          }
-        },
-        'image/webp',
-        0.85
-      )
+    // 使用安全的 toBlob 包裝器（帶自動 fallback 和 timeout 保護）
+    const merged = await safeToBlobWithFallback(canvas, {
+      format: 'image/webp', // 平板不支持時會自動 fallback 到 JPEG
+      quality: 0.85
     })
 
+    console.log(`✅ 合併完成: ${(merged.size / 1024).toFixed(2)} KB, type: ${merged.type}`)
     return merged
   } catch (error) {
     console.error('❌ 合併圖片失敗:', error)

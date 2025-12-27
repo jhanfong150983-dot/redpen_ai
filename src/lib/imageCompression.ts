@@ -2,19 +2,13 @@
  * 图片压缩工具
  */
 
+import { getWebPSupportSync } from './webpSupport'
+import { safeToBlobWithFallback } from './canvasToBlob'
+
 interface CompressImageOptions {
   maxWidth?: number
   quality?: number
   format?: 'image/jpeg' | 'image/png' | 'image/webp'
-}
-
-/**
- * 檢測是否為 Safari 瀏覽器
- */
-function isSafari(): boolean {
-  if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent.toLowerCase()
-  return ua.includes('safari') && !ua.includes('chrome') && !ua.includes('android')
 }
 
 /**
@@ -27,8 +21,9 @@ export async function compressImage(
   dataUrl: string,
   options: CompressImageOptions = {}
 ): Promise<Blob> {
-  // Safari 對 WebP 支援不佳，改用 JPEG
-  const defaultFormat = isSafari() ? 'image/jpeg' : 'image/webp'
+  // 使用運行時檢測替代 User Agent 檢測（更準確）
+  const supportsWebP = getWebPSupportSync()
+  const defaultFormat = supportsWebP ? 'image/webp' : 'image/jpeg'
 
   const {
     maxWidth = 1024,
@@ -36,64 +31,60 @@ export async function compressImage(
     format = defaultFormat
   } = options
 
-  console.log(`🔧 壓縮設定: format=${format}, isSafari=${isSafari()}`)
+  console.log(`🔧 壓縮設定: format=${format}, WebP支持=${supportsWebP}`)
 
   return new Promise((resolve, reject) => {
     const img = new Image()
+    let timeoutId: number | null = null
 
-    img.onload = () => {
-      // 创建 Canvas
-      const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')
+    img.onload = async () => {
+      if (timeoutId) clearTimeout(timeoutId)
 
-      if (!ctx) {
-        reject(new Error('无法创建 Canvas context'))
-        return
+      try {
+        // 创建 Canvas
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+
+        if (!ctx) {
+          reject(new Error('无法创建 Canvas context'))
+          return
+        }
+
+        // 计算缩放比例
+        let width = img.width
+        let height = img.height
+
+        if (width > maxWidth) {
+          const ratio = maxWidth / width
+          width = maxWidth
+          height = height * ratio
+        }
+
+        // 設定 Canvas 尺寸
+        canvas.width = width
+        canvas.height = height
+
+        // 绘制图片
+        ctx.drawImage(img, 0, 0, width, height)
+
+        // 使用安全的 toBlob 包裝器（帶 fallback 和 timeout）
+        const blob = await safeToBlobWithFallback(canvas, { format, quality })
+        console.log(`✅ 图片压缩完成: ${(blob.size / 1024).toFixed(2)} KB, 類型: ${blob.type}`)
+        resolve(blob)
+      } catch (error) {
+        reject(error)
       }
-
-      // 计算缩放比例
-      let width = img.width
-      let height = img.height
-
-      if (width > maxWidth) {
-        const ratio = maxWidth / width
-        width = maxWidth
-        height = height * ratio
-      }
-
-      // 設定 Canvas 尺寸
-      canvas.width = width
-      canvas.height = height
-
-      // 绘制图片
-      ctx.drawImage(img, 0, 0, width, height)
-
-      // 转换为 Blob
-      canvas.toBlob(
-        (blob) => {
-          if (blob) {
-            console.log(`✅ 图片压缩完成: ${(blob.size / 1024).toFixed(2)} KB, 類型: ${blob.type}`)
-
-            // 確保 Blob 有正確的 type 屬性
-            if (!blob.type || blob.type === '') {
-              console.warn('⚠️ Blob 類型為空，手動設定為', format)
-              const fixedBlob = new Blob([blob], { type: format })
-              resolve(fixedBlob)
-            } else {
-              resolve(blob)
-            }
-          } else {
-            reject(new Error('图片压缩失败'))
-          }
-        },
-        format,
-        quality
-      )
     }
 
     img.onerror = () => {
+      if (timeoutId) clearTimeout(timeoutId)
       reject(new Error('图片加载失败'))
     }
+
+    // 添加圖片載入 timeout（30秒）
+    timeoutId = window.setTimeout(() => {
+      reject(new Error('圖片載入超時'))
+    }, 30000)
 
     img.src = dataUrl
   })

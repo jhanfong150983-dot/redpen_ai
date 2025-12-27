@@ -63,11 +63,11 @@ export default function CameraCapturePage({
         throw new Error('無法擷取影像')
       }
 
-      // 壓縮圖片
+      // 壓縮圖片（格式自動檢測：桌面用WebP，平板用JPEG）
       const compressed = await compressImage(imageSrc, {
         maxWidth: 1024,
-        quality: 0.8,
-        format: 'image/webp'
+        quality: 0.8
+        // format 參數移除，使用 compressImage 內部的自動檢測
       })
 
       // 成功動畫
@@ -92,19 +92,33 @@ export default function CameraCapturePage({
       setIsProcessing(true)
       setError(null)
       try {
-        // 讀取檔案為 base64
+        // 讀取檔案為 base64（添加 timeout 保護）
         const reader = new FileReader()
         const base64 = await new Promise<string>((resolve, reject) => {
-          reader.onload = () => resolve(reader.result as string)
-          reader.onerror = reject
+          let timeoutId: number | null = null
+
+          reader.onload = () => {
+            if (timeoutId) clearTimeout(timeoutId)
+            resolve(reader.result as string)
+          }
+          reader.onerror = () => {
+            if (timeoutId) clearTimeout(timeoutId)
+            reject(new Error('檔案讀取失敗'))
+          }
+
+          // 添加 timeout（10秒）
+          timeoutId = window.setTimeout(() => {
+            reject(new Error('檔案讀取超時 - 檔案可能過大'))
+          }, 10000)
+
           reader.readAsDataURL(file)
         })
 
-        // 壓縮圖片
+        // 壓縮圖片（格式自動檢測：桌面用WebP，平板用JPEG）
         const compressed = await compressImage(base64, {
           maxWidth: 1024,
-          quality: 0.8,
-          format: 'image/webp'
+          quality: 0.8
+          // format 參數移除，使用 compressImage 內部的自動檢測
         })
 
         // 成功動畫
