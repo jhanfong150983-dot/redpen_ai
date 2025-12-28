@@ -222,7 +222,7 @@ export function useSync(options: UseSyncOptions = {}) {
       .map((c) => ({
         id: c.id,
         name: c.name,
-        folder: c.folder,
+        folder: c.folder === undefined ? null : c.folder,
         updatedAt: c.updatedAt
       }))
 
@@ -246,7 +246,7 @@ export function useSync(options: UseSyncOptions = {}) {
         title: a.title,
         totalPages: a.totalPages,
         domain: a.domain,
-        folder: a.folder,
+        folder: a.folder === undefined ? null : a.folder,
         priorWeightTypes: a.priorWeightTypes,
         answerKey: a.answerKey,
         updatedAt: a.updatedAt

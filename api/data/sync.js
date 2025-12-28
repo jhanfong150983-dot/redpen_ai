@@ -339,7 +339,7 @@ export default async function handler(req, res) {
         compactObject({
           id: c.id,
           name: c.name,
-          folder: c.folder ?? undefined,
+          folder: c.folder,
           owner_id: user.id,
           updated_at: nowIso
         })
@@ -383,7 +383,7 @@ export default async function handler(req, res) {
             title: a.title,
             total_pages: a.totalPages,
             domain: a.domain ?? undefined,
-            folder: a.folder ?? undefined,
+            folder: a.folder,
             prior_weight_types: a.priorWeightTypes ?? undefined,
             answer_key: a.answerKey ?? undefined,
             owner_id: user.id,
