@@ -112,12 +112,14 @@ export default async function handler(req, res) {
         studentsResult,
         assignmentsResult,
         submissionsResult,
+        foldersResult,
         deletedResult
       ] = await Promise.all([
         supabaseAdmin.from('classrooms').select('*').eq('owner_id', user.id),
         supabaseAdmin.from('students').select('*').eq('owner_id', user.id),
         supabaseAdmin.from('assignments').select('*').eq('owner_id', user.id),
         supabaseAdmin.from('submissions').select('*').eq('owner_id', user.id),
+        supabaseAdmin.from('folders').select('*').eq('owner_id', user.id),
         supabaseAdmin
           .from('deleted_records')
           .select('table_name, record_id, deleted_at')
@@ -136,6 +138,9 @@ export default async function handler(req, res) {
       if (submissionsResult.error) {
         throw new Error(submissionsResult.error.message)
       }
+      if (foldersResult.error) {
+        throw new Error(foldersResult.error.message)
+      }
       if (deletedResult.error) {
         throw new Error(deletedResult.error.message)
       }
@@ -144,13 +149,15 @@ export default async function handler(req, res) {
         classrooms: [],
         students: [],
         assignments: [],
-        submissions: []
+        submissions: [],
+        folders: []
       }
       const deletedSets = {
         classrooms: new Set(),
         students: new Set(),
         assignments: new Set(),
-        submissions: new Set()
+        submissions: new Set(),
+        folders: new Set()
       }
 
       for (const row of deletedResult.data || []) {
@@ -166,11 +173,14 @@ export default async function handler(req, res) {
         deletedSets[tableName].add(recordId)
       }
 
-      const classrooms = (classroomsResult.data || []).map((row) => ({
-        id: row.id,
-        name: row.name,
-        updatedAt: toMillis(row.updated_at) ?? undefined
-      }))
+      const classrooms = (classroomsResult.data || []).map((row) =>
+        compactObject({
+          id: row.id,
+          name: row.name,
+          folder: row.folder ?? undefined,
+          updatedAt: toMillis(row.updated_at) ?? undefined
+        })
+      )
 
       const students = (studentsResult.data || []).map((row) => ({
         id: row.id,
@@ -180,15 +190,19 @@ export default async function handler(req, res) {
         updatedAt: toMillis(row.updated_at) ?? undefined
       }))
 
-      const assignments = (assignmentsResult.data || []).map((row) => ({
-        id: row.id,
-        classroomId: row.classroom_id,
-        title: row.title,
-        totalPages: row.total_pages,
-        domain: row.domain ?? undefined,
-        answerKey: row.answer_key ?? undefined,
-        updatedAt: toMillis(row.updated_at) ?? undefined
-      }))
+      const assignments = (assignmentsResult.data || []).map((row) =>
+        compactObject({
+          id: row.id,
+          classroomId: row.classroom_id,
+          title: row.title,
+          totalPages: row.total_pages,
+          domain: row.domain ?? undefined,
+          folder: row.folder ?? undefined,
+          priorWeightTypes: row.prior_weight_types ?? undefined,
+          answerKey: row.answer_key ?? undefined,
+          updatedAt: toMillis(row.updated_at) ?? undefined
+        })
+      )
 
       const submissions = (submissionsResult.data || []).map((row) => {
         const createdAt = row.created_at ? Date.parse(row.created_at) : null
@@ -211,11 +225,21 @@ export default async function handler(req, res) {
         })
       })
 
+      const folders = (foldersResult.data || []).map((row) =>
+        compactObject({
+          id: row.id,
+          name: row.name,
+          type: row.type,
+          updatedAt: toMillis(row.updated_at) ?? undefined
+        })
+      )
+
       res.status(200).json({
         classrooms: classrooms.filter((row) => !deletedSets.classrooms.has(row.id)),
         students: students.filter((row) => !deletedSets.students.has(row.id)),
         assignments: assignments.filter((row) => !deletedSets.assignments.has(row.id)),
         submissions: submissions.filter((row) => !deletedSets.submissions.has(row.id)),
+        folders: folders.filter((row) => !deletedSets.folders.has(row.id)),
         deleted
       })
     } catch (err) {
@@ -237,6 +261,7 @@ export default async function handler(req, res) {
     const students = Array.isArray(body.students) ? body.students : []
     const assignments = Array.isArray(body.assignments) ? body.assignments : []
     const submissions = Array.isArray(body.submissions) ? body.submissions : []
+    const folders = Array.isArray(body.folders) ? body.folders : []
     const deletedPayload =
       body.deleted && typeof body.deleted === 'object' ? body.deleted : {}
 
@@ -280,6 +305,7 @@ export default async function handler(req, res) {
       await applyDeletes('students', deletedPayload.students)
       await applyDeletes('assignments', deletedPayload.assignments)
       await applyDeletes('submissions', deletedPayload.submissions)
+      await applyDeletes('folders', deletedPayload.folders)
 
       const buildUpsertRows = async (tableName, items, mapper) => {
         const filtered = items.filter((item) => item?.id)
@@ -313,6 +339,7 @@ export default async function handler(req, res) {
         compactObject({
           id: c.id,
           name: c.name,
+          folder: c.folder ?? undefined,
           owner_id: user.id,
           updated_at: nowIso
         })
@@ -356,6 +383,8 @@ export default async function handler(req, res) {
             title: a.title,
             total_pages: a.totalPages,
             domain: a.domain ?? undefined,
+            folder: a.folder ?? undefined,
+            prior_weight_types: a.priorWeightTypes ?? undefined,
             answer_key: a.answerKey ?? undefined,
             owner_id: user.id,
             updated_at: nowIso
@@ -400,6 +429,26 @@ export default async function handler(req, res) {
         const result = await supabaseAdmin
           .from('submissions')
           .upsert(submissionRows, { onConflict: 'id' })
+        if (result.error) throw new Error(result.error.message)
+      }
+
+      const folderRows = await buildUpsertRows(
+        'folders',
+        folders.filter((f) => f?.id),
+        (f) =>
+          compactObject({
+            id: f.id,
+            name: f.name,
+            type: f.type,
+            owner_id: user.id,
+            updated_at: nowIso
+          })
+      )
+
+      if (folderRows.length > 0) {
+        const result = await supabaseAdmin
+          .from('folders')
+          .upsert(folderRows, { onConflict: 'id' })
         if (result.error) throw new Error(result.error.message)
       }
 
