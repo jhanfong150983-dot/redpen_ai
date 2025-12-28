@@ -863,6 +863,69 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     }
   }
 
+  const handleDeleteFolder = async (folderName: string) => {
+    if (isSubmitting) return
+
+    const count = assignments.filter((a) => a.folder === folderName).length
+    const message = count > 0
+      ? `資料夾「${folderName}」內有 ${count} 個作業，刪除後這些作業會變成「未分類」。確定要刪除此資料夾嗎？`
+      : `確定要刪除資料夾「${folderName}」嗎？`
+
+    const ok = window.confirm(message)
+    if (!ok) return
+
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      // 1. 將該資料夾下所有作業的 folder 欄位設為 undefined
+      const assignmentsInFolder = assignments
+        .filter((a) => a.folder === folderName)
+        .map((a) => a.id)
+
+      for (const assignmentId of assignmentsInFolder) {
+        await db.assignments.update(assignmentId, { folder: undefined })
+      }
+
+      // 2. 從 folders 表刪除此資料夾
+      const folderToDelete = await db.folders
+        .filter((f) => f.type === 'assignment' && f.name === folderName)
+        .first()
+
+      if (folderToDelete) {
+        await db.folders.delete(folderToDelete.id)
+      }
+
+      // 3. 觸發同步
+      requestSync()
+
+      // 4. 重新載入資料
+      if (selectedClassroomId) {
+        const [data, folders] = await Promise.all([
+          db.assignments
+            .where('classroomId')
+            .equals(selectedClassroomId)
+            .toArray(),
+          db.folders.toArray()
+        ])
+        setAssignments(data)
+
+        const emptyAssignmentFolders = folders
+          .filter(f => f.type === 'assignment')
+          .map(f => f.name)
+        setEmptyFolders(emptyAssignmentFolders)
+      }
+
+      // 5. 切換到「未分類」
+      setSelectedFolder('__uncategorized__')
+    } catch (error) {
+      console.error('刪除資料夾失敗:', error)
+      setError(error instanceof Error ? error.message : '刪除資料夾失敗')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   // 複製作業處理函數
   const handleCopyAssignment = async () => {
     if (!sourceAssignment || !targetClassroomId) {
@@ -1569,14 +1632,12 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 {usedFolders.map((folder) => {
                   const count = assignments.filter((a) => a.folder === folder).length
                   return (
-                    <button
+                    <div
                       key={folder}
-                      type="button"
-                      onClick={() => setSelectedFolder(folder)}
                       onDragOver={(e) => handleDragOver(e, folder)}
                       onDragLeave={handleDragLeave}
                       onDrop={(e) => handleDrop(e, folder)}
-                      className={`w-full px-4 py-3 rounded-xl text-left transition-all ${
+                      className={`w-full px-4 py-3 rounded-xl transition-all ${
                         selectedFolder === folder
                           ? 'bg-blue-100 border-2 border-blue-500 text-blue-900'
                           : dropTargetFolder === folder
@@ -1584,11 +1645,29 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                             : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium truncate">{folder}</span>
-                        <span className="text-sm font-semibold ml-2">{count}</span>
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFolder(folder)}
+                          className="flex-1 text-left flex items-center justify-between min-w-0"
+                        >
+                          <span className="font-medium truncate">{folder}</span>
+                          <span className="text-sm font-semibold ml-2">{count}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDeleteFolder(folder)
+                          }}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors flex-shrink-0"
+                          title="刪除資料夾"
+                          disabled={isSubmitting}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                    </button>
+                    </div>
                   )
                 })}
 

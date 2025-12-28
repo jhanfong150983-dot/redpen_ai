@@ -329,6 +329,55 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
     }
   }
 
+  const handleDeleteFolder = async (folderName: string) => {
+    if (isSaving) return
+
+    const count = items.filter((item) => item.classroom.folder === folderName).length
+    const message = count > 0
+      ? `資料夾「${folderName}」內有 ${count} 個班級，刪除後這些班級會變成「未分類」。確定要刪除此資料夾嗎？`
+      : `確定要刪除資料夾「${folderName}」嗎？`
+
+    const ok = window.confirm(message)
+    if (!ok) return
+
+    setIsSaving(true)
+    setError(null)
+
+    try {
+      // 1. 將該資料夾下所有班級的 folder 欄位設為 undefined
+      const classroomsInFolder = items
+        .filter((item) => item.classroom.folder === folderName)
+        .map((item) => item.classroom.id)
+
+      for (const classroomId of classroomsInFolder) {
+        await db.classrooms.update(classroomId, { folder: undefined })
+      }
+
+      // 2. 從 folders 表刪除此資料夾
+      const folderToDelete = await db.folders
+        .filter((f) => f.type === 'classroom' && f.name === folderName)
+        .first()
+
+      if (folderToDelete) {
+        await db.folders.delete(folderToDelete.id)
+      }
+
+      // 3. 觸發同步
+      requestSync()
+
+      // 4. 重新載入資料
+      await loadData()
+
+      // 5. 切換到「未分類」
+      setSelectedFolder('__uncategorized__')
+    } catch (error) {
+      console.error('刪除資料夾失敗:', error)
+      setError(error instanceof Error ? error.message : '刪除資料夾失敗')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   const handleDeleteClassroom = async (target: ClassroomWithStats) => {
     if (isSaving) return
 
@@ -744,14 +793,12 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
               {usedFolders.map((folder) => {
                 const count = items.filter((item) => item.classroom.folder === folder).length
                 return (
-                  <button
+                  <div
                     key={folder}
-                    type="button"
-                    onClick={() => setSelectedFolder(folder)}
                     onDragOver={(e) => handleDragOver(e, folder)}
                     onDragLeave={handleDragLeave}
                     onDrop={(e) => handleDrop(e, folder)}
-                    className={`w-full px-4 py-3 rounded-xl text-left transition-all ${
+                    className={`w-full px-4 py-3 rounded-xl transition-all ${
                       selectedFolder === folder
                         ? 'bg-blue-100 border-2 border-blue-500 text-blue-900'
                         : dropTargetFolder === folder
@@ -759,11 +806,29 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                           : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium truncate">{folder}</span>
-                      <span className="text-sm font-semibold ml-2">{count}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFolder(folder)}
+                        className="flex-1 text-left flex items-center justify-between min-w-0"
+                      >
+                        <span className="font-medium truncate">{folder}</span>
+                        <span className="text-sm font-semibold ml-2">{count}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeleteFolder(folder)
+                        }}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors flex-shrink-0"
+                        title="刪除資料夾"
+                        disabled={isSaving}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
-                  </button>
+                  </div>
                 )
               })}
 
