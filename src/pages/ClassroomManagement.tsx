@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Users,
   Plus,
@@ -6,12 +6,15 @@ import {
   Trash2,
   ArrowLeft,
   Layers,
-  Loader
+  Loader,
+  Folder,
+  X
 } from 'lucide-react'
 import { NumericInput } from '@/components/NumericInput'
 import { db, generateId } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
+import { checkFolderNameUnique } from '@/lib/utils'
 import type { Classroom, Student } from '@/lib/db'
 
 interface ClassroomManagementProps {
@@ -36,6 +39,13 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // 資料夾篩選
+  const [selectedFolder, setSelectedFolder] = useState<string>('__uncategorized__')
+
+  // 拖放功能
+  const [draggedClassroomId, setDraggedClassroomId] = useState<string | null>(null)
+  const [dropTargetFolder, setDropTargetFolder] = useState<string | null>(null)
+
   // 新增班級（透過懸浮視窗）
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -55,14 +65,24 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
   const [studentRows, setStudentRows] = useState<StudentRow[]>([])
   const [isStudentSaving, setIsStudentSaving] = useState(false)
 
+  // 新建資料夾
+  const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [newFolderError, setNewFolderError] = useState('')
+
+  // 儲存已建立但尚未使用的空資料夾（從資料庫載入）
+  const [emptyFolders, setEmptyFolders] = useState<string[]>([])
+
   const loadData = useCallback(async () => {
+    console.log('🔄 loadData 被呼叫')
     setIsLoading(true)
     setError(null)
     try {
-      const [classrooms, students, assignments] = await Promise.all([
+      const [classrooms, students, assignments, folders] = await Promise.all([
         db.classrooms.toArray(),
         db.students.toArray(),
-        db.assignments.toArray()
+        db.assignments.toArray(),
+        db.folders.toArray()
       ])
 
       const list: ClassroomWithStats[] = classrooms.map((c) => {
@@ -72,6 +92,19 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
         ).length
         return { classroom: c, studentCount, assignmentCount }
       })
+
+      // 載入空資料夾（classroom 類型）
+      console.log('📦 資料庫中所有 folders:', folders)
+      const emptyClassroomFolders = folders
+        .filter(f => f.type === 'classroom')
+        .map(f => f.name)
+      console.log('📁 載入班級空資料夾:', emptyClassroomFolders)
+
+      // 再次驗證資料庫
+      const allFoldersInDb = await db.folders.toArray()
+      console.log('🔍 驗證：資料庫中實際的 folders:', allFoldersInDb)
+
+      setEmptyFolders(emptyClassroomFolders)
 
       setItems(list)
     } catch (e) {
@@ -85,6 +118,24 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
   useEffect(() => {
     void loadData()
   }, [loadData])
+
+  // 計算已使用的資料夾列表（包含空資料夾）
+  const usedFolders = useMemo(() => {
+    const folders = items
+      .map((item) => item.classroom.folder)
+      .filter((f): f is string => !!f && !!f.trim())
+    const allFolders = [...new Set([...folders, ...emptyFolders])]
+    return allFolders.sort()
+  }, [items, emptyFolders])
+
+  // 篩選邏輯
+  const filteredItems = useMemo(() => {
+    if (!selectedFolder) return items
+    return items.filter((item) =>
+      item.classroom.folder === selectedFolder ||
+      (!item.classroom.folder && selectedFolder === '__uncategorized__')
+    )
+  }, [items, selectedFolder])
 
   // 解析匯入的學生名單（座號 + 姓名）
   const parseImportedStudents = (text: string): Array<{ seatNumber: number; name: string }> => {
@@ -148,7 +199,8 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
     try {
       const classroom: Classroom = {
         id: generateId(),
-        name: trimmedName
+        name: trimmedName,
+        folder: undefined  // 新班級預設為未分類
       }
       await db.classrooms.add(classroom)
 
@@ -216,11 +268,64 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       requestSync()
     } catch (e) {
       console.error(e)
-      setError(e instanceof Error ? e.message : '更新班級名稱失敗')
+      setError(e instanceof Error ? e.message : '更新班級失敗')
     } finally {
       setIsSaving(false)
       setEditingId(null)
       setEditingName('')
+    }
+  }
+
+  // 拖放處理函數
+  const handleDragStart = (classroomId: string) => {
+    setDraggedClassroomId(classroomId)
+  }
+
+  const handleDragEnd = () => {
+    setDraggedClassroomId(null)
+    setDropTargetFolder(null)
+  }
+
+  const handleDragOver = (e: React.DragEvent, targetFolder: string) => {
+    e.preventDefault() // 允許 drop
+    setDropTargetFolder(targetFolder)
+  }
+
+  const handleDragLeave = () => {
+    setDropTargetFolder(null)
+  }
+
+  const handleDrop = async (e: React.DragEvent, targetFolder: string) => {
+    e.preventDefault()
+
+    if (!draggedClassroomId) return
+
+    const classroom = items.find(item => item.classroom.id === draggedClassroomId)?.classroom
+    if (!classroom) return
+
+    // 更新資料夾
+    const newFolder = targetFolder === '__uncategorized__' ? undefined : targetFolder
+
+    try {
+      // 更新班級的資料夾欄位
+      await db.classrooms.update(draggedClassroomId, { folder: newFolder })
+
+      // 更新本地狀態
+      setItems((prev) =>
+        prev.map((item) =>
+          item.classroom.id === draggedClassroomId
+            ? { ...item, classroom: { ...item.classroom, folder: newFolder } }
+            : item
+        )
+      )
+
+      requestSync()
+    } catch (error) {
+      console.error('更新資料夾失敗:', error)
+      setError('更新資料夾失敗')
+    } finally {
+      setDraggedClassroomId(null)
+      setDropTargetFolder(null)
     }
   }
 
@@ -390,6 +495,62 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
     }
   }
 
+  const handleCreateFolder = async () => {
+    const trimmedName = newFolderName.trim()
+    if (!trimmedName) {
+      setNewFolderError('請輸入資料夾名稱')
+      return
+    }
+
+    // 驗證資料夾名稱唯一性
+    const folderCheck = await checkFolderNameUnique(trimmedName, 'classroom')
+    if (!folderCheck.isUnique) {
+      setNewFolderError(`此資料夾名稱已被${folderCheck.usedBy}使用`)
+      return
+    }
+
+    try {
+      const newFolder = {
+        id: generateId(),
+        name: trimmedName,
+        type: 'classroom' as const
+      }
+
+      // 寫入資料庫
+      console.log('📁 建立新資料夾:', newFolder)
+      await db.folders.add(newFolder)
+
+      // 驗證是否成功寫入
+      const saved = await db.folders.get(newFolder.id)
+      console.log('✅ 資料夾已儲存到資料庫:', saved)
+
+      // 更新本地狀態
+      setEmptyFolders(prev => [...prev, trimmedName])
+
+      // 在觸發同步前再次檢查
+      const beforeSync = await db.folders.toArray()
+      console.log('🔵 觸發同步前的 folders:', beforeSync)
+
+      // 觸發同步
+      requestSync()
+
+      // 觸發同步後立即檢查
+      setTimeout(async () => {
+        const afterSync = await db.folders.toArray()
+        console.log('🔵 觸發同步後的 folders:', afterSync)
+      }, 100)
+
+      // 關閉對話框並切換到新資料夾
+      setIsCreateFolderModalOpen(false)
+      setSelectedFolder(trimmedName)
+      setNewFolderName('')
+      setNewFolderError('')
+    } catch (error) {
+      console.error('❌ 建立資料夾失敗:', error)
+      setNewFolderError('建立資料夾失敗')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-5xl mx-auto pt-8">
@@ -455,17 +616,22 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
               )}
             </div>
 
-            {items.length === 0 && !isLoading && (
+            {filteredItems.length === 0 && !isLoading && (
               <p className="text-sm text-gray-500">
-                目前尚未建立任何班級，請點右上角的「＋」新增班級。
+                {selectedFolder ? '此資料夾中沒有班級。' : '目前尚未建立任何班級，請點右上角的「＋」新增班級。'}
               </p>
             )}
 
             <div className="space-y-2">
-              {items.map((item) => (
+              {filteredItems.map((item) => (
                 <div
                   key={item.classroom.id}
-                  className="w-full px-3 py-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-between gap-3"
+                  draggable={editingId !== item.classroom.id}
+                  onDragStart={() => handleDragStart(item.classroom.id)}
+                  onDragEnd={handleDragEnd}
+                  className={`w-full px-3 py-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-between gap-3 transition-opacity ${
+                    draggedClassroomId === item.classroom.id ? 'opacity-50 cursor-grabbing' : 'cursor-grab'
+                  }`}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1">
@@ -475,9 +641,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                           type="text"
                           value={editingName}
                           onChange={(e) => setEditingName(e.target.value)}
-                          onBlur={() => {
-                            void handleCommitEdit()
-                          }}
+                          onBlur={() => void handleCommitEdit()}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               void handleCommitEdit()
@@ -486,6 +650,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                               setEditingName('')
                             }
                           }}
+                          placeholder="班級名稱"
                           className="px-2 py-1 border border-blue-300 rounded text-sm w-full max-w-[180px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           disabled={isSaving}
                         />
@@ -543,35 +708,79 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
             </div>
           </div>
 
-          {/* 右側：提示文字（主要新增在懸浮視窗中處理） */}
-          <div className="md:w-1/2 p-6 flex items-center justify-center">
-            <div className="text-sm text-gray-500 space-y-2">
-              <p className="font-semibold text-gray-700">操作說明：</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>左側顯示所有已建立的班級。</li>
-                <li>
-                  點班級名稱旁的
-                  <span className="inline-flex items-center px-1">
-                    <Edit2 className="w-3 h-3" />
-                  </span>
-                  可直接在卡片上更改名稱。
-                </li>
-                <li>
-                  點卡片右側的
-                  <span className="inline-flex items-center px-1">
-                    <Users className="w-3 h-3" />
-                  </span>
-                  可編輯學生名單。
-                </li>
-                <li>
-                  點卡片右側的
-                  <span className="inline-flex items-center px-1">
-                    <Trash2 className="w-3 h-3" />
-                  </span>
-                  可刪除班級（包含學生與作業）。
-                </li>
-                <li>若要新增班級，請點右上角的「＋」開啟新增視窗。</li>
-              </ul>
+          {/* 右側：資料夾列表 */}
+          <div className="md:w-1/2 p-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <Folder className="w-4 h-4" />
+              資料夾
+            </h3>
+            <div className="space-y-2">
+              {/* 未分類 */}
+              {items.some((item) => !item.classroom.folder) && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedFolder('__uncategorized__')}
+                  onDragOver={(e) => handleDragOver(e, '__uncategorized__')}
+                  onDragLeave={handleDragLeave}
+                  onDrop={(e) => handleDrop(e, '__uncategorized__')}
+                  className={`w-full px-4 py-3 rounded-xl text-left transition-all ${
+                    selectedFolder === '__uncategorized__'
+                      ? 'bg-blue-100 border-2 border-blue-500 text-blue-900'
+                      : dropTargetFolder === '__uncategorized__'
+                        ? 'bg-green-100 border-2 border-green-500 text-green-900'
+                        : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">未分類</span>
+                    <span className="text-sm font-semibold">
+                      {items.filter((item) => !item.classroom.folder).length}
+                    </span>
+                  </div>
+                </button>
+              )}
+
+              {/* 各資料夾 */}
+              {usedFolders.map((folder) => {
+                const count = items.filter((item) => item.classroom.folder === folder).length
+                return (
+                  <button
+                    key={folder}
+                    type="button"
+                    onClick={() => setSelectedFolder(folder)}
+                    onDragOver={(e) => handleDragOver(e, folder)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, folder)}
+                    className={`w-full px-4 py-3 rounded-xl text-left transition-all ${
+                      selectedFolder === folder
+                        ? 'bg-blue-100 border-2 border-blue-500 text-blue-900'
+                        : dropTargetFolder === folder
+                          ? 'bg-green-100 border-2 border-green-500 text-green-900'
+                          : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium truncate">{folder}</span>
+                      <span className="text-sm font-semibold ml-2">{count}</span>
+                    </div>
+                  </button>
+                )
+              })}
+
+              {/* 新建資料夾按鈕 */}
+              <button
+                type="button"
+                onClick={() => setIsCreateFolderModalOpen(true)}
+                className="w-full px-4 py-3 rounded-xl text-left border-2 border-dashed border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="font-medium">新建資料夾</span>
+              </button>
+            </div>
+
+            <div className="mt-6 p-3 bg-gray-50 rounded-lg text-xs text-gray-600">
+              <p className="font-semibold mb-1">小提示：</p>
+              <p>點擊資料夾可篩選班級，拖曳班級卡片到資料夾中分類。</p>
             </div>
           </div>
         </div>
@@ -810,6 +1019,111 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 新建資料夾對話框 */}
+      {isCreateFolderModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+          onClick={() => {
+            setIsCreateFolderModalOpen(false)
+            setNewFolderName('')
+            setNewFolderError('')
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h2 className="text-base font-semibold text-gray-900">
+                新建資料夾
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreateFolderModalOpen(false)
+                  setNewFolderName('')
+                  setNewFolderError('')
+                }}
+                className="p-1 rounded-full hover:bg-gray-100 text-gray-500"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  資料夾名稱 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={newFolderName}
+                  onChange={async (e) => {
+                    const value = e.target.value
+                    setNewFolderName(value)
+                    setNewFolderError('')
+
+                    // 即時驗證
+                    if (value.trim()) {
+                      const result = await checkFolderNameUnique(value.trim(), 'classroom')
+                      if (!result.isUnique) {
+                        setNewFolderError(`此資料夾名稱已被${result.usedBy}使用`)
+                      }
+                    }
+                  }}
+                  placeholder="例如：112學年度、七年級"
+                  className={`w-full px-3 py-2 border ${
+                    newFolderError ? 'border-red-300' : 'border-gray-300'
+                  } rounded-lg text-sm focus:outline-none focus:ring-2 ${
+                    newFolderError ? 'focus:ring-red-500' : 'focus:ring-blue-500'
+                  } focus:border-transparent`}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newFolderName.trim() && !newFolderError) {
+                      handleCreateFolder()
+                    }
+                  }}
+                />
+                {newFolderError && (
+                  <p className="mt-1 text-xs text-red-600">
+                    {newFolderError}
+                  </p>
+                )}
+              </div>
+
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-xs text-gray-700">
+                  建立資料夾後，可將班級卡片拖曳到資料夾中進行分類。
+                </p>
+              </div>
+            </div>
+
+            <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreateFolderModalOpen(false)
+                  setNewFolderName('')
+                  setNewFolderError('')
+                }}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateFolder}
+                disabled={!newFolderName.trim() || !!newFolderError}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              >
+                <Plus className="w-4 h-4" />
+                建立資料夾
+              </button>
             </div>
           </div>
         </div>

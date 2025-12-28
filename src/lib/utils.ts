@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { db } from './db'
 
 /**
  * 合併 Tailwind CSS class names
@@ -127,4 +128,50 @@ export function getSubmissionImageUrl(submission?: {
     hasImageUrl: !!submission.imageUrl
   })
   return null
+}
+
+/**
+ * 檢查資料夾名稱是否已被使用（跨類型唯一性）
+ * 規則：
+ * - 同類型（班級 vs 班級，或作業 vs 作業）可以共用資料夾名稱
+ * - 跨類型（班級 vs 作業）不能使用相同的資料夾名稱
+ * @param folderName - 要檢查的資料夾名稱
+ * @param type - 'classroom' 或 'assignment'
+ * @returns Promise<{ isUnique: boolean; usedBy?: string }>
+ */
+export async function checkFolderNameUnique(
+  folderName: string,
+  type?: 'classroom' | 'assignment'
+): Promise<{ isUnique: boolean; usedBy?: string }> {
+  const trimmedName = folderName.trim()
+  if (!trimmedName) {
+    return { isUnique: true } // 空資料夾名稱不檢查
+  }
+
+  // 如果是班級，檢查作業資料夾是否使用了相同名稱
+  if (type === 'classroom') {
+    const assignments = await db.assignments.toArray()
+    const conflictAssignment = assignments.find(a => a.folder === trimmedName)
+    if (conflictAssignment) {
+      const classroom = await db.classrooms.get(conflictAssignment.classroomId)
+      return {
+        isUnique: false,
+        usedBy: `作業「${conflictAssignment.title}」（${classroom?.name || '未知班級'}）`
+      }
+    }
+  }
+
+  // 如果是作業，檢查班級資料夾是否使用了相同名稱
+  if (type === 'assignment') {
+    const classrooms = await db.classrooms.toArray()
+    const conflictClassroom = classrooms.find(c => c.folder === trimmedName)
+    if (conflictClassroom) {
+      return {
+        isUnique: false,
+        usedBy: `班級「${conflictClassroom.name}」`
+      }
+    }
+  }
+
+  return { isUnique: true }
 }

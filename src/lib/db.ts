@@ -77,6 +77,7 @@ export interface AnswerKey {
 export interface Classroom {
   id: string
   name: string
+  folder?: string // 資料夾分類（例如：112學年度、七年級）
   updatedAt?: number
 }
 
@@ -100,6 +101,7 @@ export interface Assignment {
   title: string
   totalPages: number
   domain?: string // 國語、數學、社會、自然、英語、其他
+  folder?: string // 資料夾分類（例如：段考、小考、作業）
 
   // Prior Weight：整份作業大部分題目屬性
   // 陣列順序表示優先級（index 0 = 最高優先級）
@@ -210,6 +212,16 @@ export interface SyncQueue {
 }
 
 /**
+ * 資料夾（空資料夾管理）
+ */
+export interface Folder {
+  id: string
+  name: string
+  type: 'classroom' | 'assignment'
+  updatedAt?: number
+}
+
+/**
  * Dexie DB 定義
  */
 class RedPenDatabase extends Dexie {
@@ -219,9 +231,12 @@ class RedPenDatabase extends Dexie {
   submissions!: EntityTable<Submission, 'id'>
   syncQueue!: EntityTable<SyncQueue, 'id'>
   answerExtractionCorrections!: EntityTable<AnswerExtractionCorrection, 'id'>
+  folders!: EntityTable<Folder, 'id'>
 
   constructor() {
     super('RedPenDB')
+
+    console.log('🏗️ 初始化 RedPenDatabase')
 
     this.version(1).stores({
       classrooms: '&id, name',
@@ -241,6 +256,79 @@ class RedPenDatabase extends Dexie {
       syncQueue: '++id, tableName, recordId, createdAt',
       answerExtractionCorrections:
         '++id, assignmentId, studentId, submissionId, questionId, createdAt'
+    })
+
+    this.version(3).stores({
+      classrooms: '&id, name, folder', // 新增 folder 索引
+      students: '&id, classroomId, seatNumber, name',
+      assignments: '&id, classroomId, title, folder', // 新增 folder 索引
+      submissions:
+        '&id, assignmentId, studentId, status, createdAt, [assignmentId+studentId]',
+      syncQueue: '++id, tableName, recordId, createdAt',
+      answerExtractionCorrections:
+        '++id, assignmentId, studentId, submissionId, questionId, createdAt'
+    })
+
+    this.version(4).stores({
+      classrooms: '&id, name, folder',
+      students: '&id, classroomId, seatNumber, name',
+      assignments: '&id, classroomId, title, folder',
+      submissions:
+        '&id, assignmentId, studentId, status, createdAt, [assignmentId+studentId]',
+      syncQueue: '++id, tableName, recordId, createdAt',
+      answerExtractionCorrections:
+        '++id, assignmentId, studentId, submissionId, questionId, createdAt',
+      folders: '&id, name, type' // 新增 folders table
+    }).upgrade(async (trans) => {
+      console.log('🔧 執行資料庫 version 4 升級')
+      // 遷移 localStorage 中的空資料夾到資料庫
+      try {
+        const classroomFoldersStr = localStorage.getItem('classroom-empty-folders')
+        const assignmentFoldersStr = localStorage.getItem('assignment-empty-folders')
+
+        console.log('📦 準備遷移 localStorage folders:', {
+          classroom: classroomFoldersStr,
+          assignment: assignmentFoldersStr
+        })
+
+        if (classroomFoldersStr) {
+          const classroomFolders = JSON.parse(classroomFoldersStr) as string[]
+          for (const folderName of classroomFolders) {
+            if (folderName && folderName.trim()) {
+              await trans.table('folders').add({
+                id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                name: folderName.trim(),
+                type: 'classroom',
+                updatedAt: Date.now()
+              })
+            }
+          }
+          // 清除舊的 localStorage 資料
+          localStorage.removeItem('classroom-empty-folders')
+          console.log('✅ 已遷移班級資料夾:', classroomFolders.length)
+        }
+
+        if (assignmentFoldersStr) {
+          const assignmentFolders = JSON.parse(assignmentFoldersStr) as string[]
+          for (const folderName of assignmentFolders) {
+            if (folderName && folderName.trim()) {
+              await trans.table('folders').add({
+                id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                name: folderName.trim(),
+                type: 'assignment',
+                updatedAt: Date.now()
+              })
+            }
+          }
+          // 清除舊的 localStorage 資料
+          localStorage.removeItem('assignment-empty-folders')
+          console.log('✅ 已遷移作業資料夾:', assignmentFolders.length)
+        }
+
+        console.log('✅ 資料庫升級完成')
+      } catch (error) {
+        console.error('❌ 遷移 localStorage 資料夾失敗:', error)
+      }
     })
 
     const setUpdatedAt = (value: unknown) => {
@@ -290,10 +378,24 @@ class RedPenDatabase extends Dexie {
       }
       return applyUpdatedAtOnUpdate(mods)
     })
+
+    this.folders.hook('creating', (_, obj) => {
+      applyUpdatedAtOnCreate(obj)
+    })
+    this.folders.hook('updating', (mods) => applyUpdatedAtOnUpdate(mods))
   }
 }
 
 export const db = new RedPenDatabase()
+
+// 檢查資料庫初始化後的狀態
+db.open().then(async () => {
+  const folders = await db.folders.toArray()
+  console.log('🗄️ 資料庫開啟後的 folders:', folders)
+  console.log('📊 資料庫版本:', db.verno)
+}).catch(error => {
+  console.error('❌ 資料庫開啟失敗:', error)
+})
 
 // 工具
 export function generateId(): string {

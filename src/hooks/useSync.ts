@@ -167,14 +167,18 @@ export function useSync(options: UseSyncOptions = {}) {
    * 上傳本機資料到雲端
    */
   const pushMetadata = useCallback(async () => {
-    const [classrooms, students, assignments, submissions, deleteQueue] =
+    console.log('📤 pushMetadata 開始')
+    const [classrooms, students, assignments, submissions, folders, deleteQueue] =
       await Promise.all([
         db.classrooms.toArray(),
         db.students.toArray(),
         db.assignments.toArray(),
         db.submissions.toArray(),
+        db.folders.toArray(),
         readDeleteQueue()
       ])
+
+    console.log('📊 pushMetadata 讀取的 folders:', folders)
 
     const deleteQueueIds = deleteQueue
       .map((item) => item.id)
@@ -184,7 +188,8 @@ export function useSync(options: UseSyncOptions = {}) {
       classrooms: [],
       students: [],
       assignments: [],
-      submissions: []
+      submissions: [],
+      folders: []
     }
 
     const deleteMap = new Map<
@@ -217,8 +222,11 @@ export function useSync(options: UseSyncOptions = {}) {
       .map((c) => ({
         id: c.id,
         name: c.name,
+        folder: c.folder,
         updatedAt: c.updatedAt
       }))
+
+    console.log('📤 pushMetadata - 準備發送的 classrooms:', classroomPayload)
 
     const studentPayload = students
       .filter((s) => s?.id && s?.classroomId)
@@ -238,6 +246,8 @@ export function useSync(options: UseSyncOptions = {}) {
         title: a.title,
         totalPages: a.totalPages,
         domain: a.domain,
+        folder: a.folder,
+        priorWeightTypes: a.priorWeightTypes,
         answerKey: a.answerKey,
         updatedAt: a.updatedAt
       }))
@@ -259,6 +269,15 @@ export function useSync(options: UseSyncOptions = {}) {
         updatedAt: rest.updatedAt
       }))
 
+    const foldersPayload = folders
+      .filter((f) => f?.id && f?.name)
+      .map((f) => ({
+        id: f.id,
+        name: f.name,
+        type: f.type,
+        updatedAt: f.updatedAt
+      }))
+
     const response = await fetch('/api/data/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -268,6 +287,7 @@ export function useSync(options: UseSyncOptions = {}) {
         students: studentPayload,
         assignments: assignmentPayload,
         submissions: submissionPayload,
+        folders: foldersPayload,
         deleted: deletedPayload
       })
     })
@@ -276,6 +296,12 @@ export function useSync(options: UseSyncOptions = {}) {
     if (!response.ok) {
       throw new Error(data?.error || '同步失敗')
     }
+
+    console.log('✅ pushMetadata 完成')
+
+    // pushMetadata 後再檢查一次 folders
+    const afterPush = await db.folders.toArray()
+    console.log('📊 pushMetadata 後本地 folders:', afterPush)
 
     if (deleteQueueIds.length > 0) {
       await clearDeleteQueue(deleteQueueIds)
@@ -286,6 +312,7 @@ export function useSync(options: UseSyncOptions = {}) {
    * 從雲端拉回資料
    */
   const pullMetadata = useCallback(async () => {
+    console.log('📥 pullMetadata 開始')
     const response = await fetch('/api/data/sync', {
       method: 'GET',
       credentials: 'include'
@@ -300,6 +327,7 @@ export function useSync(options: UseSyncOptions = {}) {
     const students = Array.isArray(data.students) ? data.students : []
     const assignments = Array.isArray(data.assignments) ? data.assignments : []
     const submissions = Array.isArray(data.submissions) ? data.submissions : []
+    const folders = Array.isArray(data.folders) ? data.folders : []
     const deleted = data?.deleted && typeof data.deleted === 'object' ? data.deleted : {}
 
     const collectDeletedIds = (items: unknown) =>
@@ -319,11 +347,19 @@ export function useSync(options: UseSyncOptions = {}) {
     const deletedStudentIds = collectDeletedIds(deleted.students)
     const deletedAssignmentIds = collectDeletedIds(deleted.assignments)
     const deletedSubmissionIds = collectDeletedIds(deleted.submissions)
+    const deletedFolderIds = collectDeletedIds(deleted.folders)
+
+    console.log('🗑️ 要刪除的 folders:', deletedFolderIds)
+
+    // 在 bulkDelete 之前檢查 folders
+    const beforeDelete = await db.folders.toArray()
+    console.log('📊 bulkDelete 之前的 folders:', beforeDelete)
 
     const deletedClassroomSet = new Set(deletedClassroomIds)
     const deletedStudentSet = new Set(deletedStudentIds)
     const deletedAssignmentSet = new Set(deletedAssignmentIds)
     const deletedSubmissionSet = new Set(deletedSubmissionIds)
+    const deletedFolderSet = new Set(deletedFolderIds)
 
     const existingSubmissions = await db.submissions.toArray()
 
@@ -410,16 +446,35 @@ export function useSync(options: UseSyncOptions = {}) {
     })
     console.log(`📊 合併後圖片統計: ${mergedBlobCount} 個 Blob, ${mergedBase64Count} 個 Base64`)
 
+    console.log('📥 pullMetadata - 從雲端收到的原始 classrooms:', classrooms)
+
+    // 保留本地的 folder 資料（因為後端可能還不支援 folder 欄位）
+    const existingClassrooms = await db.classrooms.toArray()
+    const localFolderMap = new Map(
+      existingClassrooms.map((c) => [c.id, c.folder])
+    )
+
     const normalizedClassrooms: Classroom[] = classrooms
       .filter((c: Classroom) => c?.id && !deletedClassroomSet.has(c.id))
-      .map((c: Classroom) => ({
-        id: c.id,
-        name: c.name,
-        updatedAt: toMillis(
-          (c as Classroom & { updatedAt?: unknown }).updatedAt ??
-            (c as { updated_at?: unknown }).updated_at
-        )
-      }))
+      .map((c: Classroom) => {
+        const cloudFolder = (c as Classroom & { folder?: string }).folder
+        const localFolder = localFolderMap.get(c.id)
+
+        // 如果雲端有 folder，使用雲端的；否則保留本地的
+        const finalFolder = cloudFolder !== undefined ? cloudFolder : localFolder
+
+        return {
+          id: c.id,
+          name: c.name,
+          folder: finalFolder,
+          updatedAt: toMillis(
+            (c as Classroom & { updatedAt?: unknown }).updatedAt ??
+              (c as { updated_at?: unknown }).updated_at
+          )
+        }
+      })
+
+    console.log('📥 pullMetadata - 正規化後的 classrooms:', normalizedClassrooms)
 
     const normalizedStudents: Student[] = students
       .filter((s: Student) => s?.id && s?.classroomId && !deletedStudentSet.has(s.id))
@@ -434,20 +489,50 @@ export function useSync(options: UseSyncOptions = {}) {
         )
       }))
 
+    // 保留本地的 assignment folder 資料（因為後端可能還不支援 folder 欄位）
+    const existingAssignments = await db.assignments.toArray()
+    const localAssignmentFolderMap = new Map(
+      existingAssignments.map((a) => [a.id, { folder: a.folder, priorWeightTypes: a.priorWeightTypes }])
+    )
+
     const normalizedAssignments: Assignment[] = assignments
       .filter(
         (a: Assignment) => a?.id && a?.classroomId && !deletedAssignmentSet.has(a.id)
       )
-      .map((a: Assignment) => ({
-        id: a.id,
-        classroomId: a.classroomId,
-        title: a.title,
-        totalPages: a.totalPages,
-        domain: a.domain ?? undefined,
-        answerKey: a.answerKey ?? undefined,
+      .map((a: Assignment) => {
+        const cloudFolder = (a as Assignment & { folder?: string }).folder
+        const cloudPriorWeightTypes = (a as Assignment & { priorWeightTypes?: any }).priorWeightTypes
+        const localData = localAssignmentFolderMap.get(a.id)
+
+        // 如果雲端有資料，使用雲端的；否則保留本地的
+        const finalFolder = cloudFolder !== undefined ? cloudFolder : localData?.folder
+        const finalPriorWeightTypes = cloudPriorWeightTypes !== undefined ? cloudPriorWeightTypes : localData?.priorWeightTypes
+
+        return {
+          id: a.id,
+          classroomId: a.classroomId,
+          title: a.title,
+          totalPages: a.totalPages,
+          domain: a.domain ?? undefined,
+          folder: finalFolder,
+          priorWeightTypes: finalPriorWeightTypes,
+          answerKey: a.answerKey ?? undefined,
+          updatedAt: toMillis(
+            (a as Assignment & { updatedAt?: unknown }).updatedAt ??
+              (a as { updated_at?: unknown }).updated_at
+          )
+        }
+      })
+
+    const normalizedFolders = folders
+      .filter((f: any) => f?.id && f?.name && !deletedFolderSet.has(f.id))
+      .map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        type: f.type,
         updatedAt: toMillis(
-          (a as Assignment & { updatedAt?: unknown }).updatedAt ??
-            (a as { updated_at?: unknown }).updated_at
+          (f as { updatedAt?: unknown }).updatedAt ??
+            (f as { updated_at?: unknown }).updated_at
         )
       }))
 
@@ -463,11 +548,44 @@ export function useSync(options: UseSyncOptions = {}) {
     if (deletedSubmissionIds.length > 0) {
       await db.submissions.bulkDelete(deletedSubmissionIds)
     }
+    if (deletedFolderIds.length > 0) {
+      console.log('⚠️ 執行刪除 folders:', deletedFolderIds)
+      await db.folders.bulkDelete(deletedFolderIds)
+    }
+
+    // 在所有 bulkDelete 之後檢查 folders
+    const afterDelete = await db.folders.toArray()
+    console.log('📊 bulkDelete 之後的 folders:', afterDelete)
+
+    // 先檢查 folders 狀態
+    const beforePut = await db.folders.toArray()
+    console.log('📊 bulkPut 之前的 folders:', beforePut)
 
     await db.classrooms.bulkPut(normalizedClassrooms)
+
+    // 檢查寫入後的 classrooms
+    const afterPutClassrooms = await db.classrooms.toArray()
+    console.log('📊 bulkPut classrooms 之後的資料:', afterPutClassrooms)
+
     await db.students.bulkPut(normalizedStudents)
     await db.assignments.bulkPut(normalizedAssignments)
     await db.submissions.bulkPut(mergedSubmissions)
+
+    // 再檢查 folders 狀態
+    const afterPut = await db.folders.toArray()
+    console.log('📊 bulkPut 之後的 folders:', afterPut)
+
+    // 只有當雲端有 folders 資料時才更新（避免覆蓋本地資料）
+    if (folders.length > 0) {
+      await db.folders.bulkPut(normalizedFolders)
+      console.log(`✅ 同步了 ${normalizedFolders.length} 個資料夾`)
+    } else {
+      console.log('⚠️ 雲端沒有 folders 資料，保留本地資料夾')
+
+      // 驗證本地資料夾是否真的保留
+      const localFolders = await db.folders.toArray()
+      console.log('🔍 pullMetadata 後本地 folders:', localFolders)
+    }
   }, [])
 
   /**
@@ -489,6 +607,10 @@ export function useSync(options: UseSyncOptions = {}) {
     try {
       isSyncingRef.current = true
       setStatus((prev) => ({ ...prev, isSyncing: true, error: null }))
+
+      // 檢查 performSync 開始時的 folders
+      const performSyncStart = await db.folders.toArray()
+      console.log('🔵 performSync 開始時的 folders:', performSyncStart)
 
       const pendingSubmissions = await db.submissions
         .where('status')
@@ -514,7 +636,16 @@ export function useSync(options: UseSyncOptions = {}) {
         console.log(`同步完成：成功 ${successCount} 筆，失敗 ${failCount} 筆`)
       }
 
+      // 檢查 push 前的 folders
+      const beforePush = await db.folders.toArray()
+      console.log('🔵 pushMetadata 前的 folders:', beforePush)
+
       await pushMetadata()
+
+      // 檢查 push 後、pull 前的 folders
+      const afterPushBeforePull = await db.folders.toArray()
+      console.log('🔵 pushMetadata 後、pullMetadata 前的 folders:', afterPushBeforePull)
+
       await pullMetadata()
 
       const remainingCount = await updatePendingCount()
