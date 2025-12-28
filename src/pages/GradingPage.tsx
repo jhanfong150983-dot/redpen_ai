@@ -114,6 +114,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
   const [regradeAttempts, setRegradeAttempts] = useState<Map<string, Map<string, number>>>(
     new Map()
   )
+  const [activeRegradeId, setActiveRegradeId] = useState<string | null>(null)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
 
   const resolveImageBase64 = async (blob?: Blob, base64?: string) => {
@@ -435,35 +436,36 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       return
     }
 
-    if (!submission.imageBlob) {
-      // 優先從 Base64 重建 Blob
-      if (submission.imageBase64) {
-        try {
-          console.log('🔧 從 Base64 重建 Blob 用於批改')
-          submission.imageBlob = rebuildBlobFromBase64(submission.imageBase64)
-          console.log(`✅ 從 Base64 重建 Blob 成功: size=${submission.imageBlob.size}, type=${submission.imageBlob.type}`)
-        } catch (error) {
-          console.error('❌ 從 Base64 重建 Blob 失敗:', error)
-          alert('無法重建圖片，請重新上傳作業')
-          return
-        }
-      } else {
-        // 沒有 Base64，嘗試從 Supabase 下載
-        try {
-          const blob = await downloadImageFromSupabase(submission.id)
-          const base64 = await blobToBase64(blob)
-          submission.imageBlob = blob
-          submission.imageBase64 = base64
-          await updateSubmissionWithImages(submission.id, {}, blob, base64)
-        } catch {
-          alert('下載影像失敗，無法重評')
-          return
-        }
-      }
-    }
-
+    setActiveRegradeId(submission.id)
     setIsGrading(true)
     try {
+      if (!submission.imageBlob) {
+        // 優先從 Base64 重建 Blob
+        if (submission.imageBase64) {
+          try {
+            console.log('🔧 從 Base64 重建 Blob 用於批改')
+            submission.imageBlob = rebuildBlobFromBase64(submission.imageBase64)
+            console.log(`✅ 從 Base64 重建 Blob 成功: size=${submission.imageBlob.size}, type=${submission.imageBlob.type}`)
+          } catch (error) {
+            console.error('❌ 從 Base64 重建 Blob 失敗:', error)
+            alert('無法重建圖片，請重新上傳作業')
+            return
+          }
+        } else {
+          // 沒有 Base64，嘗試從 Supabase 下載
+          try {
+            const blob = await downloadImageFromSupabase(submission.id)
+            const base64 = await blobToBase64(blob)
+            submission.imageBlob = blob
+            submission.imageBase64 = base64
+            await updateSubmissionWithImages(submission.id, {}, blob, base64)
+          } catch {
+            alert('下載影像失敗，無法重評')
+            return
+          }
+        }
+      }
+
       const result = await gradeSubmission(submission.imageBlob!, null, assignment?.answerKey, { strict: true, domain: assignment?.domain })
 
       await updateSubmissionWithImages(
@@ -494,6 +496,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       alert('重評失敗')
     } finally {
       setIsGrading(false)
+      setActiveRegradeId(null)
     }
   }
 
@@ -1229,7 +1232,9 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
                           title="重新使用 AI 批改此學生"
                           disabled={isGrading}
                         >
-                          <RotateCcw className="w-4 h-4" />
+                          <RotateCcw
+                            className={`w-4 h-4 ${activeRegradeId === submission.id ? 'animate-spin' : ''}`}
+                          />
                         </button>
                       )}
                   </div>
