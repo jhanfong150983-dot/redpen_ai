@@ -4,7 +4,7 @@ import { useOnlineStatus } from './useOnlineStatus'
 import { SYNC_EVENT_NAME } from '@/lib/sync-events'
 import { clearDeleteQueue, readDeleteQueue } from '@/lib/sync-delete-queue'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
-import { blobToBase64 as blobToDataUrl } from '@/lib/imageCompression'
+import { blobToBase64 as blobToDataUrl, compressImage } from '@/lib/imageCompression'
 import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { fixCorruptedBase64 } from '@/lib/utils'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
@@ -45,6 +45,52 @@ const normalizeBase64Payload = (
     mimeType,
     dataUrl: `data:${mimeType};base64,${fixed}`
   }
+}
+
+const MAX_SUBMISSION_BASE64_LENGTH = 2_700_000
+const HARD_MAX_SUBMISSION_BASE64_LENGTH = 1_600_000
+
+const shrinkBase64Payload = async (
+  dataUrl: string,
+  fallbackMimeType: string | undefined,
+  targetLength: number
+) => {
+  let normalized = normalizeBase64Payload(dataUrl, fallbackMimeType)
+  if (normalized.data.length <= targetLength) {
+    return { ...normalized, updated: false }
+  }
+
+  const strategies = [
+    { maxWidth: 1400, quality: 0.75 },
+    { maxWidth: 1200, quality: 0.7 },
+    { maxWidth: 1024, quality: 0.65 },
+    { maxWidth: 900, quality: 0.6 },
+    { maxWidth: 800, quality: 0.55 }
+  ]
+
+  let currentDataUrl = normalized.dataUrl
+
+  for (const strategy of strategies) {
+    try {
+      const compressed = await compressImage(currentDataUrl, {
+        maxWidth: strategy.maxWidth,
+        quality: strategy.quality
+      })
+      const compressedDataUrl = await blobToDataUrl(compressed)
+      normalized = normalizeBase64Payload(compressedDataUrl, compressed.type)
+
+      if (normalized.data.length <= targetLength) {
+        return { ...normalized, updated: true }
+      }
+
+      currentDataUrl = normalized.dataUrl
+    } catch (error) {
+      console.warn('⚠️ 同步圖片壓縮失敗，改用原圖', error)
+      return { ...normalized, updated: false }
+    }
+  }
+
+  return { ...normalized, updated: true }
 }
 
 const toMillis = (value: unknown): number | undefined => {
@@ -180,6 +226,20 @@ export function useSync(options: UseSyncOptions = {}) {
         contentType = submission.imageBlob?.type || 'image/webp'
       }
 
+      if (base64DataUrl) {
+        const adjusted = await shrinkBase64Payload(
+          base64DataUrl,
+          contentType,
+          MAX_SUBMISSION_BASE64_LENGTH
+        )
+        if (adjusted.updated) {
+          imageBase64 = adjusted.data
+          contentType = adjusted.mimeType || contentType
+          base64DataUrl = adjusted.dataUrl
+          await updateSubmissionImageCache(submission.id, null, base64DataUrl)
+        }
+      }
+
       const response = await fetch('/api/data/submission', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -194,15 +254,55 @@ export function useSync(options: UseSyncOptions = {}) {
         })
       })
 
-      const data = await response.json().catch(() => ({}))
+      let data = await response.json().catch(() => ({}))
       if (!response.ok) {
-        const message = data?.error || '同步失敗'
-        if (isRlsError(message) || response.status === 401 || response.status === 403) {
-          console.warn('⚠️ 同步遭到權限限制 (RLS)，暫停同步:', message)
-          markSyncBlocked(message)
-          return false
+        if (response.status === 413 && base64DataUrl) {
+          console.warn('⚠️ 同步檔案過大，嘗試更高壓縮後重試')
+          const adjusted = await shrinkBase64Payload(
+            base64DataUrl,
+            contentType,
+            HARD_MAX_SUBMISSION_BASE64_LENGTH
+          )
+          if (adjusted.updated) {
+            imageBase64 = adjusted.data
+            contentType = adjusted.mimeType || contentType
+            base64DataUrl = adjusted.dataUrl
+            await updateSubmissionImageCache(submission.id, null, base64DataUrl)
+          }
+
+          const retryResponse = await fetch('/api/data/submission', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              submissionId: submission.id,
+              assignmentId: submission.assignmentId,
+              studentId: submission.studentId,
+              createdAt: submission.createdAt,
+              imageBase64,
+              contentType
+            })
+          })
+
+          data = await retryResponse.json().catch(() => ({}))
+          if (!retryResponse.ok) {
+            const message = data?.error || '同步失敗'
+            if (isRlsError(message) || retryResponse.status === 401 || retryResponse.status === 403) {
+              console.warn('⚠️ 同步遭到權限限制 (RLS)，暫停同步:', message)
+              markSyncBlocked(message)
+              return false
+            }
+            throw new Error(message)
+          }
+        } else {
+          const message = data?.error || '同步失敗'
+          if (isRlsError(message) || response.status === 401 || response.status === 403) {
+            console.warn('⚠️ 同步遭到權限限制 (RLS)，暫停同步:', message)
+            markSyncBlocked(message)
+            return false
+          }
+          throw new Error(message)
         }
-        throw new Error(message)
       }
 
       console.log('圖片與資料同步成功')
