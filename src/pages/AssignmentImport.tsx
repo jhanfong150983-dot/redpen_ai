@@ -16,8 +16,9 @@ import {
   convertPdfToImages,
   getFileType
 } from '@/lib/pdfToImage'
-import { validateBlobSize } from '@/lib/imageCompression'
+import { blobToBase64, validateBlobSize } from '@/lib/imageCompression'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
+import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 
 interface AssignmentImportProps {
   assignmentId: string
@@ -78,6 +79,7 @@ export default function AssignmentImport({
   const [assignment, setAssignment] = useState<Assignment | null>(null)
   const [classroom, setClassroom] = useState<Classroom | null>(null)
   const [students, setStudents] = useState<Student[]>([])
+  const avoidBlobStorage = shouldAvoidIndexedDbBlob()
 
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -415,16 +417,34 @@ export default function AssignmentImport({
           await db.submissions.delete(oldSub.id)
         }
 
+        const imageBase64 = await blobToBase64(imageBlob)
         const submission: Submission = {
           id: generateId(),
           assignmentId: assignment.id,
           studentId: mapping.studentId,
           status: 'scanned',
-          imageBlob,
+          imageBase64,
+          ...(avoidBlobStorage ? {} : { imageBlob }),
           createdAt: getCurrentTimestamp()
         }
 
-        await db.submissions.add(submission)
+        try {
+          await db.submissions.add(submission)
+        } catch (error) {
+          if (!avoidBlobStorage && isIndexedDbBlobError(error)) {
+            const submissionWithoutBlob: Submission = {
+              id: submission.id,
+              assignmentId: submission.assignmentId,
+              studentId: submission.studentId,
+              status: submission.status,
+              imageBase64: submission.imageBase64,
+              createdAt: submission.createdAt
+            }
+            await db.submissions.add(submissionWithoutBlob)
+          } else {
+            throw error
+          }
+        }
         successCount += 1
       }
 

@@ -8,6 +8,7 @@ import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { compressImage, blobToBase64, validateBlobSize } from '@/lib/imageCompression'
 import { convertPdfToImage, getFileType } from '@/lib/pdfToImage'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
+import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 import type { Student, Submission } from '@/lib/db'
 
 interface ScannerPageProps {
@@ -87,6 +88,7 @@ export default function ScannerPage({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLandscape, setIsLandscape] = useState(false)
   const [previewStudentId, setPreviewStudentId] = useState<string | null>(null)
+  const avoidBlobStorage = shouldAvoidIndexedDbBlob()
 
   // 調試：打印接收到的 props
   useEffect(() => {
@@ -452,8 +454,8 @@ export default function ScannerPage({
           assignmentId,
           studentId: studentId,
           status: 'scanned',
-          imageBlob: mergedBlob,
           imageBase64: imageBase64,  // Safari 備用
+          ...(avoidBlobStorage ? {} : { imageBlob: mergedBlob }),
           createdAt: getCurrentTimestamp()
         }
 
@@ -475,12 +477,9 @@ export default function ScannerPage({
 
           // 檢查是否是 Blob 相關的錯誤
           const errorMsg = dbError instanceof Error ? dbError.message.toLowerCase() : String(dbError).toLowerCase()
-          const isBlobError = errorMsg.includes('blob') ||
-                             errorMsg.includes('dataclone') ||
-                             errorMsg.includes('structured clone') ||
-                             errorMsg.includes('preparing')
+          const isBlobError = isIndexedDbBlobError(dbError)
 
-          if (isBlobError) {
+          if (!avoidBlobStorage && isBlobError) {
             console.warn('⚠️ Blob 儲存失敗，嘗試僅使用 Base64 儲存...')
 
             // 備用方案：僅儲存 Base64，不儲存 Blob

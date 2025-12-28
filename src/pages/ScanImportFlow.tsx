@@ -6,6 +6,7 @@ import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
 import { blobToBase64 } from '@/lib/imageCompression'
+import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 import SeatSelectionPage from './SeatSelectionPage'
 import CameraCapturePage from './CameraCapturePage'
 
@@ -38,6 +39,7 @@ export default function ScanImportFlow({
   const [selectedStudent, setSelectedStudent] = useState<SelectedStudent | null>(null)
   const [capturedData, setCapturedData] = useState<Map<string, Blob[]>>(new Map())
   const [isSaving, setIsSaving] = useState(false)
+  const avoidBlobStorage = shouldAvoidIndexedDbBlob()
 
   // 調試：檢查 pagesPerStudent
   useEffect(() => {
@@ -145,12 +147,28 @@ export default function ScanImportFlow({
           assignmentId,
           studentId,
           status: 'scanned',
-          imageBlob,
           imageBase64,
+          ...(avoidBlobStorage ? {} : { imageBlob }),
           createdAt: getCurrentTimestamp()
         }
 
-        await db.submissions.add(submission)
+        try {
+          await db.submissions.add(submission)
+        } catch (error) {
+          if (!avoidBlobStorage && isIndexedDbBlobError(error)) {
+            const submissionWithoutBlob: Submission = {
+              id: submission.id,
+              assignmentId: submission.assignmentId,
+              studentId: submission.studentId,
+              status: submission.status,
+              imageBase64: submission.imageBase64,
+              createdAt: submission.createdAt
+            }
+            await db.submissions.add(submissionWithoutBlob)
+          } else {
+            throw error
+          }
+        }
         successCount += 1
       }
     } catch (error) {

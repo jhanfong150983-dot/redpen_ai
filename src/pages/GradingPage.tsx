@@ -24,6 +24,7 @@ import {
 import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { getSubmissionImageUrl, fixCorruptedBase64 } from '@/lib/utils'
 import { blobToBase64 } from '@/lib/imageCompression'
+import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 
 interface GradingPageProps {
   assignmentId: string
@@ -113,6 +114,46 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
   const [regradeAttempts, setRegradeAttempts] = useState<Map<string, Map<string, number>>>(
     new Map()
   )
+  const avoidBlobStorage = shouldAvoidIndexedDbBlob()
+
+  const resolveImageBase64 = async (blob?: Blob, base64?: string) => {
+    if (base64) return base64
+    if (!blob) return undefined
+    try {
+      return await blobToBase64(blob)
+    } catch (error) {
+      console.error('?? Base64 轉換失敗:', error)
+      return undefined
+    }
+  }
+
+  const updateSubmissionWithImages = async (
+    submissionId: string,
+    updates: Partial<Submission>,
+    imageBlob?: Blob,
+    imageBase64?: string
+  ) => {
+    const resolvedBase64 = avoidBlobStorage
+      ? await resolveImageBase64(imageBlob, imageBase64)
+      : imageBase64
+    const payload: Partial<Submission> = { ...updates }
+
+    if (resolvedBase64) payload.imageBase64 = resolvedBase64
+    if (!avoidBlobStorage && imageBlob) payload.imageBlob = imageBlob
+    if (avoidBlobStorage) payload.imageBlob = undefined
+
+    try {
+      await db.submissions.update(submissionId, payload)
+    } catch (error) {
+      if (!avoidBlobStorage && imageBlob && isIndexedDbBlobError(error)) {
+        const fallback: Partial<Submission> = { ...updates }
+        if (resolvedBase64) fallback.imageBase64 = resolvedBase64
+        await db.submissions.update(submissionId, fallback)
+      } else {
+        throw error
+      }
+    }
+  }
 
   const loadData = useCallback(async () => {
     setIsLoading(true)
@@ -174,6 +215,17 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
           }
         }
 
+        if (avoidBlobStorage && sub.imageBlob) {
+          try {
+            const base64 = sub.imageBase64 ?? await blobToBase64(sub.imageBlob)
+            sub.imageBase64 = base64
+            await updateSubmissionWithImages(sub.id, {}, sub.imageBlob, base64)
+            sub.imageBlob = undefined
+          } catch (error) {
+            console.warn('⚠️ Base64 轉換失敗，略過 Blob 清理:', error)
+          }
+        }
+
         map.set(sub.studentId, sub)
       }
 
@@ -202,13 +254,10 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             })
 
             // 更新資料庫和 state
-            await db.submissions.update(sub.id, {
-              imageBlob: blob,
-              imageBase64: base64
-            })
+            await updateSubmissionWithImages(sub.id, {}, blob, base64)
 
             // 更新 UI
-            sub.imageBlob = blob
+            sub.imageBlob = avoidBlobStorage ? undefined : blob
             sub.imageBase64 = base64
             setSubmissions((prev) => new Map(prev).set(sub.studentId, sub))
 
@@ -402,8 +451,10 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         // 沒有 Base64，嘗試從 Supabase 下載
         try {
           const blob = await downloadImageFromSupabase(submission.id)
+          const base64 = await blobToBase64(blob)
           submission.imageBlob = blob
-          await db.submissions.update(submission.id, { imageBlob: blob })
+          submission.imageBase64 = base64
+          await updateSubmissionWithImages(submission.id, {}, blob, base64)
         } catch {
           alert('下載影像失敗，無法重評')
           return
@@ -415,15 +466,18 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
     try {
       const result = await gradeSubmission(submission.imageBlob!, null, assignment?.answerKey, { strict: true, domain: assignment?.domain })
 
-      await db.submissions.update(submission.id, {
-        status: 'graded',
-        score: result.totalScore,
-        feedback: '',
-        gradingResult: result,
-        gradedAt: Date.now(),
-        imageBlob: submission.imageBlob,      // 保留圖片 Blob
-        imageBase64: submission.imageBase64   // 保留圖片 Base64
-      })
+      await updateSubmissionWithImages(
+        submission.id,
+        {
+          status: 'graded',
+          score: result.totalScore,
+          feedback: '',
+          gradingResult: result,
+          gradedAt: Date.now()
+        },
+        submission.imageBlob,
+        submission.imageBase64
+      )
       requestSync()
 
       const updatedSub = await db.submissions.get(submission.id)
@@ -470,8 +524,10 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
         // 沒有 Base64，嘗試從 Supabase 下載
         try {
           const blob = await downloadImageFromSupabase(submission.id)
+          const base64 = await blobToBase64(blob)
           submission.imageBlob = blob
-          await db.submissions.update(submission.id, { imageBlob: blob })
+          submission.imageBase64 = base64
+          await updateSubmissionWithImages(submission.id, {}, blob, base64)
         } catch {
           alert('下載影像失敗，無法重評')
           return
@@ -549,15 +605,18 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       newGradingResult.needsReview = false
       newGradingResult.reviewReasons = []
 
-      await db.submissions.update(submission.id, {
-        status: 'graded',
-        score: newTotal,
-        feedback: '',
-        gradingResult: newGradingResult,
-        gradedAt: Date.now(),
-        imageBlob: submission.imageBlob,      // 保留圖片 Blob
-        imageBase64: submission.imageBase64   // 保留圖片 Base64
-      })
+      await updateSubmissionWithImages(
+        submission.id,
+        {
+          status: 'graded',
+          score: newTotal,
+          feedback: '',
+          gradingResult: newGradingResult,
+          gradedAt: Date.now()
+        },
+        submission.imageBlob,
+        submission.imageBase64
+      )
       requestSync()
 
       const updatedSub = await db.submissions.get(submission.id)
@@ -658,8 +717,10 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             if (sub.status === 'synced' || sub.status === 'graded') {
               console.log(`📥 從雲端下載: ${sub.id}`)
               const blob = await downloadImageFromSupabase(sub.id)
-              await db.submissions.update(sub.id, { imageBlob: blob })
+              const base64 = await blobToBase64(blob)
+              await updateSubmissionWithImages(sub.id, {}, blob, base64)
               sub.imageBlob = blob
+              sub.imageBase64 = base64
               console.log(`✅ 下載成功: size=${blob.size}`)
             } else {
               throw new Error('無圖片數據（無 Blob、Base64 或雲端 URL）')

@@ -5,6 +5,8 @@ import {
   type AnswerKey,
   type AnswerExtractionCorrection
 } from './db'
+import { blobToBase64 as blobToDataUrl } from './imageCompression'
+import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from './blob-storage'
 
 const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
 
@@ -1473,6 +1475,7 @@ export async function gradeMultipleSubmissions(
   options?: GradeSubmissionOptions
 ) {
   console.log(`📝 開始批量批改 ${submissions.length} 份作業`)
+  const avoidBlobStorage = shouldAvoidIndexedDbBlob()
 
   const workingModel = await diagnoseModels()
   if (workingModel) {
@@ -1500,14 +1503,41 @@ export async function gradeMultipleSubmissions(
       console.log(`📊 批改結果: 得分 ${result.totalScore}`)
 
       console.log(`💾 儲存批改結果到資料庫...`)
-      await db.submissions.update(sub.id!, {
+      let imageBase64 = sub.imageBase64
+      if (avoidBlobStorage && !imageBase64 && sub.imageBlob) {
+        try {
+          imageBase64 = await blobToDataUrl(sub.imageBlob)
+        } catch (error) {
+          console.warn('⚠️ Base64 轉換失敗，將略過 imageBase64:', error)
+        }
+      }
+
+      const updatePayload: Partial<Submission> = {
         status: 'graded',
         score: result.totalScore,
         gradingResult: result,
-        gradedAt: Date.now(),
-        imageBlob: sub.imageBlob,
-        imageBase64: sub.imageBase64
-      })
+        gradedAt: Date.now()
+      }
+      if (imageBase64) updatePayload.imageBase64 = imageBase64
+      if (!avoidBlobStorage && sub.imageBlob) updatePayload.imageBlob = sub.imageBlob
+      if (avoidBlobStorage) updatePayload.imageBlob = undefined
+
+      try {
+        await db.submissions.update(sub.id!, updatePayload)
+      } catch (error) {
+        if (!avoidBlobStorage && sub.imageBlob && isIndexedDbBlobError(error)) {
+          const fallback: Partial<Submission> = {
+            status: updatePayload.status,
+            score: updatePayload.score,
+            gradingResult: updatePayload.gradingResult,
+            gradedAt: updatePayload.gradedAt
+          }
+          if (imageBase64) fallback.imageBase64 = imageBase64
+          await db.submissions.update(sub.id!, fallback)
+        } else {
+          throw error
+        }
+      }
 
       successCount++
       console.log(
