@@ -4,6 +4,10 @@ import { useOnlineStatus } from './useOnlineStatus'
 import { SYNC_EVENT_NAME } from '@/lib/sync-events'
 import { clearDeleteQueue, readDeleteQueue } from '@/lib/sync-delete-queue'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
+import { blobToBase64 as blobToDataUrl } from '@/lib/imageCompression'
+import { downloadImageFromSupabase } from '@/lib/supabase-download'
+import { fixCorruptedBase64 } from '@/lib/utils'
+import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 
 interface SyncStatus {
   isSyncing: boolean
@@ -17,13 +21,30 @@ interface UseSyncOptions {
   syncInterval?: number // 保留參數以相容舊呼叫
 }
 
-const blobToBase64 = async (blob: Blob): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onloadend = () => resolve((reader.result as string).split(',')[1])
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
+const normalizeBase64Payload = (
+  rawBase64: string,
+  fallbackMimeType?: string
+): { data: string; mimeType?: string; dataUrl: string } => {
+  const fixed = fixCorruptedBase64(rawBase64.trim())
+  if (fixed.startsWith('data:')) {
+    const commaIndex = fixed.indexOf(',')
+    if (commaIndex > -1) {
+      const meta = fixed.slice(5, commaIndex)
+      const mimeType = meta.split(';')[0] || fallbackMimeType
+      return {
+        data: fixed.slice(commaIndex + 1),
+        mimeType,
+        dataUrl: fixed
+      }
+    }
+  }
+
+  const mimeType = fallbackMimeType || 'image/jpeg'
+  return {
+    data: fixed,
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${fixed}`
+  }
 }
 
 const toMillis = (value: unknown): number | undefined => {
@@ -49,6 +70,29 @@ export function useSync(options: UseSyncOptions = {}) {
   const syncQueuedRef = useRef(false)
   const prevOnlineRef = useRef(isOnline)
   const lastFocusSyncRef = useRef(0)
+  const avoidBlobStorage = shouldAvoidIndexedDbBlob()
+
+  const updateSubmissionImageCache = async (
+    submissionId: string,
+    blob: Blob | null,
+    dataUrl: string | null
+  ) => {
+    const payload: Partial<Submission> = {}
+    if (dataUrl) payload.imageBase64 = dataUrl
+    if (!avoidBlobStorage && blob) payload.imageBlob = blob
+    if (avoidBlobStorage) payload.imageBlob = undefined
+
+    try {
+      await db.submissions.update(submissionId, payload)
+    } catch (error) {
+      if (!avoidBlobStorage && blob && isIndexedDbBlobError(error)) {
+        delete payload.imageBlob
+        await db.submissions.update(submissionId, payload)
+      } else {
+        throw error
+      }
+    }
+  }
 
   /**
    * 更新待同步數量
@@ -71,29 +115,50 @@ export function useSync(options: UseSyncOptions = {}) {
       console.log(`開始同步提交 ${submission.id}`)
 
       let imageBase64: string
+      let contentType: string | undefined
+      let base64DataUrl: string | null = null
 
       // 優先使用 imageBase64（如果已經有）
       if (submission.imageBase64) {
         console.log('✅ 使用現有的 Base64 數據')
-        imageBase64 = submission.imageBase64
+        const normalized = normalizeBase64Payload(
+          submission.imageBase64,
+          submission.imageBlob?.type
+        )
+        imageBase64 = normalized.data
+        contentType = normalized.mimeType
+        base64DataUrl = normalized.dataUrl
       } else if (submission.imageBlob) {
         // 從 Blob 轉換
         console.log('🔄 從 Blob 轉換為 Base64')
-        imageBase64 = await blobToBase64(submission.imageBlob)
+        const dataUrl = await blobToDataUrl(submission.imageBlob)
+        const normalized = normalizeBase64Payload(dataUrl, submission.imageBlob.type)
+        imageBase64 = normalized.data
+        contentType = normalized.mimeType || submission.imageBlob.type
+        base64DataUrl = normalized.dataUrl
+        if (avoidBlobStorage && base64DataUrl) {
+          await updateSubmissionImageCache(submission.id, submission.imageBlob, base64DataUrl)
+        }
       } else {
-        throw new Error('缺少圖片資料（無 Blob 也無 Base64）')
+        console.warn('⚠️ 缺少圖片資料，嘗試從雲端下載補回')
+        try {
+          const downloaded = await downloadImageFromSupabase(submission.id)
+          const dataUrl = await blobToDataUrl(downloaded)
+          const normalized = normalizeBase64Payload(dataUrl, downloaded.type)
+          imageBase64 = normalized.data
+          contentType = normalized.mimeType || downloaded.type
+          base64DataUrl = normalized.dataUrl
+          await updateSubmissionImageCache(submission.id, downloaded, base64DataUrl)
+        } catch (downloadError) {
+          console.warn('⚠️ 雲端下載失敗，標記為未繳交以避免重試', downloadError)
+          await db.submissions.update(submission.id, { status: 'missing' })
+          return true
+        }
       }
 
       // 確定 content type
-      let contentType = 'image/webp'
-      if (submission.imageBlob?.type) {
-        contentType = submission.imageBlob.type
-      } else if (submission.imageBase64) {
-        // 從 Base64 data URL 中提取 MIME type
-        const mimeMatch = submission.imageBase64.match(/data:([^;]+);/)
-        if (mimeMatch) {
-          contentType = mimeMatch[1]
-        }
+      if (!contentType) {
+        contentType = submission.imageBlob?.type || 'image/webp'
       }
 
       const response = await fetch('/api/data/submission', {
