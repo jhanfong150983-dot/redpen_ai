@@ -1,5 +1,9 @@
 import { getAuthUser } from '../_auth.js'
-import { getSupabaseAdmin } from '../_supabase.js'
+import {
+  getSupabaseAdmin,
+  getSupabaseUserClient,
+  isServiceRoleKey
+} from '../_supabase.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -8,7 +12,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { user } = await getAuthUser(req, res)
+    const { user, accessToken } = await getAuthUser(req, res)
     if (!user) {
       res.status(401).json({ error: 'Unauthorized' })
       return
@@ -16,13 +20,20 @@ export default async function handler(req, res) {
 
     let profile = null
     try {
-      const supabaseAdmin = getSupabaseAdmin()
-      const { data } = await supabaseAdmin
-        .from('profiles')
-        .select('name, avatar_url')
-        .eq('id', user.id)
-        .maybeSingle()
-      profile = data || null
+      const useAdmin = isServiceRoleKey()
+      const supabaseDb = useAdmin
+        ? getSupabaseAdmin()
+        : accessToken
+          ? getSupabaseUserClient(accessToken)
+          : null
+      if (supabaseDb) {
+        const { data } = await supabaseDb
+          .from('profiles')
+          .select('name, avatar_url')
+          .eq('id', user.id)
+          .maybeSingle()
+        profile = data || null
+      }
     } catch {
       profile = null
     }

@@ -1,5 +1,9 @@
 import { getAuthUser } from '../_auth.js'
-import { getSupabaseAdmin } from '../_supabase.js'
+import {
+  getSupabaseAdmin,
+  getSupabaseUserClient,
+  isServiceRoleKey
+} from '../_supabase.js'
 
 function parseJsonBody(req) {
   let body = req.body
@@ -67,9 +71,9 @@ function normalizeDeletedList(items) {
     .filter(Boolean)
 }
 
-async function fetchExistingUpdatedMap(supabaseAdmin, tableName, ids, ownerId) {
+async function fetchExistingUpdatedMap(supabaseDb, tableName, ids, ownerId) {
   if (ids.length === 0) return new Map()
-  const result = await supabaseAdmin
+  const result = await supabaseDb
     .from(tableName)
     .select('id, updated_at')
     .eq('owner_id', ownerId)
@@ -82,9 +86,9 @@ async function fetchExistingUpdatedMap(supabaseAdmin, tableName, ids, ownerId) {
   )
 }
 
-async function fetchDeletedSet(supabaseAdmin, tableName, ids, ownerId) {
+async function fetchDeletedSet(supabaseDb, tableName, ids, ownerId) {
   if (ids.length === 0) return new Set()
-  const result = await supabaseAdmin
+  const result = await supabaseDb
     .from('deleted_records')
     .select('record_id')
     .eq('owner_id', ownerId)
@@ -97,13 +101,21 @@ async function fetchDeletedSet(supabaseAdmin, tableName, ids, ownerId) {
 }
 
 export default async function handler(req, res) {
-  const { user } = await getAuthUser(req, res)
+  const { user, accessToken } = await getAuthUser(req, res)
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }
 
-  const supabaseAdmin = getSupabaseAdmin()
+  const useAdmin = isServiceRoleKey()
+  if (!useAdmin && !accessToken) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+
+  const supabaseDb = useAdmin
+    ? getSupabaseAdmin()
+    : getSupabaseUserClient(accessToken)
 
   if (req.method === 'GET') {
     try {
@@ -115,12 +127,12 @@ export default async function handler(req, res) {
         foldersResult,
         deletedResult
       ] = await Promise.all([
-        supabaseAdmin.from('classrooms').select('*').eq('owner_id', user.id),
-        supabaseAdmin.from('students').select('*').eq('owner_id', user.id),
-        supabaseAdmin.from('assignments').select('*').eq('owner_id', user.id),
-        supabaseAdmin.from('submissions').select('*').eq('owner_id', user.id),
-        supabaseAdmin.from('folders').select('*').eq('owner_id', user.id),
-        supabaseAdmin
+        supabaseDb.from('classrooms').select('*').eq('owner_id', user.id),
+        supabaseDb.from('students').select('*').eq('owner_id', user.id),
+        supabaseDb.from('assignments').select('*').eq('owner_id', user.id),
+        supabaseDb.from('submissions').select('*').eq('owner_id', user.id),
+        supabaseDb.from('folders').select('*').eq('owner_id', user.id),
+        supabaseDb
           .from('deleted_records')
           .select('table_name, record_id, deleted_at')
           .eq('owner_id', user.id)
@@ -281,7 +293,7 @@ export default async function handler(req, res) {
           })
         )
 
-        const tombstoneResult = await supabaseAdmin
+        const tombstoneResult = await supabaseDb
           .from('deleted_records')
           .upsert(deleteRows, {
             onConflict: 'owner_id,table_name,record_id'
@@ -291,7 +303,7 @@ export default async function handler(req, res) {
         }
 
         const ids = list.map((item) => item.id)
-        const deleteResult = await supabaseAdmin
+        const deleteResult = await supabaseDb
           .from(tableName)
           .delete()
           .in('id', ids)
@@ -312,8 +324,8 @@ export default async function handler(req, res) {
         if (filtered.length === 0) return []
         const ids = filtered.map((item) => item.id)
         const [existingMap, deletedSet] = await Promise.all([
-          fetchExistingUpdatedMap(supabaseAdmin, tableName, ids, user.id),
-          fetchDeletedSet(supabaseAdmin, tableName, ids, user.id)
+          fetchExistingUpdatedMap(supabaseDb, tableName, ids, user.id),
+          fetchDeletedSet(supabaseDb, tableName, ids, user.id)
         ])
 
         const rows = []
@@ -346,7 +358,7 @@ export default async function handler(req, res) {
       )
 
       if (classroomRows.length > 0) {
-        const result = await supabaseAdmin
+        const result = await supabaseDb
           .from('classrooms')
           .upsert(classroomRows, { onConflict: 'id' })
         if (result.error) throw new Error(result.error.message)
@@ -367,7 +379,7 @@ export default async function handler(req, res) {
       )
 
       if (studentRows.length > 0) {
-        const result = await supabaseAdmin
+        const result = await supabaseDb
           .from('students')
           .upsert(studentRows, { onConflict: 'id' })
         if (result.error) throw new Error(result.error.message)
@@ -392,7 +404,7 @@ export default async function handler(req, res) {
       )
 
       if (assignmentRows.length > 0) {
-        const result = await supabaseAdmin
+        const result = await supabaseDb
           .from('assignments')
           .upsert(assignmentRows, { onConflict: 'id' })
         if (result.error) throw new Error(result.error.message)
@@ -426,7 +438,7 @@ export default async function handler(req, res) {
       )
 
       if (submissionRows.length > 0) {
-        const result = await supabaseAdmin
+        const result = await supabaseDb
           .from('submissions')
           .upsert(submissionRows, { onConflict: 'id' })
         if (result.error) throw new Error(result.error.message)
@@ -446,7 +458,7 @@ export default async function handler(req, res) {
       )
 
       if (folderRows.length > 0) {
-        const result = await supabaseAdmin
+        const result = await supabaseDb
           .from('folders')
           .upsert(folderRows, { onConflict: 'id' })
         if (result.error) throw new Error(result.error.message)

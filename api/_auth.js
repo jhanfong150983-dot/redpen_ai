@@ -170,14 +170,14 @@ export async function getAuthUser(req, res) {
   const accessToken = cookies[ACCESS_COOKIE]
   const refreshToken = cookies[REFRESH_COOKIE]
 
-  if (!accessToken && !refreshToken) return { user: null }
+  if (!accessToken && !refreshToken) return { user: null, accessToken: null }
 
   const supabaseAdmin = getSupabaseAdmin()
 
   if (accessToken) {
     const { data, error } = await supabaseAdmin.auth.getUser(accessToken)
     if (!error && data?.user) {
-      return { user: data.user, session: null }
+      return { user: data.user, session: null, accessToken }
     }
   }
 
@@ -188,13 +188,17 @@ export async function getAuthUser(req, res) {
 
     if (error || !data?.session || !data.user) {
       clearAuthCookies(res, isSecureRequest(req))
-      return { user: null }
+      return { user: null, accessToken: null }
     }
 
     setAuthCookies(res, data.session, isSecureRequest(req))
-    return { user: data.user, session: data.session }
+    return {
+      user: data.user,
+      session: data.session,
+      accessToken: data.session.access_token
+    }
   }
 
   clearAuthCookies(res, isSecureRequest(req))
-  return { user: null }
+  return { user: null, accessToken: null }
 }

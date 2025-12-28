@@ -1,5 +1,9 @@
 import { getAuthUser } from '../_auth.js'
-import { getSupabaseAdmin } from '../_supabase.js'
+import {
+  getSupabaseAdmin,
+  getSupabaseUserClient,
+  isServiceRoleKey
+} from '../_supabase.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -8,8 +12,14 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { user } = await getAuthUser(req, res)
+    const { user, accessToken } = await getAuthUser(req, res)
     if (!user) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const useAdmin = isServiceRoleKey()
+    if (!useAdmin && !accessToken) {
       res.status(401).json({ error: 'Unauthorized' })
       return
     }
@@ -38,9 +48,11 @@ export default async function handler(req, res) {
       return
     }
 
-    const supabaseAdmin = getSupabaseAdmin()
+    const supabaseDb = useAdmin
+      ? getSupabaseAdmin()
+      : getSupabaseUserClient(accessToken)
 
-    const tombstoneCheck = await supabaseAdmin
+    const tombstoneCheck = await supabaseDb
       .from('deleted_records')
       .select('record_id')
       .eq('owner_id', user.id)
@@ -61,7 +73,7 @@ export default async function handler(req, res) {
     const filePath = `submissions/${submissionId}.webp`
     const buffer = Buffer.from(String(imageBase64), 'base64')
 
-    const { error: uploadError } = await supabaseAdmin.storage
+    const { error: uploadError } = await supabaseDb.storage
       .from('homework-images')
       .upload(filePath, buffer, {
         contentType: contentType || 'image/webp',
@@ -82,7 +94,7 @@ export default async function handler(req, res) {
 
     const timestamp = new Date(createdTime).toISOString()
 
-    const { error: dbError } = await supabaseAdmin
+    const { error: dbError } = await supabaseDb
       .from('submissions')
       .upsert(
         {

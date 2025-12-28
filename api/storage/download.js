@@ -1,5 +1,9 @@
 import { getAuthUser } from '../_auth.js'
-import { getSupabaseAdmin } from '../_supabase.js'
+import {
+  getSupabaseAdmin,
+  getSupabaseUserClient,
+  isServiceRoleKey
+} from '../_supabase.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -8,8 +12,14 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { user } = await getAuthUser(req, res)
+    const { user, accessToken } = await getAuthUser(req, res)
     if (!user) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const useAdmin = isServiceRoleKey()
+    if (!useAdmin && !accessToken) {
       res.status(401).json({ error: 'Unauthorized' })
       return
     }
@@ -23,9 +33,11 @@ export default async function handler(req, res) {
       return
     }
 
-    const supabaseAdmin = getSupabaseAdmin()
+    const supabaseDb = useAdmin
+      ? getSupabaseAdmin()
+      : getSupabaseUserClient(accessToken)
 
-    const { data: submission, error: submissionError } = await supabaseAdmin
+    const { data: submission, error: submissionError } = await supabaseDb
       .from('submissions')
       .select('id, owner_id')
       .eq('id', submissionId)
@@ -42,7 +54,7 @@ export default async function handler(req, res) {
     }
 
     const filePath = `submissions/${submissionId}.webp`
-    const { data, error } = await supabaseAdmin.storage
+    const { data, error } = await supabaseDb.storage
       .from('homework-images')
       .download(filePath)
 
