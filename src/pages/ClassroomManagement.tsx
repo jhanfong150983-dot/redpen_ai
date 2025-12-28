@@ -359,6 +359,9 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
         .first()
 
       if (folderToDelete) {
+        // 標記刪除（讓雲端知道要刪除）
+        await queueDeleteMany('folders', [folderToDelete.id])
+        // 從本地 IndexedDB 刪除
         await db.folders.delete(folderToDelete.id)
       }
 
