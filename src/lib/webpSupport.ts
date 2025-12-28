@@ -5,6 +5,8 @@
  * 通過實際測試 canvas.toBlob 來確定瀏覽器是否支持 WebP 編碼
  */
 
+import { debugLog } from './logger'
+
 let webpSupportCache: boolean | null = null
 
 /**
@@ -51,7 +53,7 @@ export async function checkWebPSupport(): Promise<boolean> {
     })
 
     webpSupportCache = result
-    console.log(`✅ WebP 支持檢測完成: ${result ? '支持' : '不支持'}`)
+    debugLog(`✅ WebP 支持檢測完成: ${result ? '支持' : '不支持'}`)
     return result
   } catch (error) {
     console.warn('⚠️ WebP 支持檢測失敗，默認為不支持', error)

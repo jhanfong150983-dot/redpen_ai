@@ -8,6 +8,7 @@ import { blobToBase64 as blobToDataUrl, compressImage } from '@/lib/imageCompres
 import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { fixCorruptedBase64 } from '@/lib/utils'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
+import { debugLog, infoLog } from '@/lib/logger'
 
 interface SyncStatus {
   isSyncing: boolean
@@ -177,7 +178,7 @@ export function useSync(options: UseSyncOptions = {}) {
    */
   const syncSubmission = async (submission: any) => {
     try {
-      console.log(`開始同步提交 ${submission.id}`)
+      debugLog(`開始同步提交 ${submission.id}`)
 
       let imageBase64: string
       let contentType: string | undefined
@@ -185,7 +186,7 @@ export function useSync(options: UseSyncOptions = {}) {
 
       // 優先使用 imageBase64（如果已經有）
       if (submission.imageBase64) {
-        console.log('✅ 使用現有的 Base64 數據')
+        debugLog('✅ 使用現有的 Base64 數據')
         const normalized = normalizeBase64Payload(
           submission.imageBase64,
           submission.imageBlob?.type
@@ -195,7 +196,7 @@ export function useSync(options: UseSyncOptions = {}) {
         base64DataUrl = normalized.dataUrl
       } else if (submission.imageBlob) {
         // 從 Blob 轉換
-        console.log('🔄 從 Blob 轉換為 Base64')
+        debugLog('🔄 從 Blob 轉換為 Base64')
         const dataUrl = await blobToDataUrl(submission.imageBlob)
         const normalized = normalizeBase64Payload(dataUrl, submission.imageBlob.type)
         imageBase64 = normalized.data
@@ -305,14 +306,14 @@ export function useSync(options: UseSyncOptions = {}) {
         }
       }
 
-      console.log('圖片與資料同步成功')
+      debugLog('圖片與資料同步成功')
 
       // 同步成功後，更新狀態但保留本地圖片數據
-      console.log('📝 更新本地狀態為 synced，保留圖片數據...')
+      debugLog('📝 更新本地狀態為 synced，保留圖片數據...')
 
       // 先檢查當前數據
       const beforeUpdate = await db.submissions.get(submission.id)
-      console.log('更新前:', {
+      debugLog('更新前:', {
         hasBlob: !!beforeUpdate?.imageBlob,
         blobSize: beforeUpdate?.imageBlob?.size,
         hasBase64: !!beforeUpdate?.imageBase64,
@@ -327,7 +328,7 @@ export function useSync(options: UseSyncOptions = {}) {
 
       // 驗證更新後數據
       const afterUpdate = await db.submissions.get(submission.id)
-      console.log('更新後:', {
+      debugLog('更新後:', {
         status: afterUpdate?.status,
         hasBlob: !!afterUpdate?.imageBlob,
         blobSize: afterUpdate?.imageBlob?.size,
@@ -343,7 +344,7 @@ export function useSync(options: UseSyncOptions = {}) {
         console.error('⚠️ 警告：更新後 Base64 丟失！')
       }
 
-      console.log('✅ 本地狀態更新成功')
+      debugLog('✅ 本地狀態更新成功')
 
       return true
     } catch (error) {
@@ -361,7 +362,7 @@ export function useSync(options: UseSyncOptions = {}) {
    * 上傳本機資料到雲端
    */
   const pushMetadata = useCallback(async () => {
-    console.log('📤 pushMetadata 開始')
+    debugLog('📤 pushMetadata 開始')
     const [classrooms, students, assignments, submissions, folders, deleteQueue] =
       await Promise.all([
         db.classrooms.toArray(),
@@ -372,7 +373,7 @@ export function useSync(options: UseSyncOptions = {}) {
         readDeleteQueue()
       ])
 
-    console.log('📊 pushMetadata 讀取的 folders:', folders)
+    debugLog('📊 pushMetadata 讀取的 folders:', folders)
 
     const deleteQueueIds = deleteQueue
       .map((item) => item.id)
@@ -420,7 +421,7 @@ export function useSync(options: UseSyncOptions = {}) {
         updatedAt: c.updatedAt
       }))
 
-    console.log('📤 pushMetadata - 準備發送的 classrooms:', classroomPayload)
+    debugLog('📤 pushMetadata - 準備發送的 classrooms:', classroomPayload)
 
     const studentPayload = students
       .filter((s) => s?.id && s?.classroomId)
@@ -497,11 +498,11 @@ export function useSync(options: UseSyncOptions = {}) {
       throw new Error(message)
     }
 
-    console.log('✅ pushMetadata 完成')
+    debugLog('✅ pushMetadata 完成')
 
     // pushMetadata 後再檢查一次 folders
     const afterPush = await db.folders.toArray()
-    console.log('📊 pushMetadata 後本地 folders:', afterPush)
+    debugLog('📊 pushMetadata 後本地 folders:', afterPush)
 
     if (deleteQueueIds.length > 0) {
       await clearDeleteQueue(deleteQueueIds)
@@ -512,7 +513,7 @@ export function useSync(options: UseSyncOptions = {}) {
    * 從雲端拉回資料
    */
   const pullMetadata = useCallback(async () => {
-    console.log('📥 pullMetadata 開始')
+    debugLog('📥 pullMetadata 開始')
     const response = await fetch('/api/data/sync', {
       method: 'GET',
       credentials: 'include'
@@ -555,11 +556,11 @@ export function useSync(options: UseSyncOptions = {}) {
     const deletedSubmissionIds = collectDeletedIds(deleted.submissions)
     const deletedFolderIds = collectDeletedIds(deleted.folders)
 
-    console.log('🗑️ 要刪除的 folders:', deletedFolderIds)
+    debugLog('🗑️ 要刪除的 folders:', deletedFolderIds)
 
     // 在 bulkDelete 之前檢查 folders
     const beforeDelete = await db.folders.toArray()
-    console.log('📊 bulkDelete 之前的 folders:', beforeDelete)
+    debugLog('📊 bulkDelete 之前的 folders:', beforeDelete)
 
     const deletedClassroomSet = new Set(deletedClassroomIds)
     const deletedStudentSet = new Set(deletedStudentIds)
@@ -569,8 +570,8 @@ export function useSync(options: UseSyncOptions = {}) {
 
     const existingSubmissions = await db.submissions.toArray()
 
-    console.log(`📦 pullMetadata: 從雲端拉取 ${submissions.length} 筆 submissions`)
-    console.log(`📦 pullMetadata: 本地現有 ${existingSubmissions.length} 筆 submissions`)
+    debugLog(`📦 pullMetadata: 從雲端拉取 ${submissions.length} 筆 submissions`)
+    debugLog(`📦 pullMetadata: 本地現有 ${existingSubmissions.length} 筆 submissions`)
 
     // 保留本地圖片數據（Blob 和 Base64）
     const imageDataMap = new Map(
@@ -583,7 +584,7 @@ export function useSync(options: UseSyncOptions = {}) {
       ])
     )
 
-    console.log(`📦 imageDataMap 建立完成，包含 ${imageDataMap.size} 筆圖片數據`)
+    debugLog(`📦 imageDataMap 建立完成，包含 ${imageDataMap.size} 筆圖片數據`)
 
     // 統計有多少本地圖片數據
     let blobCount = 0
@@ -592,7 +593,7 @@ export function useSync(options: UseSyncOptions = {}) {
       if (data.imageBlob) blobCount++
       if (data.imageBase64) base64Count++
     })
-    console.log(`📊 本地圖片統計: ${blobCount} 個 Blob, ${base64Count} 個 Base64`)
+    debugLog(`📊 本地圖片統計: ${blobCount} 個 Blob, ${base64Count} 個 Base64`)
 
     const mergedSubmissions: Submission[] = submissions
       .filter(
@@ -616,7 +617,7 @@ export function useSync(options: UseSyncOptions = {}) {
         const localImageData = imageDataMap.get(sub.id)
 
         if (localImageData && (localImageData.imageBlob || localImageData.imageBase64)) {
-          console.log(`🔄 恢復圖片數據: ${sub.id}`, {
+          debugLog(`🔄 恢復圖片數據: ${sub.id}`, {
             hasBlob: !!localImageData.imageBlob,
             hasBase64: !!localImageData.imageBase64,
             base64Length: localImageData.imageBase64?.length
@@ -641,7 +642,7 @@ export function useSync(options: UseSyncOptions = {}) {
         }
       })
 
-    console.log(`✅ 合併完成，準備寫入 ${mergedSubmissions.length} 筆 submissions`)
+    debugLog(`✅ 合併完成，準備寫入 ${mergedSubmissions.length} 筆 submissions`)
 
     // 統計合併後的圖片數據
     let mergedBlobCount = 0
@@ -650,9 +651,9 @@ export function useSync(options: UseSyncOptions = {}) {
       if (sub.imageBlob) mergedBlobCount++
       if (sub.imageBase64) mergedBase64Count++
     })
-    console.log(`📊 合併後圖片統計: ${mergedBlobCount} 個 Blob, ${mergedBase64Count} 個 Base64`)
+    debugLog(`📊 合併後圖片統計: ${mergedBlobCount} 個 Blob, ${mergedBase64Count} 個 Base64`)
 
-    console.log('📥 pullMetadata - 從雲端收到的原始 classrooms:', classrooms)
+    debugLog('📥 pullMetadata - 從雲端收到的原始 classrooms:', classrooms)
 
     // 保留本地的 folder 資料（因為後端可能還不支援 folder 欄位）
     const existingClassrooms = await db.classrooms.toArray()
@@ -680,7 +681,7 @@ export function useSync(options: UseSyncOptions = {}) {
         }
       })
 
-    console.log('📥 pullMetadata - 正規化後的 classrooms:', normalizedClassrooms)
+    debugLog('📥 pullMetadata - 正規化後的 classrooms:', normalizedClassrooms)
 
     const normalizedStudents: Student[] = students
       .filter((s: Student) => s?.id && s?.classroomId && !deletedStudentSet.has(s.id))
@@ -755,23 +756,23 @@ export function useSync(options: UseSyncOptions = {}) {
       await db.submissions.bulkDelete(deletedSubmissionIds)
     }
     if (deletedFolderIds.length > 0) {
-      console.log('⚠️ 執行刪除 folders:', deletedFolderIds)
+      debugLog('⚠️ 執行刪除 folders:', deletedFolderIds)
       await db.folders.bulkDelete(deletedFolderIds)
     }
 
     // 在所有 bulkDelete 之後檢查 folders
     const afterDelete = await db.folders.toArray()
-    console.log('📊 bulkDelete 之後的 folders:', afterDelete)
+    debugLog('📊 bulkDelete 之後的 folders:', afterDelete)
 
     // 先檢查 folders 狀態
     const beforePut = await db.folders.toArray()
-    console.log('📊 bulkPut 之前的 folders:', beforePut)
+    debugLog('📊 bulkPut 之前的 folders:', beforePut)
 
     await db.classrooms.bulkPut(normalizedClassrooms)
 
     // 檢查寫入後的 classrooms
     const afterPutClassrooms = await db.classrooms.toArray()
-    console.log('📊 bulkPut classrooms 之後的資料:', afterPutClassrooms)
+    debugLog('📊 bulkPut classrooms 之後的資料:', afterPutClassrooms)
 
     await db.students.bulkPut(normalizedStudents)
     await db.assignments.bulkPut(normalizedAssignments)
@@ -779,18 +780,18 @@ export function useSync(options: UseSyncOptions = {}) {
 
     // 再檢查 folders 狀態
     const afterPut = await db.folders.toArray()
-    console.log('📊 bulkPut 之後的 folders:', afterPut)
+    debugLog('📊 bulkPut 之後的 folders:', afterPut)
 
     // 只有當雲端有 folders 資料時才更新（避免覆蓋本地資料）
     if (folders.length > 0) {
       await db.folders.bulkPut(normalizedFolders)
-      console.log(`✅ 同步了 ${normalizedFolders.length} 個資料夾`)
+      debugLog(`✅ 同步了 ${normalizedFolders.length} 個資料夾`)
     } else {
-      console.log('⚠️ 雲端沒有 folders 資料，保留本地資料夾')
+      debugLog('⚠️ 雲端沒有 folders 資料，保留本地資料夾')
 
       // 驗證本地資料夾是否真的保留
       const localFolders = await db.folders.toArray()
-      console.log('🔍 pullMetadata 後本地 folders:', localFolders)
+      debugLog('🔍 pullMetadata 後本地 folders:', localFolders)
     }
   }, [])
 
@@ -799,13 +800,13 @@ export function useSync(options: UseSyncOptions = {}) {
    */
   const performSync = useCallback(async () => {
     if (!isOnline) {
-      console.log('離線狀態，跳過同步')
+      debugLog('離線狀態，跳過同步')
       void updatePendingCount()
       return
     }
 
     if (isSyncingRef.current) {
-      console.log('目前正在同步中，跳過本次')
+      debugLog('目前正在同步中，跳過本次')
       syncQueuedRef.current = true
       return
     }
@@ -822,14 +823,14 @@ export function useSync(options: UseSyncOptions = {}) {
 
       // 檢查 performSync 開始時的 folders
       const performSyncStart = await db.folders.toArray()
-      console.log('🔵 performSync 開始時的 folders:', performSyncStart)
+      debugLog('🔵 performSync 開始時的 folders:', performSyncStart)
 
       const pendingSubmissions = await db.submissions
         .where('status')
         .equals('scanned')
         .toArray()
 
-      console.log(`找到 ${pendingSubmissions.length} 條待同步紀錄`)
+      debugLog(`找到 ${pendingSubmissions.length} 條待同步紀錄`)
 
       let successCount = 0
       let failCount = 0
@@ -847,7 +848,7 @@ export function useSync(options: UseSyncOptions = {}) {
       }
 
       if (pendingSubmissions.length > 0) {
-        console.log(`同步完成：成功 ${successCount} 筆，失敗 ${failCount} 筆`)
+        infoLog(`同步完成：成功 ${successCount} 筆，失敗 ${failCount} 筆`)
       }
 
       // 檢查 push 前的 folders
@@ -861,7 +862,7 @@ export function useSync(options: UseSyncOptions = {}) {
       }
 
       const beforePush = await db.folders.toArray()
-      console.log('🔵 pushMetadata 前的 folders:', beforePush)
+      debugLog('🔵 pushMetadata 前的 folders:', beforePush)
 
       await pushMetadata()
       if (syncBlockedReasonRef.current) {
@@ -875,7 +876,7 @@ export function useSync(options: UseSyncOptions = {}) {
 
       // 檢查 push 後、pull 前的 folders
       const afterPushBeforePull = await db.folders.toArray()
-      console.log('🔵 pushMetadata 後、pullMetadata 前的 folders:', afterPushBeforePull)
+      debugLog('🔵 pushMetadata 後、pullMetadata 前的 folders:', afterPushBeforePull)
 
       await pullMetadata()
       if (syncBlockedReasonRef.current) {
@@ -927,7 +928,7 @@ export function useSync(options: UseSyncOptions = {}) {
    * 提供給外部手動觸發同步
    */
   const triggerSync = useCallback(() => {
-    console.log('手動觸發同步')
+    debugLog('手動觸發同步')
     void performSync()
   }, [performSync])
 
@@ -945,7 +946,7 @@ export function useSync(options: UseSyncOptions = {}) {
     const wasOnline = prevOnlineRef.current
     prevOnlineRef.current = isOnline
     if (!wasOnline && isOnline) {
-      console.log('網路恢復，觸發同步')
+      debugLog('網路恢復，觸發同步')
       void performSync()
     }
   }, [isOnline, autoSync, performSync])

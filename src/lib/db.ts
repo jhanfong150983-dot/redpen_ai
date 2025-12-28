@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
+import { debugLog } from './logger'
 
 /**
  * 標準答案資料結構
@@ -236,7 +237,7 @@ class RedPenDatabase extends Dexie {
   constructor() {
     super('RedPenDB')
 
-    console.log('🏗️ 初始化 RedPenDatabase')
+    debugLog('🏗️ 初始化 RedPenDatabase')
 
     this.version(1).stores({
       classrooms: '&id, name',
@@ -280,13 +281,13 @@ class RedPenDatabase extends Dexie {
         '++id, assignmentId, studentId, submissionId, questionId, createdAt',
       folders: '&id, name, type' // 新增 folders table
     }).upgrade(async (trans) => {
-      console.log('🔧 執行資料庫 version 4 升級')
+      debugLog('🔧 執行資料庫 version 4 升級')
       // 遷移 localStorage 中的空資料夾到資料庫
       try {
         const classroomFoldersStr = localStorage.getItem('classroom-empty-folders')
         const assignmentFoldersStr = localStorage.getItem('assignment-empty-folders')
 
-        console.log('📦 準備遷移 localStorage folders:', {
+        debugLog('📦 準備遷移 localStorage folders:', {
           classroom: classroomFoldersStr,
           assignment: assignmentFoldersStr
         })
@@ -305,7 +306,7 @@ class RedPenDatabase extends Dexie {
           }
           // 清除舊的 localStorage 資料
           localStorage.removeItem('classroom-empty-folders')
-          console.log('✅ 已遷移班級資料夾:', classroomFolders.length)
+          debugLog('✅ 已遷移班級資料夾:', classroomFolders.length)
         }
 
         if (assignmentFoldersStr) {
@@ -322,10 +323,10 @@ class RedPenDatabase extends Dexie {
           }
           // 清除舊的 localStorage 資料
           localStorage.removeItem('assignment-empty-folders')
-          console.log('✅ 已遷移作業資料夾:', assignmentFolders.length)
+          debugLog('✅ 已遷移作業資料夾:', assignmentFolders.length)
         }
 
-        console.log('✅ 資料庫升級完成')
+        debugLog('✅ 資料庫升級完成')
       } catch (error) {
         console.error('❌ 遷移 localStorage 資料夾失敗:', error)
       }
@@ -391,8 +392,8 @@ export const db = new RedPenDatabase()
 // 檢查資料庫初始化後的狀態
 db.open().then(async () => {
   const folders = await db.folders.toArray()
-  console.log('🗄️ 資料庫開啟後的 folders:', folders)
-  console.log('📊 資料庫版本:', db.verno)
+  debugLog('🗄️ 資料庫開啟後的 folders:', folders)
+  debugLog('📊 資料庫版本:', db.verno)
 }).catch(error => {
   console.error('❌ 資料庫開啟失敗:', error)
 })

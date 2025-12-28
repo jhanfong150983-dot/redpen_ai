@@ -1,6 +1,7 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { db } from './db'
+import { debugLog } from './logger'
 
 /**
  * 合併 Tailwind CSS class names
@@ -72,7 +73,7 @@ export function getSubmissionImageUrl(submission?: {
   const safari = isSafari()
   const browser = safari ? 'Safari' : 'Chrome/Other'
 
-  console.log(`🖼️ 取得圖片 URL (${browser}):`, {
+  debugLog(`🖼️ 取得圖片 URL (${browser}):`, {
     submissionId: submission.id,
     hasBlob: !!submission.imageBlob,
     blobSize: submission.imageBlob?.size,
@@ -85,7 +86,7 @@ export function getSubmissionImageUrl(submission?: {
   // 策略 1: 優先使用 Base64（最穩定，所有瀏覽器都支持）
   if (submission.imageBase64) {
     const base64 = fixCorruptedBase64(submission.imageBase64)
-    console.log(`✅ 使用 Base64 (${browser})`, { submissionId: submission.id, length: base64.length })
+    debugLog(`✅ 使用 Base64 (${browser})`, { submissionId: submission.id, length: base64.length })
     return base64
   }
 
@@ -101,12 +102,12 @@ export function getSubmissionImageUrl(submission?: {
           console.warn(`⚠️ Blob 缺少 type，設定為 image/jpeg (${browser})`, { submissionId: submission.id })
           const fixedBlob = new Blob([submission.imageBlob], { type: 'image/jpeg' })
           const url = URL.createObjectURL(fixedBlob)
-          console.log(`✅ 使用 Blob URL (修復後, ${browser})`, { submissionId: submission.id, url })
+          debugLog(`✅ 使用 Blob URL (修復後, ${browser})`, { submissionId: submission.id, url })
           return url
         }
 
         const url = URL.createObjectURL(submission.imageBlob)
-        console.log(`✅ 使用 Blob URL (${browser})`, { submissionId: submission.id, url })
+        debugLog(`✅ 使用 Blob URL (${browser})`, { submissionId: submission.id, url })
         return url
       }
     } catch (error) {
@@ -117,7 +118,7 @@ export function getSubmissionImageUrl(submission?: {
   // 策略 3: 使用云端 URL（從 Supabase 下載）
   if (submission.imageUrl && submission.id) {
     const url = `/api/storage/download?submissionId=${encodeURIComponent(submission.id)}`
-    console.log(`✅ 使用雲端 URL (${browser})`, { submissionId: submission.id, url })
+    debugLog(`✅ 使用雲端 URL (${browser})`, { submissionId: submission.id, url })
     return url
   }
 
