@@ -5,13 +5,56 @@ import {
   type AnswerKey,
   type AnswerExtractionCorrection
 } from './db'
-import { blobToBase64 as blobToDataUrl } from './imageCompression'
+import { blobToBase64 as blobToDataUrl, compressImageFile } from './imageCompression'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from './blob-storage'
 
 const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
 
 // 你這套設計是「一定走 proxy」：有沒有可用最後由 fetch 成功與否決定
 export const isGeminiAvailable = true
+
+const GEMINI_SINGLE_IMAGE_TARGET_BYTES = 1200 * 1024
+const GEMINI_DUAL_IMAGE_TARGET_BYTES = 900 * 1024
+
+async function compressForGemini(
+  blob: Blob,
+  targetBytes: number,
+  label: string
+): Promise<Blob> {
+  if (blob.size <= targetBytes) return blob
+
+  const strategies = [
+    { maxWidth: 1600, quality: 0.82 },
+    { maxWidth: 1280, quality: 0.76 },
+    { maxWidth: 1024, quality: 0.7 },
+    { maxWidth: 900, quality: 0.65 },
+    { maxWidth: 800, quality: 0.6 }
+  ]
+
+  let current = blob
+  for (const strategy of strategies) {
+    try {
+      const compressed = await compressImageFile(current, strategy)
+      if (compressed.size < current.size) {
+        current = compressed
+      }
+      if (current.size <= targetBytes) {
+        break
+      }
+    } catch (error) {
+      console.warn(`⚠️ ${label} 圖片壓縮失敗，改用原圖`, error)
+      return blob
+    }
+  }
+
+  if (current.size > targetBytes) {
+    console.warn(
+      `⚠️ ${label} 圖片仍偏大 (${Math.round(current.size / 1024)} KB)，可能仍觸發限制`
+    )
+  }
+
+  return current
+}
 
 // 工具：Blob 轉 Base64（去掉 data: 前綴）
 /**
@@ -866,8 +909,18 @@ export async function gradeSubmission(
   try {
     console.log(`🧠 使用模型 ${currentModelName} 進行批改...`)
 
-    const submissionBase64 = await blobToBase64(submissionImage)
-    const submissionMimeType = submissionImage.type || 'image/jpeg'
+    const hasAnswerKeyImage = Boolean(answerKeyImage)
+    const submissionTarget = hasAnswerKeyImage
+      ? GEMINI_DUAL_IMAGE_TARGET_BYTES
+      : GEMINI_SINGLE_IMAGE_TARGET_BYTES
+    const preparedSubmissionImage = await compressForGemini(
+      submissionImage,
+      submissionTarget,
+      '作業'
+    )
+
+    const submissionBase64 = await blobToBase64(preparedSubmissionImage)
+    const submissionMimeType = preparedSubmissionImage.type || 'image/jpeg'
     const requestParts: GeminiRequestPart[] = []
     const promptSections: string[] = []
 
@@ -919,8 +972,13 @@ ${JSON.stringify(answerKey)}
 `.trim()
       )
     } else if (answerKeyImage) {
-      const answerKeyBase64 = await blobToBase64(answerKeyImage)
-      const answerKeyMimeType = answerKeyImage.type || 'image/jpeg'
+      const preparedAnswerKeyImage = await compressForGemini(
+        answerKeyImage,
+        GEMINI_DUAL_IMAGE_TARGET_BYTES,
+        '標準答案'
+      )
+      const answerKeyBase64 = await blobToBase64(preparedAnswerKeyImage)
+      const answerKeyMimeType = preparedAnswerKeyImage.type || 'image/jpeg'
       promptSections.push(
         `
 第一張圖片是「標準答案／解答本」，第二張圖片是「學生作業」。
