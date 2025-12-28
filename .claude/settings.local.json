@@ -11,7 +11,8 @@
       "Bash(cat:*)",
       "Bash(npx tsc:*)",
       "Bash(node test-prompt-length.js:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(git add:*)"
     ]
   }
 }

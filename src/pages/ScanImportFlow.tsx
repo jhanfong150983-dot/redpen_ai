@@ -5,6 +5,7 @@ import type { Student, Submission } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
+import { blobToBase64 } from '@/lib/imageCompression'
 import SeatSelectionPage from './SeatSelectionPage'
 import CameraCapturePage from './CameraCapturePage'
 
@@ -137,12 +138,15 @@ export default function ScanImportFlow({
         }
 
         // 建立新的 submission
+        // 同時存儲 Blob 和 Base64，確保平板 Chrome 也能正常顯示
+        const imageBase64 = await blobToBase64(imageBlob)
         const submission: Submission = {
           id: generateId(),
           assignmentId,
           studentId,
           status: 'scanned',
           imageBlob,
+          imageBase64,
           createdAt: getCurrentTimestamp()
         }
 
