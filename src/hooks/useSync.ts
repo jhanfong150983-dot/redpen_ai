@@ -71,6 +71,7 @@ export function useSync(options: UseSyncOptions = {}) {
   const prevOnlineRef = useRef(isOnline)
   const lastFocusSyncRef = useRef(0)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
+  const syncBlockedReasonRef = useRef<string | null>(null)
 
   const updateSubmissionImageCache = async (
     submissionId: string,
@@ -91,6 +92,24 @@ export function useSync(options: UseSyncOptions = {}) {
       } else {
         throw error
       }
+    }
+  }
+
+  const isRlsError = (value: unknown) => {
+    const message = value instanceof Error ? value.message : String(value)
+    const lower = message.toLowerCase()
+    return (
+      lower.includes('row-level security') ||
+      lower.includes('rls') ||
+      lower.includes('permission denied') ||
+      lower.includes('not authorized') ||
+      lower.includes('not allowed')
+    )
+  }
+
+  const markSyncBlocked = (reason: string) => {
+    if (!syncBlockedReasonRef.current) {
+      syncBlockedReasonRef.current = reason
     }
   }
 
@@ -178,6 +197,11 @@ export function useSync(options: UseSyncOptions = {}) {
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
         const message = data?.error || '同步失敗'
+        if (isRlsError(message) || response.status === 401 || response.status === 403) {
+          console.warn('⚠️ 同步遭到權限限制 (RLS)，暫停同步:', message)
+          markSyncBlocked(message)
+          return false
+        }
         throw new Error(message)
       }
 
@@ -223,6 +247,11 @@ export function useSync(options: UseSyncOptions = {}) {
 
       return true
     } catch (error) {
+      if (isRlsError(error)) {
+        console.warn('⚠️ 同步遭到權限限制 (RLS)，暫停同步:', error)
+        markSyncBlocked(error instanceof Error ? error.message : String(error))
+        return false
+      }
       console.error(`同步失敗 ${submission.id}:`, error)
       throw error
     }
@@ -359,7 +388,13 @@ export function useSync(options: UseSyncOptions = {}) {
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      throw new Error(data?.error || '同步失敗')
+      const message = data?.error || '同步失敗'
+      if (isRlsError(message) || response.status === 401 || response.status === 403) {
+        console.warn('⚠️ pushMetadata 遭到權限限制 (RLS)，暫停同步:', message)
+        markSyncBlocked(message)
+        return
+      }
+      throw new Error(message)
     }
 
     console.log('✅ pushMetadata 完成')
@@ -385,7 +420,13 @@ export function useSync(options: UseSyncOptions = {}) {
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      throw new Error(data?.error || '載入雲端資料失敗')
+      const message = data?.error || '載入雲端資料失敗'
+      if (isRlsError(message) || response.status === 401 || response.status === 403) {
+        console.warn('⚠️ pullMetadata 遭到權限限制 (RLS)，暫停同步:', message)
+        markSyncBlocked(message)
+        return
+      }
+      throw new Error(message)
     }
 
     const classrooms = Array.isArray(data.classrooms) ? data.classrooms : []
@@ -669,6 +710,12 @@ export function useSync(options: UseSyncOptions = {}) {
       return
     }
 
+    if (syncBlockedReasonRef.current) {
+      console.warn('⚠️ 已偵測到 RLS 權限限制，暫停同步:', syncBlockedReasonRef.current)
+      setStatus((prev) => ({ ...prev, isSyncing: false, error: null }))
+      return
+    }
+
     try {
       isSyncingRef.current = true
       setStatus((prev) => ({ ...prev, isSyncing: true, error: null }))
@@ -689,8 +736,10 @@ export function useSync(options: UseSyncOptions = {}) {
 
       for (const submission of pendingSubmissions) {
         try {
-          await syncSubmission(submission)
-          successCount++
+          const result = await syncSubmission(submission)
+          if (result) {
+            successCount++
+          }
         } catch (error) {
           failCount++
           console.error('同步失敗:', error)
@@ -702,16 +751,41 @@ export function useSync(options: UseSyncOptions = {}) {
       }
 
       // 檢查 push 前的 folders
+      if (syncBlockedReasonRef.current) {
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          error: null
+        }))
+        return
+      }
+
       const beforePush = await db.folders.toArray()
       console.log('🔵 pushMetadata 前的 folders:', beforePush)
 
       await pushMetadata()
+      if (syncBlockedReasonRef.current) {
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          error: null
+        }))
+        return
+      }
 
       // 檢查 push 後、pull 前的 folders
       const afterPushBeforePull = await db.folders.toArray()
       console.log('🔵 pushMetadata 後、pullMetadata 前的 folders:', afterPushBeforePull)
 
       await pullMetadata()
+      if (syncBlockedReasonRef.current) {
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          error: null
+        }))
+        return
+      }
 
       const remainingCount = await updatePendingCount()
 
@@ -720,9 +794,18 @@ export function useSync(options: UseSyncOptions = {}) {
         isSyncing: false,
         lastSyncTime: Date.now(),
         pendingCount: remainingCount,
-        error: failCount > 0 ? `${failCount} 條記錄同步失敗` : null
+        error: syncBlockedReasonRef.current
+          ? null
+          : failCount > 0
+            ? `${failCount} 條記錄同步失敗`
+            : null
       }))
     } catch (error) {
+      if (isRlsError(error)) {
+        markSyncBlocked(error instanceof Error ? error.message : String(error))
+        setStatus((prev) => ({ ...prev, isSyncing: false, error: null }))
+        return
+      }
       console.error('同步過程發生錯誤:', error)
       setStatus((prev) => ({
         ...prev,
