@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo } from 'react'
-import { ArrowLeft, BookOpen, Loader, Folder } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, BookOpen, Loader, Folder, Users } from 'lucide-react'
 import { db } from '@/lib/db'
-import type { Assignment, Classroom } from '@/lib/db'
+import type { Assignment, Classroom, Folder as AssignmentFolder } from '@/lib/db'
 
 interface CorrectionSelectProps {
   onBack?: () => void
@@ -16,46 +16,61 @@ export default function CorrectionSelect({
 }: CorrectionSelectProps) {
   const [assignments, setAssignments] = useState<AssignmentWithClassroom[]>([])
   const [classrooms, setClassrooms] = useState<Classroom[]>([])
+  const [assignmentFolders, setAssignmentFolders] = useState<AssignmentFolder[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [selectedClassroomId, setSelectedClassroomId] = useState('')
   const [selectedFolder, setSelectedFolder] = useState('__uncategorized__')
 
-  // 計算已使用的班級資料夾
+  const classAssignments = useMemo(() => {
+    if (!selectedClassroomId) return assignments
+    return assignments.filter((a) => a.classroomId === selectedClassroomId)
+  }, [assignments, selectedClassroomId])
+
+  const emptyFolders = useMemo(() => {
+    if (!selectedClassroomId) return []
+    return assignmentFolders
+      .filter((folder) => folder.classroomId === selectedClassroomId)
+      .map((folder) => folder.name)
+  }, [assignmentFolders, selectedClassroomId])
+
   const usedFolders = useMemo(() => {
-    const folders = classrooms
-      .map((c) => c.folder)
+    const folders = classAssignments
+      .map((assignment) => assignment.folder)
       .filter((f): f is string => !!f && !!f.trim())
-    return Array.from(new Set(folders)).sort()
-  }, [classrooms])
+    const allFolders = [...new Set([...folders, ...emptyFolders])]
+    return allFolders.sort()
+  }, [classAssignments, emptyFolders])
 
   // 根據選擇的資料夾篩選作業
   const filteredAssignments = useMemo(() => {
-    if (!selectedFolder) return assignments
-    return assignments.filter((a) => {
+    if (!selectedClassroomId) return classAssignments
+    return classAssignments.filter((a) => {
       if (selectedFolder === '__uncategorized__') {
-        return !a.classroom?.folder
+        return !a.folder
       }
-      return a.classroom?.folder === selectedFolder
+      return a.folder === selectedFolder
     })
-  }, [assignments, selectedFolder])
+  }, [classAssignments, selectedClassroomId, selectedFolder])
 
   useEffect(() => {
     const load = async () => {
       setIsLoading(true)
       try {
-        const [assignmentData, classroomData] = await Promise.all([
+        const [assignmentData, classroomData, folderData] = await Promise.all([
           db.assignments.toArray(),
-          db.classrooms.toArray()
+          db.classrooms.toArray(),
+          db.folders.where('type').equals('assignment').toArray()
         ])
 
         setClassrooms(classroomData)
 
-        const withClassroom: AssignmentWithClassroom[] = await Promise.all(
-          assignmentData.map(async (a) => {
-            const classroom = await db.classrooms.get(a.classroomId)
-            return { ...a, classroom: classroom || undefined }
-          })
-        )
+        const classroomMap = new Map(classroomData.map((c) => [c.id, c]))
+        const withClassroom: AssignmentWithClassroom[] = assignmentData.map((a) => ({
+          ...a,
+          classroom: classroomMap.get(a.classroomId) || undefined
+        }))
         setAssignments(withClassroom)
+        setAssignmentFolders(folderData)
       } finally {
         setIsLoading(false)
       }
@@ -63,6 +78,18 @@ export default function CorrectionSelect({
 
     void load()
   }, [])
+
+  useEffect(() => {
+    if (classrooms.length > 0 && !selectedClassroomId) {
+      setSelectedClassroomId(classrooms[0].id)
+    }
+  }, [classrooms, selectedClassroomId])
+
+  useEffect(() => {
+    if (selectedClassroomId) {
+      setSelectedFolder('__uncategorized__')
+    }
+  }, [selectedClassroomId])
 
   if (isLoading) {
     return (
@@ -101,30 +128,50 @@ export default function CorrectionSelect({
             </div>
           </div>
 
-          {/* 班級資料夾篩選 */}
-          {usedFolders.length > 0 && (
+          {classrooms.length > 0 && (
             <div className="mt-4 pt-4 border-t border-gray-100">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Folder className="w-4 h-4 inline mr-1" />
-                篩選班級資料夾
-              </label>
-              <select
-                value={selectedFolder}
-                onChange={(e) => setSelectedFolder(e.target.value)}
-                className="w-full md:w-64 px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none transition-all bg-white"
-              >
-                <option value="__uncategorized__">
-                  未分類 ({assignments.filter(a => !a.classroom?.folder).length})
-                </option>
-                {usedFolders.map((folder) => {
-                  const count = assignments.filter(a => a.classroom?.folder === folder).length
-                  return (
-                    <option key={folder} value={folder}>
-                      {folder} ({count})
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Users className="w-4 h-4 inline mr-1" />
+                    選擇班級
+                  </label>
+                  <select
+                    value={selectedClassroomId}
+                    onChange={(e) => setSelectedClassroomId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none transition-all bg-white"
+                  >
+                    {classrooms.map((classroom) => (
+                      <option key={classroom.id} value={classroom.id}>
+                        {classroom.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Folder className="w-4 h-4 inline mr-1" />
+                    選擇資料夾
+                  </label>
+                  <select
+                    value={selectedFolder}
+                    onChange={(e) => setSelectedFolder(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none transition-all bg-white"
+                  >
+                    <option value="__uncategorized__">
+                      未分類 ({classAssignments.filter(a => !a.folder).length})
                     </option>
-                  )
-                })}
-              </select>
+                    {usedFolders.map((folder) => {
+                      const count = classAssignments.filter(a => a.folder === folder).length
+                      return (
+                        <option key={folder} value={folder}>
+                          {folder} ({count})
+                        </option>
+                      )
+                    })}
+                  </select>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -136,7 +183,7 @@ export default function CorrectionSelect({
               此資料夾中沒有作業
             </h3>
             <p className="text-gray-600">
-              請選擇其他資料夾或清除篩選條件。
+              請選擇其他班級或資料夾。
             </p>
           </div>
         ) : assignments.length === 0 ? (

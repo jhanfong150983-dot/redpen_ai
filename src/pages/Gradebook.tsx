@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ArrowLeft, Download, Info } from 'lucide-react'
 import { NumericInput } from '@/components/NumericInput'
 import { db } from '@/lib/db'
-import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
+import type { Assignment, Classroom, Folder as AssignmentFolder, Student, Submission } from '@/lib/db'
 
 interface GradebookProps {
   onBack?: () => void
@@ -17,6 +17,8 @@ export default function Gradebook({ onBack }: GradebookProps) {
   const [classrooms, setClassrooms] = useState<Classroom[]>([])
   const [selectedClassroomId, setSelectedClassroomId] = useState('')
   const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [assignmentFolders, setAssignmentFolders] = useState<AssignmentFolder[]>([])
+  const [selectedFolder, setSelectedFolder] = useState('__uncategorized__')
   const [students, setStudents] = useState<Student[]>([])
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [weights, setWeights] = useState<Record<string, number>>({})
@@ -38,15 +40,20 @@ export default function Gradebook({ onBack }: GradebookProps) {
       setIsLoading(true)
       setError(null)
       try {
-        const [asgs, stus] = await Promise.all([
+        const [asgs, stus, folders] = await Promise.all([
           db.assignments.where('classroomId').equals(selectedClassroomId).toArray(),
-          db.students.where('classroomId').equals(selectedClassroomId).toArray()
+          db.students.where('classroomId').equals(selectedClassroomId).toArray(),
+          db.folders
+            .where('[type+classroomId]')
+            .equals(['assignment', selectedClassroomId])
+            .toArray()
         ])
 
         const sortedAssignments = [...asgs].sort((a, b) => a.title.localeCompare(b.title))
         const sortedStudents = [...stus].sort((a, b) => (a.seatNumber ?? 99999) - (b.seatNumber ?? 99999))
         setAssignments(sortedAssignments)
         setStudents(sortedStudents)
+        setAssignmentFolders(folders)
 
         if (sortedAssignments.length > 0) {
           const subs = await db.submissions
@@ -75,6 +82,35 @@ export default function Gradebook({ onBack }: GradebookProps) {
     void load()
   }, [selectedClassroomId])
 
+  useEffect(() => {
+    if (selectedClassroomId) {
+      setSelectedFolder('__uncategorized__')
+    }
+  }, [selectedClassroomId])
+
+  const emptyFolders = useMemo(
+    () => assignmentFolders.map((folder) => folder.name),
+    [assignmentFolders]
+  )
+
+  const usedFolders = useMemo(() => {
+    const folders = assignments
+      .map((a) => a.folder)
+      .filter((f): f is string => !!f && !!f.trim())
+    const allFolders = [...new Set([...folders, ...emptyFolders])]
+    return allFolders.sort()
+  }, [assignments, emptyFolders])
+
+  const filteredAssignments = useMemo(() => {
+    if (!selectedFolder) return assignments
+    return assignments.filter((a) => {
+      if (selectedFolder === '__uncategorized__') {
+        return !a.folder
+      }
+      return a.folder === selectedFolder
+    })
+  }, [assignments, selectedFolder])
+
   const submissionMap = useMemo(() => {
     const map = new Map<string, Submission>()
     submissions.forEach((s) => {
@@ -84,19 +120,19 @@ export default function Gradebook({ onBack }: GradebookProps) {
   }, [submissions])
 
   const totalWeight = useMemo(
-    () => assignments.reduce((sum, a) => sum + (weights[a.id] ?? 0), 0),
-    [assignments, weights]
+    () => filteredAssignments.reduce((sum, a) => sum + (weights[a.id] ?? 0), 0),
+    [filteredAssignments, weights]
   )
 
   const rows = useMemo(() => {
     return students.map((s) => {
-      const scores = assignments.map((a) => {
+      const scores = filteredAssignments.map((a) => {
         const sub = submissionMap.get(`${a.id}-${s.id}`)
         return sub?.score ?? null
       })
       const weightedTotal =
         totalWeight > 0
-          ? assignments.reduce((sum, a, idx) => {
+          ? filteredAssignments.reduce((sum, a, idx) => {
               const score = scores[idx]
               const w = weights[a.id] ?? 0
               return sum + (score != null ? score * w : 0)
@@ -104,7 +140,7 @@ export default function Gradebook({ onBack }: GradebookProps) {
           : null
       return { student: s, scores, weightedTotal }
     })
-  }, [students, assignments, submissionMap, weights, totalWeight])
+  }, [students, filteredAssignments, submissionMap, weights, totalWeight])
 
   const calcStats = (values: Array<number | null>): SimpleStats => {
     const valid = values.filter((v): v is number => v != null)
@@ -131,12 +167,12 @@ export default function Gradebook({ onBack }: GradebookProps) {
 
   const assignmentStats = useMemo(() => {
     const map: Record<string, SimpleStats> = {}
-    assignments.forEach((a, idx) => {
+    filteredAssignments.forEach((a, idx) => {
       const values = rows.map((r) => r.scores[idx])
       map[a.id] = calcStats(values)
     })
     return map
-  }, [assignments, rows])
+  }, [filteredAssignments, rows])
 
   const totalStats = useMemo(() => {
     const totals = rows.map((r) => r.weightedTotal).filter((v): v is number => v != null)
@@ -154,7 +190,7 @@ export default function Gradebook({ onBack }: GradebookProps) {
   }
 
   const handleExportCsv = () => {
-    const headers = ['座號', '姓名', ...assignments.map((a) => a.title), '總分']
+    const headers = ['座號', '姓名', ...filteredAssignments.map((a) => a.title), '總分']
     const lines = rows.map((r) => {
       const cols = [
         r.student.seatNumber ?? '',
@@ -205,12 +241,31 @@ export default function Gradebook({ onBack }: GradebookProps) {
               value={selectedClassroomId}
               onChange={(e) => setSelectedClassroomId(e.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white shadow-sm"
+              aria-label="選擇班級"
             >
               {classrooms.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
               ))}
+            </select>
+            <select
+              value={selectedFolder}
+              onChange={(e) => setSelectedFolder(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white shadow-sm"
+              aria-label="選擇資料夾"
+            >
+              <option value="__uncategorized__">
+                未分類 ({assignments.filter((a) => !a.folder).length})
+              </option>
+              {usedFolders.map((folder) => {
+                const count = assignments.filter((a) => a.folder === folder).length
+                return (
+                  <option key={folder} value={folder}>
+                    {folder} ({count})
+                  </option>
+                )
+              })}
             </select>
             <button
               type="button"
@@ -249,7 +304,7 @@ export default function Gradebook({ onBack }: GradebookProps) {
                 <tr className="bg-gray-50 text-gray-700">
                   <th className="px-3 py-2 text-left w-16">座號</th>
                   <th className="px-3 py-2 text-left w-32">姓名</th>
-                  {assignments.map((a) => (
+                  {filteredAssignments.map((a) => (
                     <th key={a.id} className="px-3 py-2 text-center min-w-[140px]">
                       <div className="font-semibold text-gray-900">{a.title}</div>
                       <div className="text-xs text-gray-500 flex items-center justify-center gap-1 mt-1">
@@ -277,26 +332,26 @@ export default function Gradebook({ onBack }: GradebookProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {rows.map((r) => {
-                  const isLow =
-                    totalStats.q1 != null && r.weightedTotal != null && r.weightedTotal <= totalStats.q1
-                  return (
-                    <tr
-                      key={r.student.id}
-                      className={`hover:bg-gray-50 ${isLow ? 'bg-rose-50/80' : ''}`}
-                    >
-                      <td className="px-3 py-2 text-gray-900 font-medium">
-                        {r.student.seatNumber ?? '—'}
-                      </td>
-                      <td className="px-3 py-2 text-gray-800">{r.student.name}</td>
-                      {r.scores.map((score, idx) => (
-                        <td key={assignments[idx].id} className="px-3 py-2 text-center text-gray-900">
-                          {score == null ? '—' : score}
+                  {rows.map((r) => {
+                    const isLow =
+                      totalStats.q1 != null && r.weightedTotal != null && r.weightedTotal <= totalStats.q1
+                    return (
+                      <tr
+                        key={r.student.id}
+                        className={`hover:bg-gray-50 ${isLow ? 'bg-rose-50/80' : ''}`}
+                      >
+                        <td className="px-3 py-2 text-gray-900 font-medium">
+                          {r.student.seatNumber ?? '—'}
                         </td>
-                      ))}
-                      <td className="px-3 py-2 text-center font-semibold">
-                        <span
-                          className={`inline-flex items-center justify-center gap-1 ${
+                        <td className="px-3 py-2 text-gray-800">{r.student.name}</td>
+                        {r.scores.map((score, idx) => (
+                          <td key={filteredAssignments[idx].id} className="px-3 py-2 text-center text-gray-900">
+                            {score == null ? '—' : score}
+                          </td>
+                        ))}
+                        <td className="px-3 py-2 text-center font-semibold">
+                          <span
+                            className={`inline-flex items-center justify-center gap-1 ${
                             isLow
                               ? 'px-2 py-1 rounded-lg bg-rose-100 text-rose-800 ring-1 ring-rose-200'
                               : 'text-gray-900'
@@ -311,7 +366,7 @@ export default function Gradebook({ onBack }: GradebookProps) {
                 })}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={assignments.length + 3} className="px-3 py-6 text-center text-gray-500">
+                    <td colSpan={filteredAssignments.length + 3} className="px-3 py-6 text-center text-gray-500">
                       尚無學生或作業資料。
                     </td>
                   </tr>

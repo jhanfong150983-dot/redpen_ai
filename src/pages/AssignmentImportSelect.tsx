@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
-import { ArrowLeft, BookOpen, FileImage, Camera, Loader } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, BookOpen, FileImage, Camera, Loader, Folder, Users } from 'lucide-react'
 import { db } from '@/lib/db'
-import type { Assignment, Classroom } from '@/lib/db'
+import type { Assignment, Classroom, Folder as AssignmentFolder } from '@/lib/db'
 
 interface AssignmentImportSelectProps {
   onBack?: () => void
@@ -19,19 +19,60 @@ export default function AssignmentImportSelect({
   onSelectBatchImport
 }: AssignmentImportSelectProps) {
   const [assignments, setAssignments] = useState<AssignmentWithClassroom[]>([])
+  const [classrooms, setClassrooms] = useState<Classroom[]>([])
+  const [assignmentFolders, setAssignmentFolders] = useState<AssignmentFolder[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [selectedClassroomId, setSelectedClassroomId] = useState('')
+  const [selectedFolder, setSelectedFolder] = useState('__uncategorized__')
+
+  const classAssignments = useMemo(() => {
+    if (!selectedClassroomId) return assignments
+    return assignments.filter((a) => a.classroomId === selectedClassroomId)
+  }, [assignments, selectedClassroomId])
+
+  const emptyFolders = useMemo(() => {
+    if (!selectedClassroomId) return []
+    return assignmentFolders
+      .filter((folder) => folder.classroomId === selectedClassroomId)
+      .map((folder) => folder.name)
+  }, [assignmentFolders, selectedClassroomId])
+
+  const usedFolders = useMemo(() => {
+    const folders = classAssignments
+      .map((assignment) => assignment.folder)
+      .filter((f): f is string => !!f && !!f.trim())
+    const allFolders = [...new Set([...folders, ...emptyFolders])]
+    return allFolders.sort()
+  }, [classAssignments, emptyFolders])
+
+  const filteredAssignments = useMemo(() => {
+    if (!selectedClassroomId) return classAssignments
+    return classAssignments.filter((assignment) => {
+      if (selectedFolder === '__uncategorized__') {
+        return !assignment.folder
+      }
+      return assignment.folder === selectedFolder
+    })
+  }, [classAssignments, selectedClassroomId, selectedFolder])
 
   useEffect(() => {
     const load = async () => {
       setIsLoading(true)
       try {
-        const data = await db.assignments.toArray()
-        const withClassroom: AssignmentWithClassroom[] = await Promise.all(
-          data.map(async (a) => {
-            const classroom = await db.classrooms.get(a.classroomId)
-            return { ...a, classroom: classroom || undefined }
-          })
-        )
+        const [assignmentData, classroomData, folderData] = await Promise.all([
+          db.assignments.toArray(),
+          db.classrooms.toArray(),
+          db.folders.where('type').equals('assignment').toArray()
+        ])
+
+        const classroomMap = new Map(classroomData.map((c) => [c.id, c]))
+        const withClassroom: AssignmentWithClassroom[] = assignmentData.map((a) => ({
+          ...a,
+          classroom: classroomMap.get(a.classroomId) || undefined
+        }))
+
+        setClassrooms(classroomData)
+        setAssignmentFolders(folderData)
         setAssignments(withClassroom)
       } finally {
         setIsLoading(false)
@@ -40,6 +81,18 @@ export default function AssignmentImportSelect({
 
     void load()
   }, [])
+
+  useEffect(() => {
+    if (classrooms.length > 0 && !selectedClassroomId) {
+      setSelectedClassroomId(classrooms[0].id)
+    }
+  }, [classrooms, selectedClassroomId])
+
+  useEffect(() => {
+    if (selectedClassroomId) {
+      setSelectedFolder('__uncategorized__')
+    }
+  }, [selectedClassroomId])
 
   if (isLoading) {
     return (
@@ -79,6 +132,50 @@ export default function AssignmentImportSelect({
               </p>
             </div>
           </div>
+          {classrooms.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100 grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Users className="w-4 h-4 inline mr-1" />
+                  選擇班級
+                </label>
+                <select
+                  value={selectedClassroomId}
+                  onChange={(e) => setSelectedClassroomId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all bg-white"
+                >
+                  {classrooms.map((classroom) => (
+                    <option key={classroom.id} value={classroom.id}>
+                      {classroom.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Folder className="w-4 h-4 inline mr-1" />
+                  選擇資料夾
+                </label>
+                <select
+                  value={selectedFolder}
+                  onChange={(e) => setSelectedFolder(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all bg-white"
+                >
+                  <option value="__uncategorized__">
+                    未分類 ({classAssignments.filter((a) => !a.folder).length})
+                  </option>
+                  {usedFolders.map((folder) => {
+                    const count = classAssignments.filter((a) => a.folder === folder).length
+                    return (
+                      <option key={folder} value={folder}>
+                        {folder} ({count})
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 作業列表 */}
@@ -92,9 +189,19 @@ export default function AssignmentImportSelect({
               請先到「作業設定」建立作業與標準答案，再回到這裡匯入作業。
             </p>
           </div>
+        ) : filteredAssignments.length === 0 ? (
+          <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
+            <BookOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              此資料夾中沒有作業
+            </h3>
+            <p className="text-gray-600 mb-4">
+              請選擇其他班級或資料夾。
+            </p>
+          </div>
         ) : (
           <div className="space-y-3">
-            {assignments.map((assignment) => (
+            {filteredAssignments.map((assignment) => (
               <div
                 key={assignment.id}
                 className="w-full bg-white rounded-xl shadow-md p-5 text-left hover:shadow-lg transition-all group"
@@ -141,4 +248,3 @@ export default function AssignmentImportSelect({
     </div>
   )
 }
-
