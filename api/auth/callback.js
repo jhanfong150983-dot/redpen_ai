@@ -60,16 +60,45 @@ export default async function handler(req, res) {
       ''
     const avatarUrl = user.user_metadata?.avatar_url || ''
 
-    const { error: profileError } = await supabaseAdmin.from('profiles').upsert(
-      {
-        id: user.id,
-        email: user.email,
-        name: fullName,
-        avatar_url: avatarUrl,
-        updated_at: new Date().toISOString()
-      },
-      { onConflict: 'id' }
-    )
+    const nowIso = new Date().toISOString()
+    const baseProfile = {
+      id: user.id,
+      email: user.email,
+      name: fullName,
+      avatar_url: avatarUrl,
+      updated_at: nowIso
+    }
+
+    const { data: existingProfile, error: existingError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, role, permission_tier, ink_balance')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    if (existingError) {
+      res.status(500).json({ error: '讀取使用者資料失敗' })
+      return
+    }
+
+    const profilePayload = existingProfile
+      ? {
+          ...baseProfile,
+          ...(existingProfile.role ? {} : { role: 'user' }),
+          ...(existingProfile.permission_tier ? {} : { permission_tier: 'basic' }),
+          ...(existingProfile.ink_balance == null ? { ink_balance: 10 } : {})
+        }
+      : {
+          ...baseProfile,
+          role: 'user',
+          permission_tier: 'basic',
+          ink_balance: 10
+        }
+
+    const query = existingProfile
+      ? supabaseAdmin.from('profiles').update(profilePayload).eq('id', user.id)
+      : supabaseAdmin.from('profiles').insert(profilePayload)
+
+    const { error: profileError } = await query
 
     if (profileError) {
       res.status(500).json({ error: '建立使用者資料失敗' })

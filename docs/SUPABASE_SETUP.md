@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   email TEXT,
   name TEXT,
   avatar_url TEXT,
+  role TEXT DEFAULT 'user', -- user | admin
+  permission_tier TEXT DEFAULT 'basic', -- basic | advanced
+  ink_balance INTEGER DEFAULT 10,
+  admin_note TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -46,6 +50,16 @@ CREATE TRIGGER update_profiles_updated_at
 BEFORE UPDATE ON public.profiles
 FOR EACH ROW
 EXECUTE FUNCTION update_profiles_updated_at();
+```
+
+已存在 `profiles` 表時，可用以下方式補欄位：
+
+```sql
+ALTER TABLE public.profiles
+ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user',
+ADD COLUMN IF NOT EXISTS permission_tier TEXT DEFAULT 'basic',
+ADD COLUMN IF NOT EXISTS ink_balance INTEGER DEFAULT 10,
+ADD COLUMN IF NOT EXISTS admin_note TEXT;
 ```
 
 ### classrooms 表
@@ -154,6 +168,44 @@ CREATE INDEX IF NOT EXISTS idx_deleted_records_owner
 ON public.deleted_records(owner_id);
 ```
 
+### ink_ledger 表（墨水變動記錄）
+
+```sql
+CREATE TABLE IF NOT EXISTS public.ink_ledger (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  delta INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  metadata JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ink_ledger_user_id ON public.ink_ledger(user_id);
+CREATE INDEX IF NOT EXISTS idx_ink_ledger_created_at ON public.ink_ledger(created_at);
+```
+
+### ink_orders 表（購點訂單）
+
+```sql
+CREATE TABLE IF NOT EXISTS public.ink_orders (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  drops INTEGER NOT NULL,
+  amount_twd INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_txn_id TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ink_orders_provider_txn
+ON public.ink_orders(provider, provider_txn_id);
+
+CREATE INDEX IF NOT EXISTS idx_ink_orders_user_id ON public.ink_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_ink_orders_status ON public.ink_orders(status);
+```
+
 ### updated_at 自動更新（classrooms / students / assignments / submissions）
 
 ```sql
@@ -188,6 +240,12 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_submissions_updated_at') THEN
     CREATE TRIGGER update_submissions_updated_at
     BEFORE UPDATE ON public.submissions
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_ink_orders_updated_at') THEN
+    CREATE TRIGGER update_ink_orders_updated_at
+    BEFORE UPDATE ON public.ink_orders
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
   END IF;

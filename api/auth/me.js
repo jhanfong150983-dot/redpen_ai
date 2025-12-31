@@ -29,7 +29,7 @@ export default async function handler(req, res) {
       if (supabaseDb) {
         const { data } = await supabaseDb
           .from('profiles')
-          .select('name, avatar_url')
+          .select('name, avatar_url, role, permission_tier, ink_balance')
           .eq('id', user.id)
           .maybeSingle()
         profile = data || null
@@ -43,7 +43,11 @@ export default async function handler(req, res) {
         id: user.id,
         email: user.email,
         name: profile?.name || user.user_metadata?.full_name || user.user_metadata?.name || '',
-        avatarUrl: profile?.avatar_url || user.user_metadata?.avatar_url || ''
+        avatarUrl: profile?.avatar_url || user.user_metadata?.avatar_url || '',
+        role: profile?.role || 'user',
+        permissionTier: profile?.permission_tier || 'basic',
+        inkBalance:
+          typeof profile?.ink_balance === 'number' ? profile.ink_balance : 0
       }
     })
   } catch (err) {

@@ -7,6 +7,7 @@ import {
 } from './db'
 import { blobToBase64 as blobToDataUrl, compressImageFile } from './imageCompression'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from './blob-storage'
+import { dispatchInkBalance } from './ink-events'
 
 const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
 
@@ -163,6 +164,11 @@ async function generateGeminiText(
     throw new Error(message)
   }
 
+  const updatedBalance = Number(data?.ink?.balanceAfter)
+  if (Number.isFinite(updatedBalance)) {
+    dispatchInkBalance(updatedBalance)
+  }
+
   const text = (data?.candidates ?? [])
     .flatMap((candidate: any) => candidate?.content?.parts ?? [])
     .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
@@ -176,48 +182,7 @@ async function generateGeminiText(
   return text
 }
 
-/**
- * 🔍 模型健診工具
- * 依序測試候選模型，選出可用的一個作為 currentModelName
- */
-export async function diagnoseModels() {
-  if (!isGeminiAvailable) {
-    console.error('Gemini 服務未設定')
-    return
-  }
-
-  const candidates = ['gemini-3-flash-preview']
-
-  console.log('🩺 開始測試可用的 Gemini 模型...')
-  let winnerModel = ''
-
-  for (const modelName of candidates) {
-    try {
-      console.log(`Testing: ${modelName} ...`)
-      const text = await generateGeminiText(modelName, ['Hi'])
-      console.log(`✅ ${modelName} 測試成功，回應片段:`, text.slice(0, 10))
-
-      if (!winnerModel) winnerModel = modelName
-    } catch (error: any) {
-      console.warn(
-        `⚠️ ${modelName} 測試失敗:`,
-        error.message?.split(':')[0] || error.message
-      )
-    }
-  }
-
-  if (winnerModel) {
-    console.log(`✅ 最終決定使用模型: ${winnerModel}`)
-    alert(`模型偵測完成！推薦模型：${winnerModel}\n(詳細請看 F12 Console)`)
-    return winnerModel
-  } else {
-    console.error('❌ 所有候選模型都測試失敗，請檢查 API Key 或網路狀態')
-    alert('所有模型都無法使用，請檢查 API Key 或網路狀態')
-    return 'gemini-1.5-flash' // 保留一個預設退路
-  }
-}
-
-// 預設使用的模型名稱（會被 diagnoseModels 動態覆蓋）
+// 預設使用的模型名稱
 let currentModelName = 'gemini-3-flash-preview'
 
 export interface ExtractAnswerKeyOptions {
@@ -1554,12 +1519,6 @@ export async function gradeMultipleSubmissions(
 ) {
   console.log(`📝 開始批量批改 ${submissions.length} 份作業`)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
-
-  const workingModel = await diagnoseModels()
-  if (workingModel) {
-    currentModelName = workingModel
-    console.log(`✅ 使用模型: ${workingModel}`)
-  }
 
   let successCount = 0
   let failCount = 0

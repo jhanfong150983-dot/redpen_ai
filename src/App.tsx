@@ -1,5 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Users, BookOpen, Sparkles, FileImage, ClipboardCheck } from 'lucide-react'
+import {
+  Users,
+  BookOpen,
+  Sparkles,
+  FileImage,
+  ClipboardCheck,
+  Shield,
+  Droplet,
+  Receipt
+} from 'lucide-react'
 import ClassroomManagement from '@/pages/ClassroomManagement'
 import AssignmentSetup from '@/pages/AssignmentSetup'
 import AssignmentList from '@/pages/AssignmentList'
@@ -10,8 +19,12 @@ import AssignmentScanImport from '@/pages/AssignmentScanImport'
 import CorrectionSelect from '@/pages/CorrectionSelect'
 import CorrectionManagement from '@/pages/CorrectionManagement'
 import Gradebook from '@/pages/Gradebook'
+import AdminUsers from '@/pages/AdminUsers'
+import InkTopUp from '@/pages/InkTopUp'
+import AdminOrders from '@/pages/AdminOrders'
 import { SyncIndicator } from '@/components'
 import { checkWebPSupport } from '@/lib/webpSupport'
+import { INK_BALANCE_EVENT, type InkBalanceDetail } from '@/lib/ink-events'
 import '@/lib/debug-sync'
 import { debugLog } from '@/lib/logger'
 
@@ -27,6 +40,9 @@ type Page =
   | 'assignment-import'
   | 'correction-select'
   | 'correction'
+  | 'admin-users'
+  | 'ink-topup'
+  | 'admin-orders'
 
 type AuthState =
   | { status: 'loading' }
@@ -38,6 +54,9 @@ type AuthState =
         email: string
         name?: string
         avatarUrl?: string
+        role?: string
+        permissionTier?: string
+        inkBalance?: number
       }
     }
 
@@ -64,7 +83,13 @@ function App() {
 
       setAuth({
         status: 'authenticated',
-        user: data.user
+        user: {
+          ...data.user,
+          role: data.user.role || 'user',
+          permissionTier: data.user.permissionTier || 'basic',
+          inkBalance:
+            typeof data.user.inkBalance === 'number' ? data.user.inkBalance : 0
+        }
       })
     } catch (error) {
       console.error('驗證登入狀態失敗', error)
@@ -111,6 +136,32 @@ function App() {
       )
     })
   }, [])
+
+  useEffect(() => {
+    const handleInkBalance = (event: Event) => {
+      const detail = (event as CustomEvent<InkBalanceDetail>).detail
+      if (!detail || !Number.isFinite(detail.inkBalance)) return
+      setAuth((prev) => {
+        if (prev.status !== 'authenticated') return prev
+        return {
+          ...prev,
+          user: {
+            ...prev.user,
+            inkBalance: detail.inkBalance
+          }
+        }
+      })
+    }
+
+    window.addEventListener(INK_BALANCE_EVENT, handleInkBalance)
+    return () => window.removeEventListener(INK_BALANCE_EVENT, handleInkBalance)
+  }, [])
+
+  const isAdmin =
+    auth.status === 'authenticated' && auth.user.role === 'admin'
+  const canAccessTracking =
+    auth.status === 'authenticated' &&
+    (auth.user.permissionTier === 'advanced' || isAdmin)
 
   if (auth.status === 'loading') {
     return (
@@ -208,7 +259,84 @@ function App() {
 
   // 成績簿
   if (currentPage === 'gradebook') {
+    if (!canAccessTracking) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              進階權限才可使用後續追蹤功能。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
     return <Gradebook onBack={() => setCurrentPage('home')} />
+  }
+
+  // 管理者介面
+  if (currentPage === 'admin-users') {
+    if (!isAdmin) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              只有管理者可以進入此頁面。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return <AdminUsers onBack={() => setCurrentPage('home')} />
+  }
+
+  // 訂單管理
+  if (currentPage === 'admin-orders') {
+    if (!isAdmin) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              只有管理者可以進入此頁面。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return <AdminOrders onBack={() => setCurrentPage('home')} />
+  }
+
+  // 補充墨水
+  if (currentPage === 'ink-topup') {
+    return (
+      <InkTopUp
+        onBack={() => setCurrentPage('home')}
+        currentBalance={auth.user.inkBalance ?? 0}
+      />
+    )
   }
 
   // AI 批改：單一作業批改介面
@@ -233,6 +361,25 @@ function App() {
 
   // 訂正管理：選擇作業
   if (currentPage === 'correction-select') {
+    if (!canAccessTracking) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              進階權限才可使用後續追蹤功能。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
     return (
       <CorrectionSelect
         onBack={() => setCurrentPage('home')}
@@ -246,6 +393,25 @@ function App() {
 
   // 訂正管理：看板
   if (currentPage === 'correction' && selectedAssignmentId) {
+    if (!canAccessTracking) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              進階權限才可使用後續追蹤功能。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
     return (
       <CorrectionManagement
         assignmentId={selectedAssignmentId}
@@ -273,7 +439,48 @@ function App() {
               <p className="text-sm font-semibold text-gray-800">
                 {auth.user.name || auth.user.email}
               </p>
+              <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
+                <span className="px-2 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600">
+                  權限：
+                  {isAdmin
+                    ? '管理者'
+                    : auth.user.permissionTier === 'advanced'
+                      ? '進階'
+                      : '基礎'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700">
+                  墨水：{auth.user.inkBalance ?? 0} 滴
+                </span>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('ink-topup')}
+              className="px-3 py-2 text-xs font-semibold rounded-lg border border-sky-200 text-sky-700 hover:border-sky-300 hover:text-sky-800 transition-colors inline-flex items-center gap-2"
+            >
+              <Droplet className="w-4 h-4" />
+              補充墨水
+            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setCurrentPage('admin-orders')}
+                className="px-3 py-2 text-xs font-semibold rounded-lg border border-sky-200 text-sky-700 hover:border-sky-300 hover:text-sky-800 transition-colors inline-flex items-center gap-2"
+              >
+                <Receipt className="w-4 h-4" />
+                訂單管理
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setCurrentPage('admin-users')}
+                className="px-3 py-2 text-xs font-semibold rounded-lg border border-amber-200 text-amber-700 hover:border-amber-300 hover:text-amber-800 transition-colors inline-flex items-center gap-2"
+              >
+                <Shield className="w-4 h-4" />
+                管理者介面
+              </button>
+            )}
             <button
               type="button"
               onClick={handleLogout}
@@ -347,24 +554,64 @@ function App() {
             </h2>
             <div className="space-y-3">
               <button
-                onClick={() => setCurrentPage('correction-select')}
-                className="w-full flex items-center justify-between px-4 py-3 bg-white rounded-xl border border-gray-200 hover:border-orange-400 transition-colors"
+                onClick={() => {
+                  if (canAccessTracking) {
+                    setCurrentPage('correction-select')
+                  }
+                }}
+                disabled={!canAccessTracking}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ${
+                  canAccessTracking
+                    ? 'bg-white border-gray-200 hover:border-orange-400'
+                    : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
               >
-                <span className="flex items-center gap-2 text-gray-800 font-medium">
-                  <ClipboardCheck className="w-5 h-5 text-orange-600" />
+                <span
+                  className={`flex items-center gap-2 font-medium ${
+                    canAccessTracking ? 'text-gray-800' : 'text-gray-400'
+                  }`}
+                >
+                  <ClipboardCheck
+                    className={`w-5 h-5 ${
+                      canAccessTracking ? 'text-orange-600' : 'text-gray-300'
+                    }`}
+                  />
                   訂正管理
                 </span>
-                <span className="text-xs text-gray-500">發訂正單 / 列印 / 模板批改</span>
+                <span className="text-xs text-gray-500">
+                  {canAccessTracking
+                    ? '發訂正單 / 列印 / 模板批改'
+                    : '需要進階權限'}
+                </span>
               </button>
               <button
-                onClick={() => setCurrentPage('gradebook')}
-                className="w-full flex items-center justify-between px-4 py-3 bg-white rounded-xl border border-gray-200 hover:border-emerald-400 transition-colors"
+                onClick={() => {
+                  if (canAccessTracking) {
+                    setCurrentPage('gradebook')
+                  }
+                }}
+                disabled={!canAccessTracking}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ${
+                  canAccessTracking
+                    ? 'bg-white border-gray-200 hover:border-emerald-400'
+                    : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
               >
-                <span className="flex items-center gap-2 text-gray-800 font-medium">
-                  <Sparkles className="w-5 h-5 text-emerald-600" />
+                <span
+                  className={`flex items-center gap-2 font-medium ${
+                    canAccessTracking ? 'text-gray-800' : 'text-gray-400'
+                  }`}
+                >
+                  <Sparkles
+                    className={`w-5 h-5 ${
+                      canAccessTracking ? 'text-emerald-600' : 'text-gray-300'
+                    }`}
+                  />
                   成績管理
                 </span>
-                <span className="text-xs text-gray-500">查詢成績與匯出</span>
+                <span className="text-xs text-gray-500">
+                  {canAccessTracking ? '查詢成績與匯出' : '需要進階權限'}
+                </span>
               </button>
             </div>
           </div>
