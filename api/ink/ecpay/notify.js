@@ -1,10 +1,10 @@
-import { getSupabaseAdmin } from '../_supabase.js'
+import { getSupabaseAdmin } from '../../../server/_supabase.js'
 import {
   getEcpayConfig,
   assertEcpayConfig,
   buildCheckMacValue,
   parseEcpayPayload
-} from '../_ecpay.js'
+} from '../../../server/_ecpay.js'
 
 async function hasOrderLedger(supabaseAdmin, userId, orderId) {
   const { data, error } = await supabaseAdmin

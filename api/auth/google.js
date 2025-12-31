@@ -3,7 +3,7 @@ import {
   generateOAuthVerifier,
   setOAuthCookies,
   isSecureRequest
-} from '../_auth.js'
+} from '../../server/_auth.js'
 
 function getSiteUrl(req) {
   const proto = req.headers?.['x-forwarded-proto'] || 'http'

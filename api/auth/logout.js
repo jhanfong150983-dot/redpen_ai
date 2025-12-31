@@ -1,4 +1,4 @@
-import { clearAuthCookies, isSecureRequest } from '../_auth.js'
+import { clearAuthCookies, isSecureRequest } from '../../server/_auth.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

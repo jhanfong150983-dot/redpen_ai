@@ -5,8 +5,8 @@ import {
   setAuthCookies,
   exchangeCodeForSession,
   isSecureRequest
-} from '../_auth.js'
-import { getSupabaseAdmin } from '../_supabase.js'
+} from '../../server/_auth.js'
+import { getSupabaseAdmin } from '../../server/_supabase.js'
 
 function getSiteUrl(req) {
   const proto = req.headers?.['x-forwarded-proto'] || 'http'

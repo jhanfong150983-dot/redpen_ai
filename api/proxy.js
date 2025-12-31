@@ -1,7 +1,7 @@
 // api/proxy.js
 // 這段程式碼在 Vercel 的伺服器上執行，前端看不到
-import { getAuthUser } from './_auth.js'
-import { getSupabaseAdmin } from './_supabase.js'
+import { getAuthUser } from '../server/_auth.js'
+import { getSupabaseAdmin } from '../server/_supabase.js'
 
 const INK_EXCHANGE_RATE = 33
 const INPUT_USD_PER_MILLION = 0.5

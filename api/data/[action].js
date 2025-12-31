@@ -1,9 +1,20 @@
-import { getAuthUser } from '../_auth.js'
+import { getAuthUser } from '../../server/_auth.js'
 import {
   getSupabaseAdmin,
   getSupabaseUserClient,
   isServiceRoleKey
-} from '../_supabase.js'
+} from '../../server/_supabase.js'
+
+function resolveAction(req) {
+  const actionParam = req.query?.action
+  if (Array.isArray(actionParam)) {
+    return actionParam[0] || ''
+  }
+  if (typeof actionParam === 'string') return actionParam
+  const pathname = req.url ? req.url.split('?')[0] : ''
+  const segments = pathname.split('/').filter(Boolean)
+  return segments[segments.length - 1] || ''
+}
 
 function parseJsonBody(req) {
   let body = req.body
@@ -100,7 +111,7 @@ async function fetchDeletedSet(supabaseDb, tableName, ids, ownerId) {
   return new Set((result.data || []).map((row) => row.record_id))
 }
 
-export default async function handler(req, res) {
+async function handleSync(req, res) {
   const { user, accessToken } = await getAuthUser(req, res)
   if (!user) {
     res.status(401).json({ error: 'Unauthorized' })
@@ -348,13 +359,13 @@ export default async function handler(req, res) {
         'classrooms',
         classrooms.filter((c) => c?.id),
         (c) =>
-        compactObject({
-          id: c.id,
-          name: c.name,
-          folder: c.folder,
-          owner_id: user.id,
-          updated_at: nowIso
-        })
+          compactObject({
+            id: c.id,
+            name: c.name,
+            folder: c.folder,
+            owner_id: user.id,
+            updated_at: nowIso
+          })
       )
 
       if (classroomRows.length > 0) {
@@ -368,14 +379,14 @@ export default async function handler(req, res) {
         'students',
         students.filter((s) => s?.id && s?.classroomId),
         (s) =>
-        compactObject({
-          id: s.id,
-          classroom_id: s.classroomId,
-          seat_number: s.seatNumber,
-          name: s.name,
-          owner_id: user.id,
-          updated_at: nowIso
-        })
+          compactObject({
+            id: s.id,
+            classroom_id: s.classroomId,
+            seat_number: s.seatNumber,
+            name: s.name,
+            owner_id: user.id,
+            updated_at: nowIso
+          })
       )
 
       if (studentRows.length > 0) {
@@ -474,4 +485,135 @@ export default async function handler(req, res) {
   }
 
   res.status(405).json({ error: 'Method Not Allowed' })
+}
+
+async function handleSubmission(req, res) {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method Not Allowed' })
+    return
+  }
+
+  try {
+    const { user, accessToken } = await getAuthUser(req, res)
+    if (!user) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const useAdmin = isServiceRoleKey()
+    if (!useAdmin && !accessToken) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    let body = req.body
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body)
+      } catch {
+        res.status(400).json({ error: 'Invalid JSON body' })
+        return
+      }
+    }
+
+    const {
+      submissionId,
+      assignmentId,
+      studentId,
+      createdAt,
+      imageBase64,
+      contentType
+    } = body || {}
+
+    if (!submissionId || !assignmentId || !studentId || !createdAt || !imageBase64) {
+      res.status(400).json({ error: 'Missing required fields' })
+      return
+    }
+
+    const supabaseDb = useAdmin
+      ? getSupabaseAdmin()
+      : getSupabaseUserClient(accessToken)
+
+    const tombstoneCheck = await supabaseDb
+      .from('deleted_records')
+      .select('record_id')
+      .eq('owner_id', user.id)
+      .eq('table_name', 'submissions')
+      .eq('record_id', submissionId)
+      .limit(1)
+
+    if (tombstoneCheck.error) {
+      res.status(500).json({ error: tombstoneCheck.error.message })
+      return
+    }
+
+    if (tombstoneCheck.data && tombstoneCheck.data.length > 0) {
+      res.status(409).json({ error: '提交已被刪除，請重新建立' })
+      return
+    }
+
+    const filePath = `submissions/${submissionId}.webp`
+    const buffer = Buffer.from(String(imageBase64), 'base64')
+
+    const { error: uploadError } = await supabaseDb.storage
+      .from('homework-images')
+      .upload(filePath, buffer, {
+        contentType: contentType || 'image/webp',
+        upsert: true
+      })
+
+    if (uploadError) {
+      res.status(500).json({ error: `圖片上傳失敗: ${uploadError.message}` })
+      return
+    }
+
+    const createdTime =
+      typeof createdAt === 'number' ? createdAt : Date.parse(createdAt)
+    if (!Number.isFinite(createdTime)) {
+      res.status(400).json({ error: 'Invalid createdAt' })
+      return
+    }
+
+    const timestamp = new Date(createdTime).toISOString()
+
+    const { error: dbError } = await supabaseDb
+      .from('submissions')
+      .upsert(
+        {
+          id: submissionId,
+          assignment_id: assignmentId,
+          student_id: studentId,
+          image_url: filePath,
+          status: 'synced',
+          created_at: timestamp,
+          owner_id: user.id
+        },
+        {
+          onConflict: 'assignment_id,student_id',
+          ignoreDuplicates: false
+        }
+      )
+
+    if (dbError) {
+      res.status(500).json({ error: `資料庫寫入失敗: ${dbError.message}` })
+      return
+    }
+
+    res.status(200).json({ success: true, imageUrl: filePath })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Server error' })
+  }
+}
+
+export default async function handler(req, res) {
+  const action = resolveAction(req)
+  if (action === 'sync') {
+    await handleSync(req, res)
+    return
+  }
+  if (action === 'submission') {
+    await handleSubmission(req, res)
+    return
+  }
+  res.status(404).json({ error: 'Not Found' })
 }

@@ -1,9 +1,9 @@
-import { getAuthUser } from '../_auth.js'
+import { getAuthUser } from '../../server/_auth.js'
 import {
   getSupabaseAdmin,
   getSupabaseUserClient,
   isServiceRoleKey
-} from '../_supabase.js'
+} from '../../server/_supabase.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {

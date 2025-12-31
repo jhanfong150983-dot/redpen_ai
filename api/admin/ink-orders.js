@@ -1,5 +1,5 @@
-import { getAuthUser } from '../_auth.js'
-import { getSupabaseAdmin } from '../_supabase.js'
+import { getAuthUser } from '../../server/_auth.js'
+import { getSupabaseAdmin } from '../../server/_supabase.js'
 
 function parseJsonBody(req, res) {
   const body = req.body

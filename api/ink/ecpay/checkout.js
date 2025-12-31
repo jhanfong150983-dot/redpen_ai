@@ -1,12 +1,12 @@
-import { getAuthUser } from '../_auth.js'
-import { getSupabaseAdmin } from '../_supabase.js'
+import { getAuthUser } from '../../../server/_auth.js'
+import { getSupabaseAdmin } from '../../../server/_supabase.js'
 import {
   getEcpayConfig,
   assertEcpayConfig,
   buildCheckMacValue,
   formatMerchantTradeDate,
   createMerchantTradeNo
-} from '../_ecpay.js'
+} from '../../../server/_ecpay.js'
 
 function parseJsonBody(req, res) {
   const body = req.body
