@@ -640,7 +640,7 @@ function App() {
             。
           </p>
           <p className="mt-2 text-gray-500">
-            如需使用授權或合作洽談，請聯絡 jhanfong150983@gmail.com。
+            如需使用授權或合作洽談，請「聯絡我們」信箱： jhanfong150983@gmail.com；電話：09-8171-6650
           </p>
         </div>
       </div>
