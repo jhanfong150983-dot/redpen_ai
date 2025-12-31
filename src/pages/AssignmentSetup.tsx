@@ -64,6 +64,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   ]
   const [answerKey, setAnswerKey] = useState<AnswerKey | null>(null)
   const [answerKeyFile, setAnswerKeyFile] = useState<File[]>([])
+  const [answerKeyInputKey, setAnswerKeyInputKey] = useState(0)
   const [answerSheetImage, setAnswerSheetImage] = useState<Blob | null>(null)
   const [isExtractingAnswerKey, setIsExtractingAnswerKey] = useState(false)
   const [answerKeyError, setAnswerKeyError] = useState<string | null>(null)
@@ -151,13 +152,15 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
             .where('classroomId')
             .equals(selectedClassroomId)
             .toArray(),
-          db.folders.toArray()
+          db.folders
+            .where('[type+classroomId]')
+            .equals(['assignment', selectedClassroomId])
+            .toArray()
         ])
         setAssignments(data)
 
         // 載入空資料夾（assignment 類型）
         const emptyAssignmentFolders = folders
-          .filter(f => f.type === 'assignment')
           .map(f => f.name)
         console.log('📁 載入作業空資料夾:', emptyAssignmentFolders)
         setEmptyFolders(emptyAssignmentFolders)
@@ -280,6 +283,61 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     return base.replace(/^[qQ](?=\d)/, '')
   }
 
+  const splitQuestionIdPath = (question: AnswerKeyQuestion): string[] => {
+    if (Array.isArray(question.idPath) && question.idPath.length > 0) {
+      return question.idPath
+    }
+    return (question.id ?? '')
+      .split('-')
+      .map((segment) => segment.trim())
+      .filter(Boolean)
+  }
+
+  const compareQuestionIdPath = (a: string[], b: string[]) => {
+    const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'case' })
+    const numericSegment = /^\d+$/
+    const limit = Math.min(a.length, b.length)
+
+    for (let i = 0; i < limit; i++) {
+      const left = a[i]
+      const right = b[i]
+      if (left === right) continue
+
+      const leftIsNumber = numericSegment.test(left)
+      const rightIsNumber = numericSegment.test(right)
+
+      if (leftIsNumber && rightIsNumber) {
+        const leftValue = Number.parseInt(left, 10)
+        const rightValue = Number.parseInt(right, 10)
+        if (leftValue !== rightValue) return leftValue - rightValue
+        if (left.length !== right.length) return left.length - right.length
+      } else if (leftIsNumber !== rightIsNumber) {
+        return leftIsNumber ? -1 : 1
+      }
+
+      const textCompare = collator.compare(left, right)
+      if (textCompare !== 0) return textCompare
+    }
+
+    return a.length - b.length
+  }
+
+  const sortAnswerKeyQuestions = (questions: AnswerKeyQuestion[]) => {
+    const indexed = questions.map((question, index) => ({
+      question,
+      index,
+      path: splitQuestionIdPath(question)
+    }))
+
+    indexed.sort((left, right) => {
+      const pathCompare = compareQuestionIdPath(left.path, right.path)
+      if (pathCompare !== 0) return pathCompare
+      return left.index - right.index
+    })
+
+    return indexed.map((item) => item.question)
+  }
+
   const normalizeAnswerKey = (ak: AnswerKey): AnswerKey => {
     const questions = (ak.questions ?? []).map((q, idx) => {
       const maxScore =
@@ -299,12 +357,17 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       const baseQuestion: AnswerKeyQuestion = {
         id: sanitizeQuestionId(q.id, `${idx + 1}`),
         type: questionType as QuestionCategoryType,
-        maxScore
+        maxScore,
+        idPath: q.idPath,
+        uiKey: q.uiKey ?? generateId()
       }
 
       // Add type-specific fields
       if (questionType === 1) {
         baseQuestion.answer = q.answer ?? ''
+        if (q.answerFormat === 'matching') {
+          baseQuestion.answerFormat = 'matching'
+        }
       } else if (questionType === 2) {
         baseQuestion.referenceAnswer = q.referenceAnswer ?? ''
         baseQuestion.acceptableAnswers = q.acceptableAnswers ?? []
@@ -344,12 +407,13 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       questions.push({ ...question, id: nextId })
     })
 
-    const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
+    const sortedQuestions = sortAnswerKeyQuestions(questions)
+    const totalScore = sortedQuestions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
     const notice = hasDuplicate
       ? '偵測到重複題號，已自動加上後綴（-2、-3）。請確認題號是否對應試卷。'
       : null
 
-    return { merged: { questions, totalScore }, notice }
+    return { merged: { questions: sortedQuestions, totalScore }, notice }
   }
 
   const extractAndSetAnswerKey = async (
@@ -540,6 +604,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
     console.log(`📋 開始提取標準答案... (${answerKeyFile.length} 個檔案)`, { domain: assignmentDomain, priorWeights: priorWeightTypes })
 
+    let extractionSucceeded = false
     try {
       setIsExtractingAnswerKey(true)
       setAnswerKeyError(null)
@@ -653,21 +718,27 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       })
 
       console.log('📥 AI 回傳 AnswerKey：', extracted)
+      const normalizedExtracted = normalizeAnswerKey(extracted)
 
       // 與現有的 answerKey 合併
       if (answerKey) {
         console.log('🔄 合併新舊 AnswerKey...')
-        const { merged, notice } = mergeAnswerKeys(answerKey, extracted)
+        const { merged, notice } = mergeAnswerKeys(answerKey, normalizedExtracted)
         setAnswerKey(merged)
         if (notice) setAnswerKeyNotice(notice)
       } else {
-        setAnswerKey(extracted)
+        setAnswerKey(normalizedExtracted)
       }
+      extractionSucceeded = true
     } catch (err) {
       console.error('❌ 提取 AnswerKey 失敗：', err)
       setAnswerKeyError(err instanceof Error ? err.message : '提取失敗')
     } finally {
       setIsExtractingAnswerKey(false)
+      if (extractionSucceeded) {
+        setAnswerKeyFile([])
+        setAnswerKeyInputKey((prev) => prev + 1)
+      }
     }
   }
 
@@ -865,6 +936,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
   const handleDeleteFolder = async (folderName: string) => {
     if (isSubmitting) return
+    if (!selectedClassroomId) return
 
     const count = assignments.filter((a) => a.folder === folderName).length
     const message = count > 0
@@ -889,7 +961,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
       // 2. 從 folders 表刪除此資料夾
       const folderToDelete = await db.folders
-        .filter((f) => f.type === 'assignment' && f.name === folderName)
+        .where('[type+classroomId+name]')
+        .equals(['assignment', selectedClassroomId, folderName])
         .first()
 
       if (folderToDelete) {
@@ -909,12 +982,14 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
             .where('classroomId')
             .equals(selectedClassroomId)
             .toArray(),
-          db.folders.toArray()
+          db.folders
+            .where('[type+classroomId]')
+            .equals(['assignment', selectedClassroomId])
+            .toArray()
         ])
         setAssignments(data)
 
         const emptyAssignmentFolders = folders
-          .filter(f => f.type === 'assignment')
           .map(f => f.name)
         setEmptyFolders(emptyAssignmentFolders)
       }
@@ -999,9 +1074,13 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       setNewFolderError('請輸入資料夾名稱')
       return
     }
+    if (!selectedClassroomId) {
+      setNewFolderError('請先選擇班級')
+      return
+    }
 
     // 驗證資料夾名稱唯一性
-    const folderCheck = await checkFolderNameUnique(trimmedName, 'assignment')
+    const folderCheck = await checkFolderNameUnique(trimmedName, 'assignment', selectedClassroomId)
     if (!folderCheck.isUnique) {
       setNewFolderError(`此資料夾名稱已被${folderCheck.usedBy}使用`)
       return
@@ -1011,7 +1090,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       const newFolder = {
         id: generateId(),
         name: trimmedName,
-        type: 'assignment' as const
+        type: 'assignment' as const,
+        classroomId: selectedClassroomId
       }
 
       // 寫入資料庫
@@ -1134,7 +1214,8 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
       type: 2, // Default to Type 2 (multi-answer acceptable)
       referenceAnswer: '',
       acceptableAnswers: [],
-      maxScore: 0
+      maxScore: 0,
+      uiKey: generateId()
     }
     const questions = [...base.questions, newQuestion]
     const totalScore = questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
@@ -1197,6 +1278,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
         // Clear all answer-related fields
         item.answer = undefined
+        item.answerFormat = undefined
         item.referenceAnswer = undefined
         item.acceptableAnswers = undefined
         item.rubric = undefined
@@ -1920,6 +2002,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                     上傳答案卷（可用 PDF 或圖片，支援多檔案選取）
                   </label>
                   <input
+                    key={answerKeyInputKey}
                     type="file"
                     accept="image/*,application/pdf"
                     multiple
@@ -1995,7 +2078,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
                         return (
                           <div
-                            key={q.id || idx}
+                            key={q.uiKey || q.id || idx}
                             className="space-y-2 text-xs bg-white rounded-lg px-3 py-2 border border-gray-200"
                           >
                             <div className="grid grid-cols-[auto,1fr,auto,auto] gap-2 items-center">
@@ -2487,7 +2570,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
                     return (
                       <div
-                        key={q.id || idx}
+                        key={q.uiKey || q.id || idx}
                         className="space-y-2 text-xs bg-white rounded-lg px-3 py-2 border border-gray-200"
                       >
                         <div className="grid grid-cols-[auto,1fr,auto,auto] gap-2 items-center">
@@ -2957,7 +3040,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
                     // 即時驗證
                     if (value.trim()) {
-                      const result = await checkFolderNameUnique(value.trim(), 'assignment')
+                      const result = await checkFolderNameUnique(
+                        value.trim(),
+                        'assignment',
+                        selectedClassroomId
+                      )
                       if (!result.isUnique) {
                         setNewFolderError(`此資料夾名稱已被${result.usedBy}使用`)
                       }

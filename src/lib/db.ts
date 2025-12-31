@@ -38,12 +38,17 @@ export interface RubricDimension {
 
 export interface AnswerKeyQuestion {
   id: string // 例如 "1", "1-1"
+  idPath?: string[] // 題號層級路徑，例如 ["8","1"] -> "8-1"
 
   // 題型分類：1=唯一答案(精確), 2=多答案可接受(模糊), 3=依表現給分(評價)
   type: QuestionCategoryType
 
   // Type 1 專用：標準答案（精確匹配）
   answer?: string
+  // Type 1 專用：答案格式（連連看等結構化答案）
+  answerFormat?: 'matching'
+  // UI 專用：穩定的列表 key（避免編輯題號時失焦）
+  uiKey?: string
 
   // Type 2/3 共用：參考答案
   referenceAnswer?: string
@@ -219,6 +224,7 @@ export interface Folder {
   id: string
   name: string
   type: 'classroom' | 'assignment'
+  classroomId?: string // assignment 類型時綁定班級
   updatedAt?: number
 }
 
@@ -329,6 +335,81 @@ class RedPenDatabase extends Dexie {
         debugLog('✅ 資料庫升級完成')
       } catch (error) {
         console.error('❌ 遷移 localStorage 資料夾失敗:', error)
+      }
+    })
+
+    this.version(5).stores({
+      classrooms: '&id, name, folder',
+      students: '&id, classroomId, seatNumber, name',
+      assignments: '&id, classroomId, title, folder',
+      submissions:
+        '&id, assignmentId, studentId, status, createdAt, [assignmentId+studentId]',
+      syncQueue: '++id, tableName, recordId, createdAt',
+      answerExtractionCorrections:
+        '++id, assignmentId, studentId, submissionId, questionId, createdAt',
+      folders: '&id, name, type, classroomId, [type+classroomId], [type+classroomId+name]'
+    }).upgrade(async (trans) => {
+      debugLog('?? 執行資料庫 version 5 升級')
+      try {
+        const foldersTable = trans.table('folders')
+        const assignmentsTable = trans.table('assignments')
+        const classroomsTable = trans.table('classrooms')
+
+        const [folders, assignments, classrooms] = await Promise.all([
+          foldersTable.toArray(),
+          assignmentsTable.toArray(),
+          classroomsTable.toArray()
+        ])
+
+        const folderUsage = new Map<string, Set<string>>()
+        assignments.forEach((assignment: Assignment) => {
+          if (!assignment.folder || !assignment.classroomId) return
+          const key = assignment.folder
+          const usedBy = folderUsage.get(key) ?? new Set<string>()
+          usedBy.add(assignment.classroomId)
+          folderUsage.set(key, usedBy)
+        })
+
+        const existingAssignmentFolders = new Set<string>()
+        folders.forEach((folder) => {
+          if (folder.type === 'assignment' && folder.classroomId) {
+            existingAssignmentFolders.add(`${folder.classroomId}::${folder.name}`)
+          }
+        })
+
+        const singleClassroomId = classrooms.length === 1 ? classrooms[0].id : null
+
+        for (const folder of folders) {
+          if (folder.type !== 'assignment' || folder.classroomId) continue
+          const usedBy = folderUsage.get(folder.name)
+
+          if (usedBy && usedBy.size === 1) {
+            const [classroomId] = Array.from(usedBy)
+            await foldersTable.update(folder.id, { classroomId })
+            existingAssignmentFolders.add(`${classroomId}::${folder.name}`)
+          } else if (usedBy && usedBy.size > 1) {
+            for (const classroomId of usedBy) {
+              const key = `${classroomId}::${folder.name}`
+              if (existingAssignmentFolders.has(key)) continue
+              await foldersTable.add({
+                id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                name: folder.name,
+                type: 'assignment',
+                classroomId,
+                updatedAt: Date.now()
+              })
+              existingAssignmentFolders.add(key)
+            }
+            await foldersTable.delete(folder.id)
+          } else if (singleClassroomId) {
+            await foldersTable.update(folder.id, { classroomId: singleClassroomId })
+            existingAssignmentFolders.add(`${singleClassroomId}::${folder.name}`)
+          }
+        }
+
+        debugLog('? 資料庫 version 5 升級完成')
+      } catch (error) {
+        console.error('? 資料庫 version 5 升級失敗:', error)
       }
     })
 

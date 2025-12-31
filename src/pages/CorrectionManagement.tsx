@@ -40,6 +40,17 @@ const escapeHtml = (v: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
 
+const formatMistakeId = (value: string) => (value || '').trim()
+
+const buildMistakeTitle = (m: CorrectionItem) => {
+  const parts = [
+    formatMistakeId(m.id) ? `題號 ${formatMistakeId(m.id)}` : '',
+    m.question || '',
+    m.reason || ''
+  ].filter(Boolean)
+  return parts.join('｜')
+}
+
 function heatColor(count: number): string {
   if (count >= 6) return 'border-l-4 border-red-500 bg-red-50'
   if (count >= 4) return 'border-l-4 border-red-400 bg-red-50'
@@ -217,6 +228,9 @@ export default function CorrectionManagement({
           .map(
             (m) => `<Row>
               <Cell ss:StyleID="cell"><Data ss:Type="String">□</Data></Cell>
+              <Cell ss:StyleID="cell"><Data ss:Type="String">${escapeXml(
+                formatMistakeId(m.id)
+              )}</Data></Cell>
               <Cell ss:StyleID="cell"><Data ss:Type="String">${escapeXml(m.question)}</Data></Cell>
               <Cell ss:StyleID="cell"><Data ss:Type="String">${escapeXml(m.reason)}</Data></Cell>
             </Row>`
@@ -226,22 +240,24 @@ export default function CorrectionManagement({
         <Worksheet ss:Name="${sheetName}">
           <Table>
             <Column ss:AutoFitWidth="1" ss:Width="40"/>
+            <Column ss:AutoFitWidth="1" ss:Width="70"/>
             <Column ss:AutoFitWidth="1" ss:Width="200"/>
             <Column ss:AutoFitWidth="1" ss:Width="220"/>
             <Row>
-              <Cell ss:MergeAcross="2" ss:StyleID="card"><Data ss:Type="String">${escapeXml(titleLine)}</Data></Cell>
+              <Cell ss:MergeAcross="3" ss:StyleID="card"><Data ss:Type="String">${escapeXml(titleLine)}</Data></Cell>
             </Row>
             <Row>
-              <Cell ss:MergeAcross="2" ss:StyleID="card"><Data ss:Type="String">${escapeXml(seatNameLine)}</Data></Cell>
+              <Cell ss:MergeAcross="3" ss:StyleID="card"><Data ss:Type="String">${escapeXml(seatNameLine)}</Data></Cell>
             </Row>
             <Row>
-              <Cell ss:MergeAcross="2" ss:StyleID="card"><Data ss:Type="String">${escapeXml(scoreLine)}</Data></Cell>
+              <Cell ss:MergeAcross="3" ss:StyleID="card"><Data ss:Type="String">${escapeXml(scoreLine)}</Data></Cell>
             </Row>
             <Row>
-              <Cell ss:MergeAcross="2" ss:StyleID="card"><Data ss:Type="String">${escapeXml(divider)}</Data></Cell>
+              <Cell ss:MergeAcross="3" ss:StyleID="card"><Data ss:Type="String">${escapeXml(divider)}</Data></Cell>
             </Row>
             <Row>
               <Cell ss:StyleID="header"><Data ss:Type="String">確認</Data></Cell>
+              <Cell ss:StyleID="header"><Data ss:Type="String">題號</Data></Cell>
               <Cell ss:StyleID="header"><Data ss:Type="String">錯題</Data></Cell>
               <Cell ss:StyleID="header"><Data ss:Type="String">原因</Data></Cell>
             </Row>
@@ -249,6 +265,7 @@ export default function CorrectionManagement({
               mistakesRows ||
               `<Row>
                 <Cell ss:StyleID="cell"><Data ss:Type="String">□</Data></Cell>
+                <Cell ss:StyleID="cell"><Data ss:Type="String"></Data></Cell>
                 <Cell ss:StyleID="cell"><Data ss:Type="String">全部正確</Data></Cell>
                 <Cell ss:StyleID="cell"><Data ss:Type="String"></Data></Cell>
               </Row>`
@@ -366,12 +383,14 @@ export default function CorrectionManagement({
           <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
             <colgroup>
               <col style="width:50px;" />
+              <col style="width:70px;" />
               <col style="width:200px;" />
-              <col style="width:260px;" />
+              <col style="width:240px;" />
             </colgroup>
             <thead>
               <tr>
                 <th style="border:1px solid #000; padding:6px; text-align:center;">確認</th>
+                <th style="border:1px solid #000; padding:6px; text-align:center;">題號</th>
                 <th style="border:1px solid #000; padding:6px; text-align:center;">錯題</th>
                 <th style="border:1px solid #000; padding:6px; text-align:center;">原因</th>
               </tr>
@@ -381,6 +400,7 @@ export default function CorrectionManagement({
                 c.mistakes.filter((m) => !m.done).length === 0
                   ? `<tr>
                       <td style="border:1px solid #000; padding:6px; text-align:center; vertical-align:top;">□</td>
+                      <td style="border:1px solid #000; padding:6px; word-break:break-word;"></td>
                       <td style="border:1px solid #000; padding:6px; word-break:break-word;">全部正確</td>
                       <td style="border:1px solid #000; padding:6px; word-break:break-word;"></td>
                     </tr>`
@@ -389,6 +409,9 @@ export default function CorrectionManagement({
                       .map(
                         (m) => `<tr>
                           <td style="border:1px solid #000; padding:6px; text-align:center; vertical-align:top;">□</td>
+                          <td style="border:1px solid #000; padding:6px; text-align:center; vertical-align:top;">${escapeHtml(
+                            formatMistakeId(m.id)
+                          )}</td>
                           <td style="border:1px solid #000; padding:6px; word-break:break-word;">${escapeHtml(
                             m.question
                           )}</td>
@@ -605,7 +628,7 @@ export default function CorrectionManagement({
                               ? 'bg-green-50 border-green-200 text-green-700 line-through'
                               : 'bg-white border-gray-200 text-gray-800 hover:bg-gray-50'
                           }`}
-                          title={m.reason}
+                          title={buildMistakeTitle(m)}
                         >
                           <div className="flex items-center gap-1">
                             {m.done ? (
@@ -614,7 +637,7 @@ export default function CorrectionManagement({
                               <span className="w-3.5 h-3.5 border border-gray-300 rounded-full inline-flex" />
                             )}
                             <span className="font-medium truncate max-w-[140px]">
-                              {m.question}
+                              {formatMistakeId(m.id) || m.question}
                             </span>
                           </div>
                         </button>
@@ -632,6 +655,11 @@ export default function CorrectionManagement({
                               <CheckCircle className="w-4 h-4 text-green-600" />
                             ) : (
                               <span className="w-4 h-4 border border-gray-300 rounded-full inline-flex" />
+                            )}
+                            {formatMistakeId(m.id) && (
+                              <span className="text-[11px] font-semibold text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                                {formatMistakeId(m.id)}
+                              </span>
                             )}
                             <span className="font-medium truncate">{m.question}</span>
                           </div>

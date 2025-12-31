@@ -142,34 +142,55 @@ export function getSubmissionImageUrl(submission?: {
  */
 export async function checkFolderNameUnique(
   folderName: string,
-  type?: 'classroom' | 'assignment'
+  type?: 'classroom' | 'assignment',
+  classroomId?: string
 ): Promise<{ isUnique: boolean; usedBy?: string }> {
   const trimmedName = folderName.trim()
   if (!trimmedName) {
     return { isUnique: true } // 空資料夾名稱不檢查
   }
 
-  // 如果是班級，檢查作業資料夾是否使用了相同名稱
   if (type === 'classroom') {
-    const assignments = await db.assignments.toArray()
-    const conflictAssignment = assignments.find(a => a.folder === trimmedName)
-    if (conflictAssignment) {
-      const classroom = await db.classrooms.get(conflictAssignment.classroomId)
-      return {
-        isUnique: false,
-        usedBy: `作業「${conflictAssignment.title}」（${classroom?.name || '未知班級'}）`
-      }
-    }
-  }
-
-  // 如果是作業，檢查班級資料夾是否使用了相同名稱
-  if (type === 'assignment') {
     const classrooms = await db.classrooms.toArray()
-    const conflictClassroom = classrooms.find(c => c.folder === trimmedName)
+    const conflictClassroom = classrooms.find((c) => c.folder === trimmedName)
     if (conflictClassroom) {
       return {
         isUnique: false,
         usedBy: `班級「${conflictClassroom.name}」`
+      }
+    }
+    const emptyFolders = await db.folders
+      .where('type')
+      .equals('classroom')
+      .toArray()
+    if (emptyFolders.some((f) => f.name === trimmedName)) {
+      return { isUnique: false, usedBy: `班級資料夾「${trimmedName}」` }
+    }
+  }
+
+  if (type === 'assignment') {
+    if (!classroomId) {
+      return { isUnique: true }
+    }
+    const assignments = await db.assignments
+      .where('classroomId')
+      .equals(classroomId)
+      .toArray()
+    const conflictAssignment = assignments.find((a) => a.folder === trimmedName)
+    if (conflictAssignment) {
+      return {
+        isUnique: false,
+        usedBy: `作業「${conflictAssignment.title}」`
+      }
+    }
+    const conflictEmpty = await db.folders
+      .where('[type+classroomId+name]')
+      .equals(['assignment', classroomId, trimmedName])
+      .first()
+    if (conflictEmpty) {
+      return {
+        isUnique: false,
+        usedBy: `作業資料夾「${trimmedName}」`
       }
     }
   }

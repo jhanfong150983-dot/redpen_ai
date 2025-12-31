@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BookOpen, ArrowLeft, Loader, X, Plus } from 'lucide-react'
 import { NumericInput } from '@/components/NumericInput'
-import { db } from '@/lib/db'
+import { db, generateId } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import type {
   AnswerKey,
@@ -104,12 +104,17 @@ export default function AssignmentList({
       const baseQuestion: AnswerKeyQuestion = {
         id: sanitizeQuestionId(q.id, `${idx + 1}`),
         type: questionType as QuestionCategoryType,
-        maxScore
+        maxScore,
+        idPath: q.idPath,
+        uiKey: q.uiKey ?? generateId()
       }
 
       // Add type-specific fields
       if (questionType === 1) {
         baseQuestion.answer = q.answer ?? ''
+        if (q.answerFormat === 'matching') {
+          baseQuestion.answerFormat = 'matching'
+        }
       } else if (questionType === 2) {
         baseQuestion.referenceAnswer = q.referenceAnswer ?? ''
         baseQuestion.acceptableAnswers = q.acceptableAnswers ?? []
@@ -166,18 +171,21 @@ export default function AssignmentList({
       // Clear fields when type changes
       if (nextType === 1) {
         item.answer = item.answer ?? ''
+        item.answerFormat = item.answerFormat ?? undefined
         item.referenceAnswer = undefined
         item.acceptableAnswers = undefined
         item.rubric = undefined
         item.rubricsDimensions = undefined
       } else if (nextType === 2) {
         item.answer = undefined
+        item.answerFormat = undefined
         item.referenceAnswer = item.referenceAnswer ?? ''
         item.acceptableAnswers = item.acceptableAnswers ?? []
         item.rubric = undefined
         item.rubricsDimensions = undefined
       } else if (nextType === 3) {
         item.answer = undefined
+        item.answerFormat = undefined
         item.referenceAnswer = item.referenceAnswer ?? ''
         item.acceptableAnswers = undefined
         if (!item.rubric && !item.rubricsDimensions) {
@@ -409,7 +417,7 @@ export default function AssignmentList({
 
                   return (
                     <div
-                      key={idx}
+                      key={q.uiKey || q.id || idx}
                       className="text-xs bg-gray-50 rounded-lg px-3 py-2 border border-gray-200 space-y-2"
                     >
                       <div className="grid grid-cols-[auto,auto,auto] gap-2 items-center">
@@ -540,7 +548,8 @@ export default function AssignmentList({
                     type: 2, // Default to Type 2 (multi-answer acceptable)
                     referenceAnswer: '',
                     acceptableAnswers: [],
-                    maxScore: 1
+                    maxScore: 1,
+                    uiKey: generateId()
                   }
                   const next: AnswerKey = {
                     ...editingAnswerKey,
