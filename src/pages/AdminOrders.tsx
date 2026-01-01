@@ -108,7 +108,6 @@ function getPackageScheduleStatus(pkg: InkPackage) {
 }
 
 function normalizeOrderStatus(status: string) {
-  if (status === 'pending') return 'cancelled'
   return status
 }
 
@@ -116,6 +115,9 @@ function statusMeta(status: string) {
   const normalized = normalizeOrderStatus(status)
   if (normalized === 'paid') {
     return { label: '已完成', color: 'text-emerald-600 bg-emerald-50', icon: CheckCircle }
+  }
+  if (normalized === 'pending') {
+    return { label: '金流確認中', color: 'text-amber-600 bg-amber-50', icon: RefreshCw }
   }
   if (normalized === 'cancelled' || normalized === 'canceled') {
     return { label: '付款失敗', color: 'text-red-600 bg-red-50', icon: XCircle }
@@ -931,6 +933,7 @@ export default function AdminOrders({ onBack }: AdminOrdersProps) {
             {filteredOrders.map((order) => {
               const meta = statusMeta(order.status)
               const StatusIcon = meta.icon
+              const normalizedStatus = normalizeOrderStatus(order.status)
               const orderBonus =
                 typeof order.bonus_drops === 'number' && order.bonus_drops > 0
                   ? order.bonus_drops
@@ -958,7 +961,13 @@ export default function AdminOrders({ onBack }: AdminOrdersProps) {
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${meta.color}`}>
                       {meta.label}
                     </span>
-                    <StatusIcon className="w-4 h-4 text-gray-400" />
+                    <StatusIcon
+                      className={`w-4 h-4 ${
+                        normalizedStatus === 'pending'
+                          ? 'text-amber-500 animate-spin'
+                          : 'text-gray-400'
+                      }`}
+                    />
                   </div>
                 </div>
               )

@@ -1,6 +1,8 @@
 import { getAuthUser } from '../../server/_auth.js'
 import { getSupabaseAdmin } from '../../server/_supabase.js'
 
+const PENDING_TTL_MINUTES = 30
+
 function resolveAction(req) {
   const actionParam = req.query?.action
   if (Array.isArray(actionParam)) {
@@ -25,6 +27,10 @@ function isPackageActive(pkg, now) {
   const endsAt = parseDateValue(pkg.ends_at)
   if (endsAt && endsAt <= now) return false
   return true
+}
+
+function getPendingCutoffIso() {
+  return new Date(Date.now() - PENDING_TTL_MINUTES * 60 * 1000).toISOString()
 }
 
 export default async function handler(req, res) {
@@ -64,6 +70,19 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
+    const cutoffIso = getPendingCutoffIso()
+    const nowIso = new Date().toISOString()
+    const { error: expireError } = await supabaseAdmin
+      .from('ink_orders')
+      .update({ status: 'cancelled', updated_at: nowIso })
+      .eq('user_id', user.id)
+      .eq('status', 'pending')
+      .lt('created_at', cutoffIso)
+
+    if (expireError) {
+      console.warn('Expire pending orders failed:', expireError)
+    }
+
     const { data, error } = await supabaseAdmin
       .from('ink_orders')
       .select(
@@ -77,7 +96,33 @@ export default async function handler(req, res) {
       return
     }
 
-    res.status(200).json({ orders: data ?? [] })
+    const orders = data ?? []
+    const pendingOrders = orders.filter((order) => order.status === 'pending')
+    const pendingDrops = pendingOrders.reduce(
+      (sum, order) => sum + (Number(order.drops) || 0),
+      0
+    )
+    const pendingBonusDrops = pendingOrders.reduce(
+      (sum, order) =>
+        sum + (typeof order.bonus_drops === 'number' ? order.bonus_drops : 0),
+      0
+    )
+    const pendingTotalDrops = pendingDrops + pendingBonusDrops
+    const pendingAmountTwd = pendingOrders.reduce(
+      (sum, order) => sum + (Number(order.amount_twd) || 0),
+      0
+    )
+
+    res.status(200).json({
+      orders,
+      pending: {
+        count: pendingOrders.length,
+        drops: pendingDrops,
+        bonusDrops: pendingBonusDrops,
+        totalDrops: pendingTotalDrops,
+        amountTwd: pendingAmountTwd
+      }
+    })
     return
   }
 

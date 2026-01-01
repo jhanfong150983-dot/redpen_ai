@@ -19,6 +19,7 @@ export default async function handler(req, res) {
     }
 
     let profile = null
+    let profileLoaded = false
     try {
       const useAdmin = isServiceRoleKey()
       const supabaseDb = useAdmin
@@ -33,9 +34,11 @@ export default async function handler(req, res) {
           .eq('id', user.id)
           .maybeSingle()
         profile = data || null
+        profileLoaded = true
       }
     } catch {
       profile = null
+      profileLoaded = false
     }
 
     res.status(200).json({
@@ -47,7 +50,9 @@ export default async function handler(req, res) {
         role: profile?.role || 'user',
         permissionTier: profile?.permission_tier || 'basic',
         inkBalance:
-          typeof profile?.ink_balance === 'number' ? profile.ink_balance : 0
+          profileLoaded && typeof profile?.ink_balance === 'number'
+            ? profile.ink_balance
+            : null
       }
     })
   } catch (err) {

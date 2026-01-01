@@ -64,6 +64,14 @@ type AuthState =
     }
 type InkOrderSummary = {
   status?: string | null
+  drops?: number | null
+  bonus_drops?: number | null
+  amount_twd?: number | null
+}
+type PendingInkSummary = {
+  count: number
+  totalDrops: number
+  amountTwd: number
 }
 
 function App() {
@@ -76,6 +84,11 @@ function App() {
   const [isPrivacyOpen, setIsPrivacyOpen] = useState(false)
   const [urlPageHandled, setUrlPageHandled] = useState(false)
   const [hasPaidOrder, setHasPaidOrder] = useState(false)
+  const [pendingInk, setPendingInk] = useState<PendingInkSummary>({
+    count: 0,
+    totalDrops: 0,
+    amountTwd: 0
+  })
   const inkBalance =
     auth.status === 'authenticated' ? auth.user.inkBalance ?? 0 : null
 
@@ -93,14 +106,21 @@ function App() {
         return
       }
 
-      setAuth({
-        status: 'authenticated',
-        user: {
-          ...data.user,
-          role: data.user.role || 'user',
-          permissionTier: data.user.permissionTier || 'basic',
-          inkBalance:
-            typeof data.user.inkBalance === 'number' ? data.user.inkBalance : 0
+      setAuth((prev) => {
+        const previousBalance =
+          prev.status === 'authenticated' ? prev.user.inkBalance ?? 0 : 0
+        const nextBalance =
+          typeof data.user.inkBalance === 'number'
+            ? data.user.inkBalance
+            : previousBalance
+        return {
+          status: 'authenticated',
+          user: {
+            ...data.user,
+            role: data.user.role || 'user',
+            permissionTier: data.user.permissionTier || 'basic',
+            inkBalance: nextBalance
+          }
         }
       })
     } catch (error) {
@@ -172,6 +192,7 @@ function App() {
   useEffect(() => {
     if (auth.status !== 'authenticated') {
       setHasPaidOrder(false)
+      setPendingInk({ count: 0, totalDrops: 0, amountTwd: 0 })
       return
     }
 
@@ -187,8 +208,37 @@ function App() {
         const paid = orders.some(
           (order) => String(order?.status || '').toLowerCase() === 'paid'
         )
+        const pendingFromApi = data?.pending
+        const pendingFallback = orders.filter(
+          (order) => String(order?.status || '').toLowerCase() === 'pending'
+        )
+        const pendingCount =
+          typeof pendingFromApi?.count === 'number'
+            ? pendingFromApi.count
+            : pendingFallback.length
+        const pendingTotalDrops =
+          typeof pendingFromApi?.totalDrops === 'number'
+            ? pendingFromApi.totalDrops
+            : pendingFallback.reduce((sum, order) => {
+                const drops = Number(order?.drops) || 0
+                const bonus =
+                  typeof order?.bonus_drops === 'number' ? order.bonus_drops : 0
+                return sum + drops + bonus
+              }, 0)
+        const pendingAmountTwd =
+          typeof pendingFromApi?.amountTwd === 'number'
+            ? pendingFromApi.amountTwd
+            : pendingFallback.reduce(
+                (sum, order) => sum + (Number(order?.amount_twd) || 0),
+                0
+              )
         if (isActive) {
           setHasPaidOrder(paid)
+          setPendingInk({
+            count: pendingCount,
+            totalDrops: pendingTotalDrops,
+            amountTwd: pendingAmountTwd
+          })
         }
       } catch {
         // ignore
@@ -462,7 +512,13 @@ function App() {
 
   // 作業管理
   if (currentPage === 'assignment-setup') {
-    return <AssignmentSetup onBack={() => setCurrentPage('home')} />
+    return (
+      <AssignmentSetup
+        onBack={() => setCurrentPage('home')}
+        inkBalance={auth.user.inkBalance ?? 0}
+        onRequireInkTopUp={() => setCurrentPage('ink-topup')}
+      />
+    )
   }
 
   // 作業匯入：選擇作業並決定匯入方式
@@ -715,8 +771,13 @@ function App() {
                   )}
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700">
-                  墨水：{auth.user.inkBalance ?? 0} 滴
+                  可用：{auth.user.inkBalance ?? 0} 滴
                 </span>
+                {pendingInk.totalDrops > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[11px] bg-amber-50 text-amber-700">
+                    待入帳：{pendingInk.totalDrops} 滴
+                  </span>
+                )}
               </div>
             </div>
             <button

@@ -1,6 +1,8 @@
 import { getAuthUser } from '../../server/_auth.js'
 import { getSupabaseAdmin } from '../../server/_supabase.js'
 
+const PENDING_TTL_MINUTES = 30
+
 function parseJsonBody(req, res) {
   const body = req.body
   if (!body) return null
@@ -62,6 +64,10 @@ function resolveAction(req) {
   const pathname = req.url ? req.url.split('?')[0] : ''
   const segments = pathname.split('/').filter(Boolean)
   return segments[segments.length - 1] || ''
+}
+
+function getPendingCutoffIso() {
+  return new Date(Date.now() - PENDING_TTL_MINUTES * 60 * 1000).toISOString()
 }
 
 async function requireAdmin(req, res) {
@@ -349,6 +355,18 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
+    const cutoffIso = getPendingCutoffIso()
+    const nowIso = new Date().toISOString()
+    const { error: expireError } = await supabaseAdmin
+      .from('ink_orders')
+      .update({ status: 'cancelled', updated_at: nowIso })
+      .eq('status', 'pending')
+      .lt('created_at', cutoffIso)
+
+    if (expireError) {
+      console.warn('Expire pending orders failed:', expireError)
+    }
+
     const { data, error } = await supabaseAdmin
       .from('ink_orders')
       .select(

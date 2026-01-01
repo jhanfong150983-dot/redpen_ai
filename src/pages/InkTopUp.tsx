@@ -49,7 +49,6 @@ interface InkPackage {
 }
 
 function normalizeOrderStatus(status: string) {
-  if (status === 'pending') return 'cancelled'
   return status
 }
 
@@ -57,6 +56,9 @@ function formatOrderStatus(status: string) {
   const normalized = normalizeOrderStatus(status)
   if (normalized === 'paid') {
     return { label: '已完成', color: 'text-emerald-600 bg-emerald-50' }
+  }
+  if (normalized === 'pending') {
+    return { label: '金流確認中', color: 'text-amber-600 bg-amber-50' }
   }
   if (normalized === 'cancelled' || normalized === 'canceled') {
     return { label: '付款失敗', color: 'text-red-600 bg-red-50' }
@@ -93,6 +95,22 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
       : 0
   const totalDrops = effectiveDrops ? effectiveDrops + bonusDrops : 0
   const refundFeePercent = Math.round(REFUND_FEE_RATE * 1000) / 10
+  const isCheckoutLocked = true // TODO: 綠界付款恢復後改成 false
+  const pendingOrders = orders.filter((order) => order.status === 'pending')
+  const pendingBaseDrops = pendingOrders.reduce(
+    (sum, order) => sum + (Number(order.drops) || 0),
+    0
+  )
+  const pendingBonusDrops = pendingOrders.reduce(
+    (sum, order) =>
+      sum + (typeof order.bonus_drops === 'number' ? order.bonus_drops : 0),
+    0
+  )
+  const pendingTotalDrops = pendingBaseDrops + pendingBonusDrops
+  const pendingAmountTwd = pendingOrders.reduce(
+    (sum, order) => sum + (Number(order.amount_twd) || 0),
+    0
+  )
 
   const fetchOrders = async (): Promise<InkOrder[]> => {
     const response = await fetch('/api/ink/orders', {
@@ -150,8 +168,8 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
       const response = await fetch('/api/auth/me', { credentials: 'include' })
       if (!response.ok) return
       const data = await response.json()
-      const balance = Number(data?.user?.inkBalance)
-      if (Number.isFinite(balance)) {
+      const balance = data?.user?.inkBalance
+      if (typeof balance === 'number' && Number.isFinite(balance)) {
         dispatchInkBalance(balance)
       }
     } catch {
@@ -348,10 +366,15 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
               </div>
             </div>
             <div className="text-right">
-              <p className="text-xs text-gray-500">目前墨水</p>
+              <p className="text-xs text-gray-500">可用墨水</p>
               <p className="text-lg font-semibold text-gray-900">
                 {currentBalance} 滴
               </p>
+              {pendingTotalDrops > 0 && (
+                <p className="text-xs text-amber-600 mt-1">
+                  待入帳 {pendingTotalDrops} 滴（{pendingAmountTwd} 元）
+                </p>
+              )}
             </div>
           </div>
 
@@ -488,19 +511,31 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
               {message}
             </div>
           )}
+          {pendingTotalDrops > 0 && (
+            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 text-xs text-amber-700 rounded-xl">
+              有待入帳訂單正在金流確認中，完成後會自動入帳；若未完成則視為付款失敗。
+            </div>
+          )}
 
           <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <p className="text-xs text-gray-500">
               付款完成後，系統會自動加點，若未更新可重新整理。
             </p>
             <div className="flex flex-wrap gap-2">
+              {isCheckoutLocked && (
+                <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  目前暫停開放付款，請稍後再試。
+                </div>
+              )}
               <button
                 type="button"
                 onClick={handleEcpayCheckout}
                 className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                disabled={isEcpaySubmitting || !selectedPackage || !hasAgreed}
+                disabled={isCheckoutLocked || isEcpaySubmitting || !selectedPackage || !hasAgreed}
               >
-                {isEcpaySubmitting ? (
+                {isCheckoutLocked ? (
+                  '暫停付款'
+                ) : isEcpaySubmitting ? (
                   <>
                     <Loader className="w-4 h-4 animate-spin" />
                     轉接中...
@@ -570,6 +605,8 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
                       </span>
                       {normalizedStatus === 'paid' ? (
                         <CheckCircle className="w-4 h-4 text-emerald-500" />
+                      ) : normalizedStatus === 'pending' ? (
+                        <RefreshCw className="w-4 h-4 text-amber-500 animate-spin" />
                       ) : (
                         <XCircle className="w-4 h-4 text-red-400" />
                       )}

@@ -33,9 +33,15 @@ import { checkFolderNameUnique } from '@/lib/utils'
 
 interface AssignmentSetupProps {
   onBack?: () => void
+  inkBalance?: number
+  onRequireInkTopUp?: () => void
 }
 
-export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
+export default function AssignmentSetup({
+  onBack,
+  inkBalance,
+  onRequireInkTopUp
+}: AssignmentSetupProps) {
   const [classrooms, setClassrooms] = useState<Classroom[]>([])
   const [selectedClassroomId, setSelectedClassroomId] = useState('')
   const [assignments, setAssignments] = useState<Assignment[]>([])
@@ -74,6 +80,9 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
   const [isAssignmentsLoading, setIsAssignmentsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const isInkNegative = typeof inkBalance === 'number' && inkBalance < 0
+  const canCreateAssignment = !isInkNegative
+  const createBlockedMessage = '餘額不足，請先補充墨水後再新增作業。是否前往補充墨水？'
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -524,8 +533,22 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
     }
   }
 
+  const handleRequireInkTopUp = () => {
+    const shouldTopUp = window.confirm(createBlockedMessage)
+    if (!shouldTopUp) return
+    if (onRequireInkTopUp) {
+      onRequireInkTopUp()
+      return
+    }
+    window.location.href = '/?page=ink-topup'
+  }
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+    if (!canCreateAssignment) {
+      handleRequireInkTopUp()
+      return
+    }
     setError(null)
 
     // 驗證邏輯保留，但不設置 error（實時提示已經告訴用戶）
@@ -1006,6 +1029,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
 
   // 複製作業處理函數
   const handleCopyAssignment = async () => {
+    if (!canCreateAssignment) {
+      handleRequireInkTopUp()
+      return
+    }
     if (!sourceAssignment || !targetClassroomId) {
       setError('請選擇目標班級')
       return
@@ -1521,6 +1548,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
             <button
               type="button"
               onClick={() => {
+                if (!canCreateAssignment) {
+                  handleRequireInkTopUp()
+                  return
+                }
                 resetForm()
                 setIsCreateModalOpen(true)
               }}
@@ -1530,6 +1561,11 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
               <Plus className="w-5 h-5" />
             </button>
           </div>
+          {isInkNegative && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              目前墨水為負值，新增或複製作業時會提示補墨水。
+            </div>
+          )}
         </div>
 
         {error && (
@@ -1657,6 +1693,10 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                       <button
                         type="button"
                         onClick={(e) => {
+                          if (!canCreateAssignment) {
+                            handleRequireInkTopUp()
+                            return
+                          }
                           e.stopPropagation()
                           setSourceAssignment(a)
                           setTargetClassroomId('')
