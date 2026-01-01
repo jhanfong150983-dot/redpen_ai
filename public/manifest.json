@@ -1,7 +1,7 @@
 {
   "name": "RedPen AI - 作業批改",
   "short_name": "RedPen AI",
-  "description": "離線優先的作業批改 PWA 應用",
+  "description": "解放雙手的作業批改 PWA 應用",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
