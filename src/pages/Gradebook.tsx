@@ -24,19 +24,38 @@ export default function Gradebook({ onBack }: GradebookProps) {
   const [weights, setWeights] = useState<Record<string, number>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const hasClassrooms = classrooms.length > 0
 
   useEffect(() => {
     const loadClassrooms = async () => {
+      setIsLoading(true)
       const list = await db.classrooms.toArray()
       setClassrooms(list)
-      if (list.length > 0) setSelectedClassroomId((prev) => prev || list[0].id)
+      if (list.length > 0) {
+        setSelectedClassroomId((prev) => prev || list[0].id)
+      } else {
+        setSelectedClassroomId('')
+        setAssignments([])
+        setAssignmentFolders([])
+        setStudents([])
+        setSubmissions([])
+        setWeights({})
+        setIsLoading(false)
+      }
     }
     void loadClassrooms()
   }, [])
 
   useEffect(() => {
     const load = async () => {
-      if (!selectedClassroomId) return
+      if (!selectedClassroomId) {
+        setAssignments([])
+        setAssignmentFolders([])
+        setStudents([])
+        setSubmissions([])
+        setIsLoading(false)
+        return
+      }
       setIsLoading(true)
       setError(null)
       try {
@@ -242,12 +261,17 @@ export default function Gradebook({ onBack }: GradebookProps) {
               onChange={(e) => setSelectedClassroomId(e.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white shadow-sm"
               aria-label="選擇班級"
+              disabled={!hasClassrooms}
             >
-              {classrooms.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
+              {hasClassrooms ? (
+                classrooms.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))
+              ) : (
+                <option value="">尚未建立班級</option>
+              )}
             </select>
             <select
               value={selectedFolder}
