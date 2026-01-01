@@ -64,7 +64,7 @@ interface PackageDraft {
 
 type StatusFilter = 'all' | 'paid' | 'cancelled'
 
-function formatDate(value?: string) {
+function formatDate(value?: string | null) {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
