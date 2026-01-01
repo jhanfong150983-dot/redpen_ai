@@ -41,7 +41,39 @@ function parsePositiveInt(value) {
   return parsed
 }
 
-async function createOrderWithTradeNo(supabaseAdmin, userId, drops, amountTwd) {
+function parseBoolean(value) {
+  if (value === true || value === false) return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true') return true
+    if (normalized === 'false') return false
+  }
+  return null
+}
+
+function parseDateValue(value) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date
+}
+
+function isPackageActive(pkg, now) {
+  if (!pkg?.is_active) return false
+  const startsAt = parseDateValue(pkg.starts_at)
+  if (startsAt && startsAt > now) return false
+  const endsAt = parseDateValue(pkg.ends_at)
+  if (endsAt && endsAt <= now) return false
+  return true
+}
+
+async function createOrderWithTradeNo(
+  supabaseAdmin,
+  userId,
+  drops,
+  amountTwd,
+  packageSnapshot
+) {
   let attempts = 0
   let lastError = null
 
@@ -56,10 +88,11 @@ async function createOrderWithTradeNo(supabaseAdmin, userId, drops, amountTwd) {
         amount_twd: amountTwd,
         status: 'pending',
         provider: 'ecpay',
-        provider_txn_id: tradeNo
+        provider_txn_id: tradeNo,
+        ...packageSnapshot
       })
       .select(
-        'id, drops, amount_twd, status, provider, provider_txn_id, created_at, updated_at'
+        'id, drops, bonus_drops, amount_twd, status, provider, provider_txn_id, created_at, updated_at'
       )
       .single()
 
@@ -107,9 +140,22 @@ async function handleCheckout(req, res) {
   const payload = parseJsonBody(req, res)
   if (!payload) return
 
-  const drops = parsePositiveInt(payload.drops)
-  if (!drops) {
-    res.status(400).json({ error: '請輸入有效的墨水滴數' })
+  const packageId = parsePositiveInt(payload.packageId)
+  if (!packageId) {
+    res.status(400).json({ error: '請選擇有效的補充方案' })
+    return
+  }
+  const consent = parseBoolean(payload.consent)
+  if (!consent) {
+    res.status(400).json({ error: '請先同意條款後再付款' })
+    return
+  }
+  const termsVersion =
+    typeof payload.termsVersion === 'string' ? payload.termsVersion.trim() : ''
+  const privacyVersion =
+    typeof payload.privacyVersion === 'string' ? payload.privacyVersion.trim() : ''
+  if (!termsVersion || !privacyVersion) {
+    res.status(400).json({ error: '條款版本缺失' })
     return
   }
 
@@ -122,17 +168,64 @@ async function handleCheckout(req, res) {
   }
 
   const supabaseAdmin = getSupabaseAdmin()
-  const amountTwd = drops
 
   try {
+    const { data: pkg, error: packageError } = await supabaseAdmin
+      .from('ink_packages')
+      .select(
+        'id, label, description, drops, bonus_drops, starts_at, ends_at, is_active'
+      )
+      .eq('id', packageId)
+      .maybeSingle()
+
+    if (packageError) {
+      res.status(500).json({ error: '讀取方案失敗' })
+      return
+    }
+
+    if (!pkg) {
+      res.status(404).json({ error: '方案不存在' })
+      return
+    }
+
+    const now = new Date()
+    if (!isPackageActive(pkg, now)) {
+      res.status(400).json({ error: '方案已下架或尚未開始' })
+      return
+    }
+
+    const drops = Number.parseInt(String(pkg.drops), 10)
+    if (!Number.isFinite(drops) || drops <= 0) {
+      res.status(400).json({ error: '方案滴數設定錯誤' })
+      return
+    }
+
+    const bonusDrops =
+      typeof pkg.bonus_drops === 'number' && pkg.bonus_drops > 0
+        ? pkg.bonus_drops
+        : 0
+    const amountTwd = drops
+    const packageSnapshot = {
+      package_id: pkg.id,
+      package_label: pkg.label,
+      package_description: pkg.description ?? null,
+      bonus_drops: bonusDrops,
+      consent_at: new Date().toISOString(),
+      terms_version: termsVersion,
+      privacy_version: privacyVersion
+    }
+
     const { order, tradeNo } = await createOrderWithTradeNo(
       supabaseAdmin,
       user.id,
       drops,
-      amountTwd
+      amountTwd,
+      packageSnapshot
     )
 
     const clientBackUrl = `${config.siteUrl}/?page=ink-topup&payment=ecpay&orderId=${order.id}`
+    const itemName =
+      bonusDrops > 0 ? `墨水 ${drops} 滴 + 贈送 ${bonusDrops} 滴` : `墨水 ${drops} 滴`
     const fields = {
       MerchantID: config.merchantId,
       MerchantTradeNo: tradeNo,
@@ -140,7 +233,7 @@ async function handleCheckout(req, res) {
       PaymentType: 'aio',
       TotalAmount: String(amountTwd),
       TradeDesc: config.tradeDesc,
-      ItemName: `墨水 ${drops} 滴`,
+      ItemName: itemName,
       ReturnURL: `${config.siteUrl}/api/ink/ecpay?action=notify`,
       ClientBackURL: clientBackUrl,
       ChoosePayment: config.choosePayment,
@@ -197,12 +290,6 @@ async function handleNotify(req, res) {
     return
   }
 
-  const rtnCode = String(payload.RtnCode || '')
-  if (rtnCode !== '1') {
-    res.status(200).send('1|OK')
-    return
-  }
-
   const merchantTradeNo = String(payload.MerchantTradeNo || '')
   const tradeAmount = Number.parseInt(String(payload.TradeAmt || ''), 10)
 
@@ -215,7 +302,9 @@ async function handleNotify(req, res) {
 
   const { data: order, error: orderError } = await supabaseAdmin
     .from('ink_orders')
-    .select('id, user_id, drops, amount_twd, status, provider_txn_id, provider')
+    .select(
+      'id, user_id, drops, bonus_drops, amount_twd, status, provider_txn_id, provider, package_id, package_label, package_description'
+    )
     .eq('provider', 'ecpay')
     .eq('provider_txn_id', merchantTradeNo)
     .maybeSingle()
@@ -227,6 +316,22 @@ async function handleNotify(req, res) {
 
   if (!order) {
     res.status(404).send('0|Order not found')
+    return
+  }
+
+  const rtnCode = String(payload.RtnCode || '')
+  if (rtnCode !== '1') {
+    if (order.status !== 'paid') {
+      const { error: cancelError } = await supabaseAdmin
+        .from('ink_orders')
+        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+        .eq('id', order.id)
+      if (cancelError) {
+        res.status(500).send('0|Order update failed')
+        return
+      }
+    }
+    res.status(200).send('1|OK')
     return
   }
 
@@ -257,7 +362,12 @@ async function handleNotify(req, res) {
 
       const currentBalance =
         typeof profile?.ink_balance === 'number' ? profile.ink_balance : 0
-      const balanceAfter = currentBalance + order.drops
+      const bonusDrops =
+        typeof order.bonus_drops === 'number' && order.bonus_drops > 0
+          ? order.bonus_drops
+          : 0
+      const totalDrops = order.drops + bonusDrops
+      const balanceAfter = currentBalance + totalDrops
 
       const { error: updateError } = await supabaseAdmin
         .from('profiles')
@@ -274,7 +384,7 @@ async function handleNotify(req, res) {
 
       const { error: ledgerError } = await supabaseAdmin.from('ink_ledger').insert({
         user_id: order.user_id,
-        delta: order.drops,
+        delta: totalDrops,
         reason: 'order_paid',
         metadata: {
           orderId: order.id,
@@ -282,7 +392,12 @@ async function handleNotify(req, res) {
           tradeNo: payload.TradeNo,
           merchantTradeNo,
           amountTwd: order.amount_twd,
-          drops: order.drops,
+          baseDrops: order.drops,
+          bonusDrops,
+          totalDrops,
+          packageId: order.package_id,
+          packageLabel: order.package_label,
+          packageDescription: order.package_description,
           balanceBefore: currentBalance,
           balanceAfter
         }

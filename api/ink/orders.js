@@ -1,25 +1,30 @@
 import { getAuthUser } from '../../server/_auth.js'
 import { getSupabaseAdmin } from '../../server/_supabase.js'
 
-function parseJsonBody(req, res) {
-  const body = req.body
-  if (!body) return null
-  if (typeof body === 'string') {
-    try {
-      return JSON.parse(body)
-    } catch {
-      res.status(400).json({ error: 'Invalid JSON body' })
-      return null
-    }
+function resolveAction(req) {
+  const actionParam = req.query?.action
+  if (Array.isArray(actionParam)) {
+    return actionParam[0] || ''
   }
-  return body
+  if (typeof actionParam === 'string') return actionParam
+  const pathname = req.url ? req.url.split('?')[0] : ''
+  const segments = pathname.split('/').filter(Boolean)
+  return segments[segments.length - 1] || ''
 }
 
-function parsePositiveInt(value) {
-  const parsed = Number.parseInt(String(value), 10)
-  if (!Number.isFinite(parsed)) return null
-  if (parsed <= 0) return null
-  return parsed
+function parseDateValue(value) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date
+}
+
+function isPackageActive(pkg, now) {
+  const startsAt = parseDateValue(pkg.starts_at)
+  if (startsAt && startsAt > now) return false
+  const endsAt = parseDateValue(pkg.ends_at)
+  if (endsAt && endsAt <= now) return false
+  return true
 }
 
 export default async function handler(req, res) {
@@ -30,12 +35,39 @@ export default async function handler(req, res) {
   }
 
   const supabaseAdmin = getSupabaseAdmin()
+  const action = resolveAction(req)
+
+  if (action === 'packages') {
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method Not Allowed' })
+      return
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('ink_packages')
+      .select(
+        'id, drops, label, description, bonus_drops, starts_at, ends_at, sort_order, is_active'
+      )
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+      .order('drops', { ascending: true })
+
+    if (error) {
+      res.status(500).json({ error: '讀取方案失敗' })
+      return
+    }
+
+    const now = new Date()
+    const packages = (data ?? []).filter((pkg) => isPackageActive(pkg, now))
+    res.status(200).json({ packages })
+    return
+  }
 
   if (req.method === 'GET') {
     const { data, error } = await supabaseAdmin
       .from('ink_orders')
       .select(
-        'id, drops, amount_twd, status, provider, provider_txn_id, created_at, updated_at'
+        'id, drops, bonus_drops, amount_twd, status, provider, provider_txn_id, package_id, package_label, package_description, created_at, updated_at'
       )
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
@@ -50,42 +82,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const payload = parseJsonBody(req, res)
-    if (!payload) return
-
-    const drops = parsePositiveInt(payload.drops)
-    if (!drops) {
-      res.status(400).json({ error: '請輸入有效的墨水滴數' })
-      return
-    }
-
-    const provider = typeof payload.provider === 'string' && payload.provider.trim()
-      ? payload.provider.trim()
-      : 'manual'
-
-    const amountTwd = drops
-    const status = 'pending'
-
-    const { data, error } = await supabaseAdmin
-      .from('ink_orders')
-      .insert({
-        user_id: user.id,
-        drops,
-        amount_twd: amountTwd,
-        status,
-        provider
-      })
-      .select(
-        'id, drops, amount_twd, status, provider, provider_txn_id, created_at, updated_at'
-      )
-      .single()
-
-    if (error) {
-      res.status(500).json({ error: '建立訂單失敗' })
-      return
-    }
-
-    res.status(200).json({ order: data })
+    res.status(405).json({ error: '目前僅支援綠界付款' })
     return
   }
 

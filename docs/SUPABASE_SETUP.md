@@ -232,10 +232,17 @@ CREATE TABLE IF NOT EXISTS public.ink_orders (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES auth.users(id),
   drops INTEGER NOT NULL,
+  bonus_drops INTEGER DEFAULT 0,
   amount_twd INTEGER NOT NULL,
   status TEXT NOT NULL,
   provider TEXT NOT NULL,
   provider_txn_id TEXT,
+  package_id BIGINT REFERENCES public.ink_packages(id),
+  package_label TEXT,
+  package_description TEXT,
+  consent_at TIMESTAMP WITH TIME ZONE,
+  terms_version TEXT,
+  privacy_version TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -245,6 +252,59 @@ ON public.ink_orders(provider, provider_txn_id);
 
 CREATE INDEX IF NOT EXISTS idx_ink_orders_user_id ON public.ink_orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_ink_orders_status ON public.ink_orders(status);
+```
+
+已存在 `ink_orders` 表時，可用以下方式補欄位：
+
+```sql
+ALTER TABLE public.ink_orders
+ADD COLUMN IF NOT EXISTS bonus_drops INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS package_id BIGINT REFERENCES public.ink_packages(id),
+ADD COLUMN IF NOT EXISTS package_label TEXT,
+ADD COLUMN IF NOT EXISTS package_description TEXT,
+ADD COLUMN IF NOT EXISTS consent_at TIMESTAMP WITH TIME ZONE,
+ADD COLUMN IF NOT EXISTS terms_version TEXT,
+ADD COLUMN IF NOT EXISTS privacy_version TEXT;
+```
+
+### ink_packages 表（補充方案）
+
+```sql
+CREATE TABLE IF NOT EXISTS public.ink_packages (
+  id BIGSERIAL PRIMARY KEY,
+  label TEXT NOT NULL,
+  description TEXT,
+  drops INTEGER NOT NULL,
+  bonus_drops INTEGER DEFAULT 0,
+  starts_at TIMESTAMP WITH TIME ZONE,
+  ends_at TIMESTAMP WITH TIME ZONE,
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ink_packages_active ON public.ink_packages(is_active);
+CREATE INDEX IF NOT EXISTS idx_ink_packages_sort ON public.ink_packages(sort_order);
+```
+
+已存在 `ink_packages` 表時，可用以下方式補欄位：
+
+```sql
+ALTER TABLE public.ink_packages
+ADD COLUMN IF NOT EXISTS bonus_drops INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS starts_at TIMESTAMP WITH TIME ZONE,
+ADD COLUMN IF NOT EXISTS ends_at TIMESTAMP WITH TIME ZONE;
+```
+
+預設方案可用以下範例新增：
+
+```sql
+INSERT INTO public.ink_packages (label, description, drops, bonus_drops, sort_order, is_active) VALUES
+('輕量補充', '適合試用或小量需求', 30, 0, 1, true),
+('標準補充', '常用老師日常需求', 50, 0, 2, true),
+('進階補充', '批改量較大時使用', 100, 0, 3, true),
+('大量補充', '適合大量班級或期末', 300, 0, 4, true);
 ```
 
 ### updated_at 自動更新（classrooms / students / assignments / submissions）
@@ -287,6 +347,12 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_ink_orders_updated_at') THEN
     CREATE TRIGGER update_ink_orders_updated_at
     BEFORE UPDATE ON public.ink_orders
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_ink_packages_updated_at') THEN
+    CREATE TRIGGER update_ink_packages_updated_at
+    BEFORE UPDATE ON public.ink_packages
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
   END IF;

@@ -27,6 +27,8 @@ import { checkWebPSupport } from '@/lib/webpSupport'
 import { INK_BALANCE_EVENT, type InkBalanceDetail } from '@/lib/ink-events'
 import '@/lib/debug-sync'
 import { debugLog } from '@/lib/logger'
+import { LEGAL_MODAL_EVENT, type LegalModalDetail } from '@/lib/legal-events'
+import { TERMS_VERSION, PRIVACY_VERSION, REFUND_FEE_RATE } from '@/lib/legal'
 
 type Page =
   | 'home'
@@ -66,6 +68,8 @@ function App() {
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>('')
   const [isAiDisclaimerOpen, setIsAiDisclaimerOpen] = useState(false)
   const [isIpDisclaimerOpen, setIsIpDisclaimerOpen] = useState(false)
+  const [isTermsOpen, setIsTermsOpen] = useState(false)
+  const [isPrivacyOpen, setIsPrivacyOpen] = useState(false)
   const [urlPageHandled, setUrlPageHandled] = useState(false)
 
   const fetchAuth = useCallback(async () => {
@@ -156,6 +160,21 @@ function App() {
 
     window.addEventListener(INK_BALANCE_EVENT, handleInkBalance)
     return () => window.removeEventListener(INK_BALANCE_EVENT, handleInkBalance)
+  }, [])
+
+  useEffect(() => {
+    const handleLegalModal = (event: Event) => {
+      const detail = (event as CustomEvent<LegalModalDetail>).detail
+      if (!detail?.kind) return
+      if (detail.kind === 'terms') {
+        setIsTermsOpen(true)
+      } else if (detail.kind === 'privacy') {
+        setIsPrivacyOpen(true)
+      }
+    }
+
+    window.addEventListener(LEGAL_MODAL_EVENT, handleLegalModal)
+    return () => window.removeEventListener(LEGAL_MODAL_EVENT, handleLegalModal)
   }, [])
 
   const isAdmin =
@@ -481,6 +500,8 @@ function App() {
   }
 
   // 首頁
+  const refundFeePercent = Math.round(REFUND_FEE_RATE * 1000) / 10
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="w-full max-w-5xl bg-white rounded-2xl shadow-xl p-8">
@@ -703,6 +724,24 @@ function App() {
             。
           </p>
           <p className="mt-2 text-gray-500">
+            相關政策：
+            <button
+              type="button"
+              onClick={() => setIsTermsOpen(true)}
+              className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+            >
+              服務條款
+            </button>
+            {' / '}
+            <button
+              type="button"
+              onClick={() => setIsPrivacyOpen(true)}
+              className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+            >
+              隱私權政策
+            </button>
+          </p>
+          <p className="mt-2 text-gray-500">
             如需使用授權或合作洽談，請「聯絡我們」信箱： jhanfong150983@gmail.com；電話：09-8171-6650
           </p>
         </div>
@@ -784,6 +823,131 @@ function App() {
               </p>
               <p>
                 未經事前書面同意，任何人不得以任何形式重製、改作、散布、公開傳輸、展示、出版或作商業使用；僅限於合法且必要之個人瀏覽或學習用途之合理使用，不構成授權。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isTermsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">服務條款</h2>
+                <p className="text-xs text-gray-500 mt-1">版本：{TERMS_VERSION}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTermsOpen(false)}
+                className="p-1 rounded-full hover:bg-gray-100 text-gray-500"
+                aria-label="關閉"
+              >
+                X
+              </button>
+            </div>
+            <div className="px-5 py-4 text-sm text-gray-700 space-y-3 overflow-y-auto max-h-[75vh] leading-relaxed">
+              <p>
+                <span className="font-semibold">一、服務內容</span>
+                <br />
+                本平台提供 AI 作業批改與相關教學管理功能，並採點數制扣抵服務費用。
+              </p>
+              <p>
+                <span className="font-semibold">二、數位內容與七日鑑賞期</span>
+                <br />
+                本服務屬於數位內容／線上服務，使用者於付款前勾選同意後始提供服務，
+                依法排除七日鑑賞期。
+              </p>
+              <p>
+                <span className="font-semibold">三、點數與退款政策</span>
+                <br />
+                已使用點數不予退費；未使用點數得申請退費，並將扣除
+                {refundFeePercent}% 手續費。
+                <br />
+                贈送點數不具退款價值且不可折現，退款計算以「購買點數」為準，
+                系統視為先扣購買點數，再扣贈送點數。
+              </p>
+              <p>
+                <span className="font-semibold">四、付款與訂單</span>
+                <br />
+                本平台目前僅提供綠界付款。交易完成後，系統將依訂單內容自動加點。
+              </p>
+              <p>
+                <span className="font-semibold">五、使用規範</span>
+                <br />
+                使用者應遵守法律法規，不得上傳或處理違法、侵權或不當內容。
+              </p>
+              <p>
+                <span className="font-semibold">六、服務限制與免責</span>
+                <br />
+                AI 批改結果僅供參考，使用者應自行判斷並承擔使用後果。
+              </p>
+              <p>
+                <span className="font-semibold">七、聯絡方式</span>
+                <br />
+                如需協助，請「聯絡我們」信箱： jhanfong150983@gmail.com；電話：09-8171-6650
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isPrivacyOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">隱私權政策</h2>
+                <p className="text-xs text-gray-500 mt-1">版本：{PRIVACY_VERSION}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPrivacyOpen(false)}
+                className="p-1 rounded-full hover:bg-gray-100 text-gray-500"
+                aria-label="關閉"
+              >
+                X
+              </button>
+            </div>
+            <div className="px-5 py-4 text-sm text-gray-700 space-y-3 overflow-y-auto max-h-[75vh] leading-relaxed">
+              <p>
+                <span className="font-semibold">一、蒐集資訊</span>
+                <br />
+                我們可能蒐集使用者帳號資訊（Email、姓名）、作業內容（文字或影像）、
+                批改結果、操作紀錄與必要的技術資訊（如瀏覽器與裝置資訊）。
+                <br />
+                付款資訊由第三方金流（綠界）處理，本平台不儲存信用卡資料。
+              </p>
+              <p>
+                <span className="font-semibold">二、使用目的</span>
+                <br />
+                蒐集之資料僅用於提供 AI 批改服務、帳務處理、客服支援、系統安全與合法合規。
+              </p>
+              <p>
+                <span className="font-semibold">三、第三方服務</span>
+                <br />
+                作業內容會傳送至 Google Gemini API 進行運算，我們不會另行將資料
+                用於其他商業用途。是否用於模型訓練以 Google API 條款為準。
+              </p>
+              <p>
+                <span className="font-semibold">四、保存期限</span>
+                <br />
+                我們僅在提供服務與法令要求之期間內保存資料，逾期將進行刪除或匿名化處理。
+              </p>
+              <p>
+                <span className="font-semibold">五、您的權利</span>
+                <br />
+                您可要求查詢、補充、更正或刪除個人資料；如需協助請透過下列聯絡方式與我們聯繫。
+              </p>
+              <p>
+                <span className="font-semibold">六、資料安全</span>
+                <br />
+                我們採取合理的技術與管理措施保護資料安全，但無法保證絕對不受任何風險影響。
+              </p>
+              <p>
+                <span className="font-semibold">七、聯絡方式</span>
+                <br />
+                如有隱私相關問題，請「聯絡我們」信箱： jhanfong150983@gmail.com；電話：09-8171-6650
               </p>
             </div>
           </div>

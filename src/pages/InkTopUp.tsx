@@ -1,15 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ArrowLeft,
   Droplet,
   RefreshCw,
   Loader,
   CheckCircle,
-  Clock,
   XCircle,
   CreditCard
 } from 'lucide-react'
 import { dispatchInkBalance } from '@/lib/ink-events'
+import { dispatchLegalModal } from '@/lib/legal-events'
+import {
+  TERMS_VERSION,
+  PRIVACY_VERSION,
+  REFUND_FEE_RATE
+} from '@/lib/legal'
 
 interface InkTopUpProps {
   onBack?: () => void
@@ -19,6 +24,10 @@ interface InkTopUpProps {
 interface InkOrder {
   id: number
   drops: number
+  bonus_drops?: number | null
+  package_id?: number | null
+  package_label?: string | null
+  package_description?: string | null
   amount_twd: number
   status: string
   provider: string
@@ -27,23 +36,32 @@ interface InkOrder {
   updated_at?: string
 }
 
-const PACKAGE_OPTIONS = [
-  { drops: 30, label: '輕量補充', description: '適合試用或小量需求' },
-  { drops: 50, label: '標準補充', description: '常用老師日常需求' },
-  { drops: 100, label: '進階補充', description: '批改量較大時使用' },
-  { drops: 300, label: '大量補充', description: '適合大量班級或期末' }
-]
+interface InkPackage {
+  id: number
+  drops: number
+  label: string
+  description?: string | null
+  bonus_drops?: number | null
+  starts_at?: string | null
+  ends_at?: string | null
+  sort_order?: number | null
+  is_active?: boolean | null
+}
+
+function normalizeOrderStatus(status: string) {
+  if (status === 'pending') return 'cancelled'
+  return status
+}
 
 function formatOrderStatus(status: string) {
-  switch (status) {
-    case 'paid':
-      return { label: '已完成', color: 'text-emerald-600 bg-emerald-50' }
-    case 'cancelled':
-    case 'canceled':
-      return { label: '已取消', color: 'text-gray-500 bg-gray-100' }
-    default:
-      return { label: '待付款', color: 'text-amber-700 bg-amber-50' }
+  const normalized = normalizeOrderStatus(status)
+  if (normalized === 'paid') {
+    return { label: '已完成', color: 'text-emerald-600 bg-emerald-50' }
   }
+  if (normalized === 'cancelled' || normalized === 'canceled') {
+    return { label: '付款失敗', color: 'text-red-600 bg-red-50' }
+  }
+  return { label: '付款失敗', color: 'text-red-600 bg-red-50' }
 }
 
 function formatDate(value?: string) {
@@ -56,23 +74,25 @@ function formatDate(value?: string) {
 export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) {
   const [orders, setOrders] = useState<InkOrder[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingPackages, setIsLoadingPackages] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [packageError, setPackageError] = useState<string | null>(null)
 
-  const [selectedDrops, setSelectedDrops] = useState<number | null>(
-    PACKAGE_OPTIONS[1]?.drops ?? null
-  )
-  const [customDrops, setCustomDrops] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [packageOptions, setPackageOptions] = useState<InkPackage[]>([])
+  const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null)
   const [isEcpaySubmitting, setIsEcpaySubmitting] = useState(false)
+  const [hasAgreed, setHasAgreed] = useState(false)
 
-  const effectiveDrops = useMemo(() => {
-    const customValue = Number.parseInt(customDrops, 10)
-    if (Number.isFinite(customValue) && customValue > 0) {
-      return customValue
-    }
-    return selectedDrops ?? null
-  }, [customDrops, selectedDrops])
+  const selectedPackage =
+    packageOptions.find((option) => option.id === selectedPackageId) ?? null
+  const effectiveDrops = selectedPackage?.drops ?? null
+  const bonusDrops =
+    typeof selectedPackage?.bonus_drops === 'number' && selectedPackage.bonus_drops > 0
+      ? selectedPackage.bonus_drops
+      : 0
+  const totalDrops = effectiveDrops ? effectiveDrops + bonusDrops : 0
+  const refundFeePercent = Math.round(REFUND_FEE_RATE * 1000) / 10
 
   const fetchOrders = async (): Promise<InkOrder[]> => {
     const response = await fetch('/api/ink/orders', {
@@ -101,6 +121,30 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
     }
   }
 
+  const loadPackages = async () => {
+    setIsLoadingPackages(true)
+    setPackageError(null)
+    try {
+      const response = await fetch('/api/ink/orders?action=packages', {
+        credentials: 'include'
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        setPackageError(data?.error || '讀取方案失敗')
+        setPackageOptions([])
+        return
+      }
+      const data = await response.json()
+      const list = Array.isArray(data?.packages) ? data.packages : []
+      setPackageOptions(list as InkPackage[])
+    } catch (err) {
+      setPackageError(err instanceof Error ? err.message : '讀取方案失敗')
+      setPackageOptions([])
+    } finally {
+      setIsLoadingPackages(false)
+    }
+  }
+
   const refreshBalance = async () => {
     try {
       const response = await fetch('/api/auth/me', { credentials: 'include' })
@@ -120,6 +164,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
     let isActive = true
 
     void loadOrders()
+    void loadPackages()
 
     const params = new URLSearchParams(window.location.search)
     const payment = params.get('payment')
@@ -147,7 +192,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
               return true
             }
             if (matched?.status === 'cancelled' || matched?.status === 'canceled') {
-              setMessage(`${orderLabel}已取消。`)
+              setMessage(`${orderLabel}付款失敗。`)
               return true
             }
           } catch {
@@ -169,7 +214,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
             const finished = await pollOnce()
             if (finished || attempts >= maxAttempts) {
               if (attempts >= maxAttempts) {
-                setMessage(`${orderLabel}尚未完成付款，請稍後重新整理。`)
+                setMessage(`${orderLabel}付款未完成，請重新下單。`)
               }
               if (pollTimer !== null) {
                 clearInterval(pollTimer)
@@ -199,56 +244,33 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
     }
   }, [])
 
-  const handleSelectPackage = (drops: number) => {
-    setSelectedDrops(drops)
-    setCustomDrops('')
-    setMessage(null)
-  }
-
-  const handleCustomChange = (value: string) => {
-    setCustomDrops(value)
-    if (value.trim()) {
-      setSelectedDrops(null)
-    }
-    setMessage(null)
-  }
-
-  const handleCreateOrder = async () => {
-    if (!effectiveDrops || effectiveDrops <= 0) {
-      setError('請選擇或輸入補充滴數')
+  useEffect(() => {
+    if (packageOptions.length === 0) {
+      if (selectedPackageId !== null) {
+        setSelectedPackageId(null)
+      }
       return
     }
-    setError(null)
-    setMessage(null)
-    setIsSubmitting(true)
-
-    try {
-      const response = await fetch('/api/ink/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          drops: effectiveDrops,
-          provider: 'manual'
-        })
-      })
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}))
-        throw new Error(data?.error || '建立訂單失敗')
-      }
-
-      setMessage('訂單已建立，待完成付款後會自動加點。')
-      await loadOrders()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '建立訂單失敗')
-    } finally {
-      setIsSubmitting(false)
+    const hasSelected = packageOptions.some(
+      (option) => option.id === selectedPackageId
+    )
+    if (!hasSelected) {
+      setSelectedPackageId(packageOptions[0]?.id ?? null)
     }
+  }, [packageOptions, selectedPackageId])
+
+  const handleSelectPackage = (packageId: number) => {
+    setSelectedPackageId(packageId)
+    setMessage(null)
   }
 
   const handleEcpayCheckout = async () => {
-    if (!effectiveDrops || effectiveDrops <= 0) {
-      setError('請選擇或輸入補充滴數')
+    if (!selectedPackage || !selectedPackage.id) {
+      setError('請選擇補充方案')
+      return
+    }
+    if (!hasAgreed) {
+      setError('請先閱讀並同意條款與放棄七天鑑賞期')
       return
     }
 
@@ -261,7 +283,12 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ drops: effectiveDrops })
+        body: JSON.stringify({
+          packageId: selectedPackage.id,
+          consent: true,
+          termsVersion: TERMS_VERSION,
+          privacyVersion: PRIVACY_VERSION
+        })
       })
 
       if (!response.ok) {
@@ -316,7 +343,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">補充墨水</h1>
                 <p className="text-sm text-gray-600">
-                  1 滴 = 1 元，建立訂單後等待付款完成
+                  僅支援綠界付款，依方案設定加贈免費額度
                 </p>
               </div>
             </div>
@@ -329,54 +356,125 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
           </div>
 
           <div className="mt-5 grid md:grid-cols-2 gap-4">
-            {PACKAGE_OPTIONS.map((item) => {
-              const isSelected = selectedDrops === item.drops && !customDrops
+            {packageError && (
+              <div className="col-span-full p-3 bg-red-50 border border-red-200 text-xs text-red-700 rounded-xl">
+                {packageError}
+              </div>
+            )}
+            {packageOptions.map((item) => {
+              const isSelected = selectedPackageId === item.id
+              const itemBonus =
+                typeof item.bonus_drops === 'number' && item.bonus_drops > 0
+                  ? item.bonus_drops
+                  : 0
+              const itemTotal = item.drops + itemBonus
               return (
                 <button
-                  key={item.drops}
+                  key={item.id}
                   type="button"
-                  onClick={() => handleSelectPackage(item.drops)}
+                  onClick={() => handleSelectPackage(item.id)}
                   className={`p-4 rounded-xl border text-left transition-all ${
                     isSelected
                       ? 'border-sky-400 bg-sky-50'
                       : 'border-gray-200 bg-white hover:border-sky-300'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold text-gray-900">
                       {item.label}
                     </span>
-                    <span className="text-sm text-sky-600 font-semibold">
-                      {item.drops} 滴
-                    </span>
+                    <div className="flex items-center gap-2 text-right">
+                      <span className="text-sm text-sky-600 font-semibold">
+                        {item.drops} 滴
+                      </span>
+                      {itemBonus > 0 && (
+                        <span className="text-xs font-semibold text-emerald-600">
+                          +{itemBonus} 贈送
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <p className="mt-1 text-xs text-gray-500">{item.description}</p>
+                  {itemBonus > 0 && (
+                    <p className="mt-1 text-xs text-emerald-600">
+                      實際獲得 {itemTotal} 滴
+                    </p>
+                  )}
                 </button>
               )
             })}
+            {isLoadingPackages && (
+              <div className="col-span-full flex items-center gap-2 text-xs text-gray-500">
+                <Loader className="w-3.5 h-3.5 animate-spin" />
+                載入方案中...
+              </div>
+            )}
+            {!isLoadingPackages && packageOptions.length === 0 && (
+              <div className="col-span-full text-xs text-gray-500">
+                尚未設定補充方案，請聯繫管理者。
+              </div>
+            )}
           </div>
 
-          <div className="mt-5 grid md:grid-cols-[1fr_auto] gap-3 items-end">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                自訂滴數
-              </label>
-              <input
-                type="number"
-                value={customDrops}
-                onChange={(e) => handleCustomChange(e.target.value)}
-                placeholder="輸入欲購買的滴數"
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-                min={1}
-                disabled={isSubmitting}
-              />
-            </div>
-            <div className="text-right">
+          <div className="mt-5 grid md:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
               <p className="text-xs text-gray-500">本次金額</p>
               <p className="text-lg font-semibold text-gray-900">
                 {effectiveDrops ?? 0} 元
               </p>
             </div>
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
+              <p className="text-xs text-emerald-700">加贈墨水</p>
+              <p className="text-lg font-semibold text-emerald-700">
+                {bonusDrops} 滴
+              </p>
+            </div>
+            <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3">
+              <p className="text-xs text-sky-700">實際獲得</p>
+              <p className="text-lg font-semibold text-sky-700">
+                {totalDrops} 滴
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-xs text-red-700 space-y-2">
+            <p>
+              本服務為數位內容／線上服務，一經購買或使用即視為開始提供，依法排除七天鑑賞期。
+            </p>
+            <p>
+              已使用點數不退；未使用點數可退，需扣除 {refundFeePercent}% 手續費。
+              贈送點數不具退款價值，退款以購買點數為準。
+            </p>
+            <label className="flex items-start gap-2 text-gray-700">
+              <input
+                type="checkbox"
+                checked={hasAgreed}
+                onChange={(e) => {
+                  setHasAgreed(e.target.checked)
+                  setError(null)
+                }}
+                className="mt-0.5 w-4 h-4 text-emerald-600 border-gray-300 rounded"
+              />
+              <span>
+                我已閱讀並同意
+                <button
+                  type="button"
+                  onClick={() => dispatchLegalModal('terms')}
+                  className="text-emerald-700 underline underline-offset-2 mx-1"
+                >
+                  服務條款
+                </button>
+                與
+                <button
+                  type="button"
+                  onClick={() => dispatchLegalModal('privacy')}
+                  className="text-emerald-700 underline underline-offset-2 mx-1"
+                >
+                  隱私權政策
+                </button>
+                ，並同意放棄七天鑑賞期。
+              </span>
+            </label>
           </div>
 
           {error && (
@@ -399,7 +497,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
                 type="button"
                 onClick={handleEcpayCheckout}
                 className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                disabled={isEcpaySubmitting || !effectiveDrops}
+                disabled={isEcpaySubmitting || !selectedPackage || !hasAgreed}
               >
                 {isEcpaySubmitting ? (
                   <>
@@ -411,21 +509,6 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
                     <CreditCard className="w-4 h-4" />
                     綠界付款
                   </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={handleCreateOrder}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                disabled={isSubmitting || !effectiveDrops}
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader className="w-4 h-4 animate-spin" />
-                    建立中...
-                  </>
-                ) : (
-                  '先建立訂單'
                 )}
               </button>
             </div>
@@ -457,6 +540,13 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
             <div className="space-y-3">
               {orders.map((order) => {
                 const status = formatOrderStatus(order.status)
+                const normalizedStatus = normalizeOrderStatus(order.status)
+                const orderBonus =
+                  typeof order.bonus_drops === 'number' && order.bonus_drops > 0
+                    ? order.bonus_drops
+                    : 0
+                const orderTotal = order.drops + orderBonus
+                const orderLabel = order.package_label || `${order.drops} 滴`
                 return (
                   <div
                     key={order.id}
@@ -464,7 +554,8 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
                   >
                     <div>
                       <p className="text-sm font-semibold text-gray-900">
-                        {order.drops} 滴 / {order.amount_twd} 元
+                        {orderLabel} / {order.amount_twd} 元
+                        {orderBonus > 0 ? `（加贈 ${orderBonus}，共 ${orderTotal} 滴）` : ''}
                       </p>
                       <p className="text-xs text-gray-500">
                         建立時間：{formatDate(order.created_at)}
@@ -476,12 +567,10 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
                       >
                         {status.label}
                       </span>
-                      {order.status === 'paid' ? (
+                      {normalizedStatus === 'paid' ? (
                         <CheckCircle className="w-4 h-4 text-emerald-500" />
-                      ) : order.status === 'cancelled' || order.status === 'canceled' ? (
-                        <XCircle className="w-4 h-4 text-gray-400" />
                       ) : (
-                        <Clock className="w-4 h-4 text-amber-500" />
+                        <XCircle className="w-4 h-4 text-red-400" />
                       )}
                     </div>
                   </div>
