@@ -6,7 +6,8 @@ import {
   RefreshCw,
   Edit2,
   Trash2,
-  Loader
+  Loader,
+  Crown
 } from 'lucide-react'
 
 interface AdminUsersProps {
@@ -301,8 +302,16 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
                     <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700">
                       角色：{user.role || 'user'}
                     </span>
-                    <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700">
-                      權限：{user.permission_tier || 'basic'}
+                    <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 inline-flex items-center gap-1">
+                      <span>權限：</span>
+                      {user.permission_tier === 'advanced' ? (
+                        <>
+                          <Crown className="w-3.5 h-3.5 text-amber-500" />
+                          Pro
+                        </>
+                      ) : (
+                        'Basic'
+                      )}
                     </span>
                     <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700">
                       墨水：{user.ink_balance ?? 0} 滴
@@ -389,8 +398,8 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                     disabled={isSaving}
                   >
-                    <option value="basic">基礎權限</option>
-                    <option value="advanced">進階權限</option>
+                    <option value="basic">Basic</option>
+                    <option value="advanced">Pro</option>
                   </select>
                 </div>
               </div>

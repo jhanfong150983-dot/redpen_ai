@@ -444,6 +444,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
             <p>
               已使用點數不退；未使用點數可退，需扣除 {refundFeePercent}% 手續費。
               贈送點數不具退款價值，退款以購買點數為準。
+              退款請來電聯係處理，將以匯款方式退回(匯款手續費由買方負擔)。
             </p>
             <label className="flex items-start gap-2 text-gray-700">
               <input
@@ -456,7 +457,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
                 className="mt-0.5 w-4 h-4 text-emerald-600 border-gray-300 rounded"
               />
               <span>
-                我已閱讀並同意
+                我已閱讀說明並同意
                 <button
                   type="button"
                   onClick={() => dispatchLegalModal('terms')}

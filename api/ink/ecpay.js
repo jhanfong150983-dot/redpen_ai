@@ -341,6 +341,19 @@ async function handleNotify(req, res) {
   }
 
   if (order.status === 'paid') {
+    const { error: upgradeError } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        permission_tier: 'advanced',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', order.user_id)
+
+    if (upgradeError) {
+      res.status(500).send('0|Permission update failed')
+      return
+    }
+
     res.status(200).send('1|OK')
     return
   }
@@ -373,6 +386,7 @@ async function handleNotify(req, res) {
         .from('profiles')
         .update({
           ink_balance: balanceAfter,
+          permission_tier: 'advanced',
           updated_at: new Date().toISOString()
         })
         .eq('id', order.user_id)
