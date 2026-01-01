@@ -33,6 +33,37 @@ function computeInkPoints(usageMetadata) {
   }
 }
 
+async function resolveInkSession(supabaseAdmin, userId, inkSessionId) {
+  if (!inkSessionId) return { ok: false }
+
+  const { data, error } = await supabaseAdmin
+    .from('ink_sessions')
+    .select('id, status, expires_at')
+    .eq('id', inkSessionId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error || !data) return { ok: false }
+  if (data.status !== 'active') return { ok: false }
+
+  const expiresAtMs = data.expires_at ? Date.parse(data.expires_at) : NaN
+  if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) {
+    return { ok: false, expired: true }
+  }
+
+  try {
+    await supabaseAdmin
+      .from('ink_sessions')
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq('id', inkSessionId)
+      .eq('user_id', userId)
+  } catch (error) {
+    console.warn('Ink session activity update failed:', error)
+  }
+
+  return { ok: true }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method Not Allowed' })
@@ -69,7 +100,7 @@ export default async function handler(req, res) {
     }
   }
 
-  const { model, contents, ...payload } = body || {}
+  const { model, contents, inkSessionId, ...payload } = body || {}
   if (!model || !Array.isArray(contents)) {
     res.status(400).json({ error: 'Missing model or contents' })
     return
@@ -82,6 +113,7 @@ export default async function handler(req, res) {
 
   let supabaseAdmin = null
   let currentBalance = 0
+  let hasValidInkSession = false
   try {
     supabaseAdmin = getSupabaseAdmin()
     const { data: profile, error: profileError } = await supabaseAdmin
@@ -98,8 +130,33 @@ export default async function handler(req, res) {
     currentBalance =
       typeof profile?.ink_balance === 'number' ? profile.ink_balance : 0
 
-    if (currentBalance <= 0) {
-      res.status(402).json({ error: '墨水不足，請先補充墨水' })
+    if (inkSessionId) {
+      try {
+        const sessionCheck = await resolveInkSession(
+          supabaseAdmin,
+          user.id,
+          inkSessionId
+        )
+        if (!sessionCheck.ok) {
+          const message = sessionCheck.expired
+            ? '批改會話已過期，請重新進入批改頁'
+            : '批改會話無效，請重新進入批改頁'
+          res.status(409).json({ error: message })
+          return
+        }
+        hasValidInkSession = true
+      } catch (error) {
+        console.warn('Ink session check failed:', error)
+        res.status(500).json({ error: '批改會話驗證失敗，請稍後再試' })
+        return
+      }
+    }
+
+    if (!hasValidInkSession && currentBalance <= 0) {
+      const message = inkSessionId
+        ? '批改會話已結束或點數不足，請重新進入或補充墨水'
+        : '墨水不足，請先補充墨水'
+      res.status(402).json({ error: message })
       return
     }
   } catch (error) {
@@ -126,53 +183,78 @@ export default async function handler(req, res) {
       try {
         const cost = computeInkPoints(data.usageMetadata)
         let inkSummary = null
-        if (cost.points > 0) {
-          const nextBalance = currentBalance - cost.points
-          const { error: updateError } = await supabaseAdmin
-            .from('profiles')
-            .update({
-              ink_balance: nextBalance,
-              updated_at: new Date().toISOString()
+        if (hasValidInkSession && inkSessionId) {
+          const { error: usageError } = await supabaseAdmin
+            .from('ink_session_usage')
+            .insert({
+              user_id: user.id,
+              session_id: inkSessionId,
+              input_tokens: cost.inputTokens,
+              output_tokens: cost.outputTokens,
+              total_tokens: cost.totalTokens,
+              usage_metadata: data.usageMetadata
             })
-            .eq('id', user.id)
 
-          if (updateError) {
-            console.warn('Ink balance update failed:', updateError)
+          if (usageError) {
+            console.warn('Ink session usage insert failed:', usageError)
+          } else {
             inkSummary = {
-              chargedPoints: cost.points,
-              balanceBefore: currentBalance,
-              balanceAfter: currentBalance,
-              applied: false
+              pending: true,
+              sessionId: inkSessionId
+            }
+          }
+        }
+
+        if (!inkSummary) {
+          if (cost.points > 0) {
+            const nextBalance = currentBalance - cost.points
+            const { error: updateError } = await supabaseAdmin
+              .from('profiles')
+              .update({
+                ink_balance: nextBalance,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', user.id)
+
+            if (updateError) {
+              console.warn('Ink balance update failed:', updateError)
+              inkSummary = {
+                chargedPoints: cost.points,
+                balanceBefore: currentBalance,
+                balanceAfter: currentBalance,
+                applied: false
+              }
+            } else {
+              inkSummary = {
+                chargedPoints: cost.points,
+                balanceBefore: currentBalance,
+                balanceAfter: nextBalance,
+                applied: true
+              }
+            }
+
+            const { error: ledgerError } = await supabaseAdmin.from('ink_ledger').insert({
+              user_id: user.id,
+              delta: -cost.points,
+              reason: 'gemini_generate_content',
+              metadata: {
+                model: model,
+                usage: data.usageMetadata,
+                cost,
+                inkSessionId: inkSessionId || null
+              }
+            })
+
+            if (ledgerError) {
+              console.warn('Ink ledger insert failed:', ledgerError)
             }
           } else {
             inkSummary = {
-              chargedPoints: cost.points,
+              chargedPoints: 0,
               balanceBefore: currentBalance,
-              balanceAfter: nextBalance,
+              balanceAfter: currentBalance,
               applied: true
             }
-          }
-
-          const { error: ledgerError } = await supabaseAdmin.from('ink_ledger').insert({
-            user_id: user.id,
-            delta: -cost.points,
-            reason: 'gemini_generate_content',
-            metadata: {
-              model: model,
-              usage: data.usageMetadata,
-              cost
-            }
-          })
-
-          if (ledgerError) {
-            console.warn('Ink ledger insert failed:', ledgerError)
-          }
-        } else {
-          inkSummary = {
-            chargedPoints: 0,
-            balanceBefore: currentBalance,
-            balanceAfter: currentBalance,
-            applied: true
           }
         }
 

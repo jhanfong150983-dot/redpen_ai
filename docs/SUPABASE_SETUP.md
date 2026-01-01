@@ -184,6 +184,47 @@ CREATE INDEX IF NOT EXISTS idx_ink_ledger_user_id ON public.ink_ledger(user_id);
 CREATE INDEX IF NOT EXISTS idx_ink_ledger_created_at ON public.ink_ledger(created_at);
 ```
 
+### ink_sessions 表（批改會話）
+
+```sql
+CREATE TABLE IF NOT EXISTS public.ink_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  status TEXT NOT NULL DEFAULT 'active',
+  started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  closed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ink_sessions_user_status
+ON public.ink_sessions(user_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_ink_sessions_expires
+ON public.ink_sessions(expires_at);
+```
+
+### ink_session_usage 表（批改會話用量）
+
+```sql
+CREATE TABLE IF NOT EXISTS public.ink_session_usage (
+  id BIGSERIAL PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES public.ink_sessions(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  usage_metadata JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ink_session_usage_session
+ON public.ink_session_usage(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_ink_session_usage_user
+ON public.ink_session_usage(user_id);
+```
+
 ### ink_orders 表（購點訂單）
 
 ```sql

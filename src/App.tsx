@@ -66,6 +66,7 @@ function App() {
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>('')
   const [isAiDisclaimerOpen, setIsAiDisclaimerOpen] = useState(false)
   const [isIpDisclaimerOpen, setIsIpDisclaimerOpen] = useState(false)
+  const [urlPageHandled, setUrlPageHandled] = useState(false)
 
   const fetchAuth = useCallback(async () => {
     try {
@@ -162,6 +163,63 @@ function App() {
   const canAccessTracking =
     auth.status === 'authenticated' &&
     (auth.user.permissionTier === 'advanced' || isAdmin)
+  const ensureInkNonNegative = useCallback(() => {
+    if (auth.status !== 'authenticated') return false
+    const balance = typeof auth.user.inkBalance === 'number' ? auth.user.inkBalance : 0
+    if (balance < 0) {
+      const shouldTopUp = window.confirm(
+        '目前墨水為負值，請先補充墨水後再使用 AI 批改。是否前往補充墨水？'
+      )
+      if (shouldTopUp) {
+        setCurrentPage('ink-topup')
+      }
+      return false
+    }
+    return true
+  }, [auth, setCurrentPage])
+
+  useEffect(() => {
+    if (urlPageHandled) return
+    if (auth.status !== 'authenticated') return
+
+    const params = new URLSearchParams(window.location.search)
+    const pageParam = params.get('page')
+    let nextPage: Page | null = null
+
+    switch (pageParam) {
+      case 'ink-topup':
+        nextPage = 'ink-topup'
+        break
+      case 'admin-orders':
+        nextPage = isAdmin ? 'admin-orders' : null
+        break
+      case 'admin-users':
+        nextPage = isAdmin ? 'admin-users' : null
+        break
+      case 'gradebook':
+        nextPage = canAccessTracking ? 'gradebook' : null
+        break
+      case 'correction':
+      case 'correction-select':
+        nextPage = canAccessTracking ? 'correction-select' : null
+        break
+      default:
+        nextPage = null
+    }
+
+    if (nextPage) {
+      setCurrentPage(nextPage)
+    }
+
+    if (pageParam) {
+      params.delete('page')
+      const query = params.toString()
+      const url = query ? `${window.location.pathname}?${query}` : window.location.pathname
+      window.history.replaceState({}, '', url)
+    }
+
+    setUrlPageHandled(true)
+  }, [auth.status, canAccessTracking, isAdmin, urlPageHandled])
 
   if (auth.status === 'loading') {
     return (
@@ -250,6 +308,7 @@ function App() {
       <AssignmentList
         onBack={() => setCurrentPage('home')}
         onSelectAssignment={(assignmentId) => {
+          if (!ensureInkNonNegative()) return
           setSelectedAssignmentId(assignmentId)
           setCurrentPage('grading')
         }}
@@ -345,6 +404,7 @@ function App() {
       <GradingPage
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('grading-list')}
+        onRequireInkTopUp={() => setCurrentPage('ink-topup')}
       />
     )
   }
@@ -534,7 +594,10 @@ function App() {
                 <span className="text-xs text-gray-500">掃描或批次匯入</span>
               </button>
               <button
-                onClick={() => setCurrentPage('grading-list')}
+                onClick={() => {
+                  if (!ensureInkNonNegative()) return
+                  setCurrentPage('grading-list')
+                }}
                 className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-colors"
               >
                 <span className="flex items-center gap-2 font-medium">

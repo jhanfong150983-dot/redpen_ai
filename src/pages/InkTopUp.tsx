@@ -9,6 +9,7 @@ import {
   XCircle,
   CreditCard
 } from 'lucide-react'
+import { dispatchInkBalance } from '@/lib/ink-events'
 
 interface InkTopUpProps {
   onBack?: () => void
@@ -73,28 +74,129 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
     return selectedDrops ?? null
   }, [customDrops, selectedDrops])
 
+  const fetchOrders = async () => {
+    const response = await fetch('/api/ink/orders', {
+      credentials: 'include'
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data?.error || '讀取訂單失敗')
+    }
+    const data = await response.json()
+    return Array.isArray(data?.orders) ? data.orders : []
+  }
+
   const loadOrders = async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/ink/orders', {
-        credentials: 'include'
-      })
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}))
-        throw new Error(data?.error || '讀取訂單失敗')
-      }
-      const data = await response.json()
-      setOrders(Array.isArray(data?.orders) ? data.orders : [])
+      const list = await fetchOrders()
+      setOrders(list)
+      return list
     } catch (err) {
       setError(err instanceof Error ? err.message : '讀取訂單失敗')
+      return []
     } finally {
       setIsLoading(false)
     }
   }
 
+  const refreshBalance = async () => {
+    try {
+      const response = await fetch('/api/auth/me', { credentials: 'include' })
+      if (!response.ok) return
+      const data = await response.json()
+      const balance = Number(data?.user?.inkBalance)
+      if (Number.isFinite(balance)) {
+        dispatchInkBalance(balance)
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   useEffect(() => {
+    let pollTimer: number | null = null
+    let isActive = true
+
     void loadOrders()
+
+    const params = new URLSearchParams(window.location.search)
+    const payment = params.get('payment')
+    const orderIdParam = params.get('orderId')
+    const targetOrderId = orderIdParam ? Number.parseInt(orderIdParam, 10) : null
+
+    if (payment === 'ecpay') {
+      const orderLabel = orderIdParam ? `訂單 #${orderIdParam} ` : ''
+      setMessage(`${orderLabel}已送出付款，系統將自動更新點數。`)
+
+      if (!targetOrderId) {
+        void loadOrders()
+        void refreshBalance()
+      } else {
+        const pollOnce = async () => {
+          try {
+            const list = await fetchOrders()
+            if (!isActive) return false
+            setOrders(list)
+
+            const matched = list.find((order) => order.id === targetOrderId)
+            if (matched?.status === 'paid') {
+              setMessage(`${orderLabel}付款完成，已加點。`)
+              await refreshBalance()
+              return true
+            }
+            if (matched?.status === 'cancelled' || matched?.status === 'canceled') {
+              setMessage(`${orderLabel}已取消。`)
+              return true
+            }
+          } catch {
+            // ignore
+          }
+          return false
+        }
+
+        let attempts = 0
+        const maxAttempts = 24
+        const intervalMs = 5000
+
+        const startPolling = async () => {
+          const done = await pollOnce()
+          if (done || !isActive) return
+
+          pollTimer = window.setInterval(async () => {
+            attempts += 1
+            const finished = await pollOnce()
+            if (finished || attempts >= maxAttempts) {
+              if (attempts >= maxAttempts) {
+                setMessage(`${orderLabel}尚未完成付款，請稍後重新整理。`)
+              }
+              if (pollTimer !== null) {
+                clearInterval(pollTimer)
+              }
+            }
+          }, intervalMs)
+        }
+
+        void startPolling()
+      }
+
+    }
+
+    if (params.has('payment') || params.has('orderId')) {
+      params.delete('payment')
+      params.delete('orderId')
+      const query = params.toString()
+      const url = query ? `${window.location.pathname}?${query}` : window.location.pathname
+      window.history.replaceState({}, '', url)
+    }
+
+    return () => {
+      isActive = false
+      if (pollTimer !== null) {
+        clearInterval(pollTimer)
+      }
+    }
   }, [])
 
   const handleSelectPackage = (drops: number) => {

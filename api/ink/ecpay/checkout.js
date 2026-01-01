@@ -104,6 +104,7 @@ export default async function handler(req, res) {
       amountTwd
     )
 
+    const clientBackUrl = `${config.siteUrl}/?page=ink-topup&payment=ecpay&orderId=${order.id}`
     const fields = {
       MerchantID: config.merchantId,
       MerchantTradeNo: tradeNo,
@@ -113,7 +114,7 @@ export default async function handler(req, res) {
       TradeDesc: config.tradeDesc,
       ItemName: `墨水 ${drops} 滴`,
       ReturnURL: `${config.siteUrl}/api/ink/ecpay/notify`,
-      ClientBackURL: `${config.siteUrl}/`,
+      ClientBackURL: clientBackUrl,
       ChoosePayment: config.choosePayment,
       EncryptType: '1',
       CustomField1: String(order.id)

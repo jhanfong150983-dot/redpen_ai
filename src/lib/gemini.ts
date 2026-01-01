@@ -8,6 +8,7 @@ import {
 import { blobToBase64 as blobToDataUrl, compressImageFile } from './imageCompression'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from './blob-storage'
 import { dispatchInkBalance } from './ink-events'
+import { getInkSessionId } from './ink-session'
 
 const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
 
@@ -134,13 +135,15 @@ async function generateGeminiText(
   modelName: string,
   parts: GeminiRequestPart[]
 ): Promise<string> {
+  const inkSessionId = getInkSessionId()
   const response = await fetch(geminiProxyUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({
       model: modelName,
-      contents: [{ role: 'user', parts: normalizeParts(parts) }]
+      contents: [{ role: 'user', parts: normalizeParts(parts) }],
+      ...(inkSessionId ? { inkSessionId } : {})
     })
   })
 

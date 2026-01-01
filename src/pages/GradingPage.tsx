@@ -21,6 +21,7 @@ import {
   gradeSubmission,
   isGeminiAvailable
 } from '@/lib/gemini'
+import { startInkSession, closeInkSession } from '@/lib/ink-session'
 import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { getSubmissionImageUrl, fixCorruptedBase64 } from '@/lib/utils'
 import { blobToBase64 } from '@/lib/imageCompression'
@@ -29,6 +30,7 @@ import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-stora
 interface GradingPageProps {
   assignmentId: string
   onBack?: () => void
+  onRequireInkTopUp?: () => void
 }
 
 /**
@@ -85,7 +87,11 @@ function rebuildBlobFromBase64(base64: string): Blob {
   }
 }
 
-export default function GradingPage({ assignmentId, onBack }: GradingPageProps) {
+export default function GradingPage({
+  assignmentId,
+  onBack,
+  onRequireInkTopUp
+}: GradingPageProps) {
   const [assignment, setAssignment] = useState<Assignment | null>(null)
   const [classroom, setClassroom] = useState<Classroom | null>(null)
   const [students, setStudents] = useState<Student[]>([])
@@ -98,6 +104,13 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
   const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 })
   const [error, setError] = useState<string | null>(null)
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [inkSessionReady, setInkSessionReady] = useState(false)
+  const [inkSessionError, setInkSessionError] = useState<string | null>(null)
+  const [isClosingSession, setIsClosingSession] = useState(false)
+
+  const inkSessionStartRef = useRef<string | null>(null)
+  const hasClosedSessionRef = useRef(false)
+  const skipInkSessionCleanupRef = useRef(import.meta.env.DEV)
 
   const [selectedSubmission, setSelectedSubmission] = useState<{
     submission: Submission
@@ -116,6 +129,38 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
   )
   const [activeRegradeId, setActiveRegradeId] = useState<string | null>(null)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
+  const handleInkTopUp = useCallback(() => {
+    if (onRequireInkTopUp) {
+      onRequireInkTopUp()
+      return
+    }
+    window.location.href = '/?page=ink-topup'
+  }, [onRequireInkTopUp])
+
+  const handleExit = useCallback(async () => {
+    if (!onBack || isClosingSession) return
+
+    setIsClosingSession(true)
+    try {
+      if (!hasClosedSessionRef.current) {
+        const summary = await closeInkSession()
+        hasClosedSessionRef.current = true
+
+        if (summary && typeof summary.chargedPoints === 'number') {
+          const remaining =
+            typeof summary.balanceAfter === 'number'
+              ? `，剩餘 ${summary.balanceAfter} 點`
+              : ''
+          window.alert(`本次批改扣除 ${summary.chargedPoints} 點${remaining}`)
+        }
+      }
+    } catch (error) {
+      console.warn('結算批改會話失敗:', error)
+    } finally {
+      setIsClosingSession(false)
+      onBack()
+    }
+  }, [isClosingSession, onBack])
 
   const resolveImageBase64 = async (blob?: Blob, base64?: string) => {
     if (base64) return base64
@@ -282,6 +327,43 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
     void loadData()
   }, [loadData])
 
+  useEffect(() => {
+    let cancelled = false
+    const shouldStart = inkSessionStartRef.current !== assignmentId
+
+    const initInkSession = async () => {
+      setInkSessionReady(false)
+      setInkSessionError(null)
+      try {
+        const data = await startInkSession()
+        if (cancelled) return
+        if (!data?.sessionId) {
+          throw new Error('無法建立批改會話')
+        }
+        setInkSessionReady(true)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : '無法建立批改會話'
+        setInkSessionError(message)
+      }
+    }
+
+    if (shouldStart) {
+      inkSessionStartRef.current = assignmentId
+      void initInkSession()
+    }
+
+    return () => {
+      if (import.meta.env.DEV && skipInkSessionCleanupRef.current) {
+        skipInkSessionCleanupRef.current = false
+        return
+      }
+      cancelled = true
+      if (hasClosedSessionRef.current) return
+      void closeInkSession()
+    }
+  }, [assignmentId])
+
   // 將 AI 題目詳情映射到可編輯狀態
   useEffect(() => {
     if (selectedSubmission?.submission?.gradingResult?.details) {
@@ -431,6 +513,14 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
     })
   }
   const handleRegradeSingle = async (submission: Submission) => {
+    if (inkSessionError) {
+      alert(inkSessionError)
+      return
+    }
+    if (!inkSessionReady) {
+      alert('批改會話尚未準備完成，請稍候')
+      return
+    }
     if (!isGeminiAvailable) {
       alert('Gemini 服務未設定')
       return
@@ -501,6 +591,14 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
   }
 
   const handleRegradeFlagged = async (submission: Submission) => {
+    if (inkSessionError) {
+      alert(inkSessionError)
+      return
+    }
+    if (!inkSessionReady) {
+      alert('批改會話尚未準備完成，請稍候')
+      return
+    }
     if (!isGeminiAvailable) {
       alert('Gemini 服務未設定')
       return
@@ -656,6 +754,14 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
   }
 
   const handleGradeAll = async () => {
+    if (inkSessionError) {
+      alert(inkSessionError)
+      return
+    }
+    if (!inkSessionReady) {
+      alert('批改會話尚未準備完成，請稍候')
+      return
+    }
     if (!isGeminiAvailable) {
       alert('Gemini 服務未設定')
       return
@@ -1026,6 +1132,36 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
     )
   }
 
+  if (inkSessionError) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md">
+          <AlertTriangle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-gray-900 mb-2 text-center">
+            無法進入 AI 批改
+          </h2>
+          <p className="text-gray-600 text-center mb-6">{inkSessionError}</p>
+          <div className="space-y-3">
+            <button
+              onClick={handleInkTopUp}
+              className="w-full px-6 py-3 bg-sky-600 text-white rounded-xl hover:bg-sky-700 transition-colors"
+            >
+              前往補充墨水
+            </button>
+            {onBack && (
+              <button
+                onClick={handleExit}
+                className="w-full px-6 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                返回
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (error) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -1035,7 +1171,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
           <p className="text-gray-600 text-center mb-6">{error}</p>
           {onBack && (
             <button
-              onClick={onBack}
+              onClick={handleExit}
               className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
             >
               返回
@@ -1051,7 +1187,7 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
       <div className="max-w-7xl mx-auto pt-8">
         {onBack && (
           <button
-            onClick={onBack}
+            onClick={handleExit}
             className="mb-4 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -1078,7 +1214,12 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
               </button>
               <button
                 onClick={handleGradeAll}
-                disabled={isGrading || isDownloading || !isGeminiAvailable}
+                disabled={
+                  isGrading ||
+                  isDownloading ||
+                  !isGeminiAvailable ||
+                  !inkSessionReady
+                }
                 className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl font-medium"
               >
                 {isDownloading ? (
@@ -1101,6 +1242,12 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
             </div>
           </div>
         </div>
+
+        {!inkSessionReady && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl px-4 py-3 text-sm">
+            正在建立批改會話，請稍候...
+          </div>
+        )}
 
         {/* 標籤篩選 */}
         {tagCounts.length > 0 && (
@@ -1224,14 +1371,14 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
                     {(status === 'graded' || status === 'synced' || status === 'scanned') &&
                       submission && (
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void handleRegradeSingle(submission)
-                          }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleRegradeSingle(submission)
+                            }}
                           className="absolute top-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-50 hover:text-blue-600 z-10"
                           title="重新使用 AI 批改此學生"
-                          disabled={isGrading}
-                        >
+                            disabled={isGrading || !inkSessionReady}
+                          >
                           <RotateCcw
                             className={`w-4 h-4 ${activeRegradeId === submission.id ? 'animate-spin' : ''}`}
                           />
@@ -1627,14 +1774,15 @@ export default function GradingPage({ assignmentId, onBack }: GradingPageProps) 
               </div>
 
               <div className="p-4 border-t border-gray-100 bg-gray-50">
-                <button
-                  onClick={() => handleRegradeFlagged(selectedSubmission.submission)}
-                  disabled={
-                    isGrading ||
-                    (answerExtractionFlags.get(selectedSubmission.submission.id)?.size ?? 0) === 0
-                  }
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-white border border-gray-300 shadow-sm rounded-lg hover:bg-blue-600 hover:text-white hover:border-blue-600 font-medium text-gray-700 transition-all"
-                >
+                  <button
+                    onClick={() => handleRegradeFlagged(selectedSubmission.submission)}
+                    disabled={
+                      isGrading ||
+                      !inkSessionReady ||
+                      (answerExtractionFlags.get(selectedSubmission.submission.id)?.size ?? 0) === 0
+                    }
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-white border border-gray-300 shadow-sm rounded-lg hover:bg-blue-600 hover:text-white hover:border-blue-600 font-medium text-gray-700 transition-all"
+                  >
                   <RotateCcw className={`w-4 h-4 ${isGrading ? 'animate-spin' : ''}`} />
                   {isGrading ? 'AI 正在再次批改...' : '再次批改'}
                 </button>
