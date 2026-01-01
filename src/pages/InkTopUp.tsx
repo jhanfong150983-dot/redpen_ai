@@ -257,7 +257,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
     setIsEcpaySubmitting(true)
 
     try {
-      const response = await fetch('/api/ink/ecpay/checkout', {
+      const response = await fetch('/api/ink/ecpay?action=checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

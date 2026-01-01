@@ -27,7 +27,7 @@ export function setInkSessionId(sessionId: string | null) {
 }
 
 export async function startInkSession() {
-  const response = await fetch('/api/ink/sessions/start', {
+  const response = await fetch('/api/ink/sessions?action=start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -69,7 +69,7 @@ export async function closeInkSession(sessionId?: string | null) {
   } | null = null
 
   try {
-    const response = await fetch('/api/ink/sessions/close', {
+    const response = await fetch('/api/ink/sessions?action=close', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',

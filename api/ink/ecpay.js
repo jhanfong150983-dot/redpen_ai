@@ -1,10 +1,80 @@
-import { getSupabaseAdmin } from '../../../server/_supabase.js'
+import { getAuthUser } from '../../server/_auth.js'
+import { getSupabaseAdmin } from '../../server/_supabase.js'
 import {
   getEcpayConfig,
   assertEcpayConfig,
   buildCheckMacValue,
+  formatMerchantTradeDate,
+  createMerchantTradeNo,
   parseEcpayPayload
-} from '../../../server/_ecpay.js'
+} from '../../server/_ecpay.js'
+
+function resolveAction(req) {
+  const actionParam = req.query?.action
+  if (Array.isArray(actionParam)) {
+    return actionParam[0] || ''
+  }
+  if (typeof actionParam === 'string') return actionParam
+  const pathname = req.url ? req.url.split('?')[0] : ''
+  const segments = pathname.split('/').filter(Boolean)
+  return segments[segments.length - 1] || ''
+}
+
+function parseJsonBody(req, res) {
+  const body = req.body
+  if (!body) return null
+  if (typeof body === 'string') {
+    try {
+      return JSON.parse(body)
+    } catch {
+      res.status(400).json({ error: 'Invalid JSON body' })
+      return null
+    }
+  }
+  return body
+}
+
+function parsePositiveInt(value) {
+  const parsed = Number.parseInt(String(value), 10)
+  if (!Number.isFinite(parsed)) return null
+  if (parsed <= 0) return null
+  return parsed
+}
+
+async function createOrderWithTradeNo(supabaseAdmin, userId, drops, amountTwd) {
+  let attempts = 0
+  let lastError = null
+
+  while (attempts < 3) {
+    attempts += 1
+    const tradeNo = createMerchantTradeNo()
+    const { data, error } = await supabaseAdmin
+      .from('ink_orders')
+      .insert({
+        user_id: userId,
+        drops,
+        amount_twd: amountTwd,
+        status: 'pending',
+        provider: 'ecpay',
+        provider_txn_id: tradeNo
+      })
+      .select(
+        'id, drops, amount_twd, status, provider, provider_txn_id, created_at, updated_at'
+      )
+      .single()
+
+    if (!error) {
+      return { order: data, tradeNo }
+    }
+
+    lastError = error
+    if (error.code !== '23505') {
+      break
+    }
+  }
+
+  throw new Error(lastError?.message || '建立訂單失敗')
+}
 
 async function hasOrderLedger(supabaseAdmin, userId, orderId) {
   const { data, error } = await supabaseAdmin
@@ -22,7 +92,78 @@ async function hasOrderLedger(supabaseAdmin, userId, orderId) {
   return (data ?? []).length > 0
 }
 
-export default async function handler(req, res) {
+async function handleCheckout(req, res) {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method Not Allowed' })
+    return
+  }
+
+  const { user } = await getAuthUser(req, res)
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+
+  const payload = parseJsonBody(req, res)
+  if (!payload) return
+
+  const drops = parsePositiveInt(payload.drops)
+  if (!drops) {
+    res.status(400).json({ error: '請輸入有效的墨水滴數' })
+    return
+  }
+
+  const config = getEcpayConfig()
+  try {
+    assertEcpayConfig(config)
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'ECPay 設定缺失' })
+    return
+  }
+
+  const supabaseAdmin = getSupabaseAdmin()
+  const amountTwd = drops
+
+  try {
+    const { order, tradeNo } = await createOrderWithTradeNo(
+      supabaseAdmin,
+      user.id,
+      drops,
+      amountTwd
+    )
+
+    const clientBackUrl = `${config.siteUrl}/?page=ink-topup&payment=ecpay&orderId=${order.id}`
+    const fields = {
+      MerchantID: config.merchantId,
+      MerchantTradeNo: tradeNo,
+      MerchantTradeDate: formatMerchantTradeDate(),
+      PaymentType: 'aio',
+      TotalAmount: String(amountTwd),
+      TradeDesc: config.tradeDesc,
+      ItemName: `墨水 ${drops} 滴`,
+      ReturnURL: `${config.siteUrl}/api/ink/ecpay?action=notify`,
+      ClientBackURL: clientBackUrl,
+      ChoosePayment: config.choosePayment,
+      EncryptType: '1',
+      CustomField1: String(order.id)
+    }
+
+    const checkMacValue = buildCheckMacValue(fields, config.hashKey, config.hashIv)
+
+    res.status(200).json({
+      action: config.baseUrl,
+      fields: {
+        ...fields,
+        CheckMacValue: checkMacValue
+      },
+      orderId: order.id
+    })
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : '建立訂單失敗' })
+  }
+}
+
+async function handleNotify(req, res) {
   if (req.method !== 'POST') {
     res.status(405).send('0|Method Not Allowed')
     return
@@ -167,4 +308,17 @@ export default async function handler(req, res) {
   } catch (error) {
     res.status(500).send('0|Server Error')
   }
+}
+
+export default async function handler(req, res) {
+  const action = resolveAction(req)
+  if (action === 'checkout') {
+    await handleCheckout(req, res)
+    return
+  }
+  if (action === 'notify') {
+    await handleNotify(req, res)
+    return
+  }
+  res.status(404).json({ error: 'Not Found' })
 }
