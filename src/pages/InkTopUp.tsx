@@ -74,7 +74,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
     return selectedDrops ?? null
   }, [customDrops, selectedDrops])
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (): Promise<InkOrder[]> => {
     const response = await fetch('/api/ink/orders', {
       credentials: 'include'
     })
@@ -83,7 +83,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
       throw new Error(data?.error || '讀取訂單失敗')
     }
     const data = await response.json()
-    return Array.isArray(data?.orders) ? data.orders : []
+    return Array.isArray(data?.orders) ? (data.orders as InkOrder[]) : []
   }
 
   const loadOrders = async () => {
