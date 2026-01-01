@@ -27,6 +27,7 @@ import {
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { extractAnswerKeyFromImage, extractAnswerKeyFromImages, reanalyzeQuestions } from '@/lib/gemini'
+import { startInkSession, closeInkSession } from '@/lib/ink-session'
 import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
 import { compressImageFile, validateBlobSize } from '@/lib/imageCompression'
 import { checkFolderNameUnique } from '@/lib/utils'
@@ -425,6 +426,46 @@ export default function AssignmentSetup({
     return { merged: { questions: sortedQuestions, totalScore }, notice }
   }
 
+  const notifyInkSettlement = (
+    label: string,
+    summary: {
+      chargedPoints?: number
+      balanceAfter?: number | null
+    } | null | undefined
+  ) => {
+    if (!summary || typeof summary.chargedPoints !== 'number') return
+    const remaining =
+      typeof summary.balanceAfter === 'number'
+        ? `，剩餘 ${summary.balanceAfter} 點`
+        : ''
+    window.alert(`本次${label}扣除 ${summary.chargedPoints} 點${remaining}`)
+  }
+
+  async function runInkSessionTask<T>(
+    label: string,
+    task: () => Promise<T>,
+    onSessionError?: (message: string) => void
+  ): Promise<T> {
+    let sessionId: string | null = null
+    try {
+      const started = await startInkSession()
+      sessionId = started?.sessionId ?? null
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '無法建立批改會話'
+      if (onSessionError) onSessionError(message)
+      throw err
+    }
+
+    try {
+      return await task()
+    } finally {
+      if (sessionId) {
+        const summary = await closeInkSession(sessionId)
+        notifyInkSettlement(label, summary)
+      }
+    }
+  }
+
   const extractAndSetAnswerKey = async (
     file: File,
     currentKey: AnswerKey | null,
@@ -515,10 +556,15 @@ export default function AssignmentSetup({
       }
 
       console.log('🧠 呼叫 Gemini API 提取標準答案...')
-      const extracted = await extractAnswerKeyFromImage(imageBlob, {
-        domain,
-        priorWeightTypes: priorWeights
-      })
+      const extracted = await runInkSessionTask(
+        'AI 擷取答案',
+        () =>
+          extractAnswerKeyFromImage(imageBlob, {
+            domain,
+            priorWeightTypes: priorWeights
+          }),
+        setErr
+      )
       console.log('✅ AI 提取完成', { questionCount: extracted.questions.length, totalScore: extracted.totalScore })
       
       const { merged, notice } = mergeAnswerKeys(currentKey, extracted)
@@ -735,10 +781,15 @@ export default function AssignmentSetup({
       }
 
       // 呼叫多圖片版本的 extractAnswerKeyFromImages
-      const extracted = await extractAnswerKeyFromImages(imageBlobs, {
-        domain: assignmentDomain,
-        priorWeightTypes
-      })
+      const extracted = await runInkSessionTask(
+        'AI 擷取答案',
+        () =>
+          extractAnswerKeyFromImages(imageBlobs, {
+            domain: assignmentDomain,
+            priorWeightTypes
+          }),
+        setAnswerKeyError
+      )
 
       console.log('📥 AI 回傳 AnswerKey：', extracted)
       const normalizedExtracted = normalizeAnswerKey(extracted)
@@ -830,11 +881,16 @@ export default function AssignmentSetup({
     setErrorFn(null)
 
     try {
-      const reanalyzedQuestions = await reanalyzeQuestions(
-        currentImage,
-        markedQuestions,
-        currentDomain,
-        currentPriorWeightTypes
+      const reanalyzedQuestions = await runInkSessionTask(
+        '重新分析',
+        () =>
+          reanalyzeQuestions(
+            currentImage,
+            markedQuestions,
+            currentDomain,
+            currentPriorWeightTypes
+          ),
+        setErrorFn
       )
 
       // Merge reanalyzed questions back into current answer key
