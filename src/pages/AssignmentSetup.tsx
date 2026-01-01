@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, type ChangeEvent, type FormEvent } from 'react'
+import { useState, useEffect, useMemo, useRef, type ChangeEvent, type FormEvent } from 'react'
 import {
   BookOpen,
   Plus,
@@ -124,6 +124,46 @@ export default function AssignmentSetup({
   const [editAnswerKeyNotice, setEditAnswerKeyNotice] = useState<string | null>(
     null
   )
+  const [inkSessionReady, setInkSessionReady] = useState(false)
+  const [inkSessionError, setInkSessionError] = useState<string | null>(null)
+  const [isClosingSession, setIsClosingSession] = useState(false)
+  const inkSessionStartRef = useRef(false)
+  const hasClosedSessionRef = useRef(false)
+  const skipInkSessionCleanupRef = useRef(import.meta.env.DEV)
+  const inkSessionLabel = 'AI 擷取答案'
+
+  const notifyInkSettlement = (
+    label: string,
+    summary: {
+      chargedPoints?: number
+      balanceAfter?: number | null
+    } | null | undefined
+  ) => {
+    if (!summary || typeof summary.chargedPoints !== 'number' || summary.chargedPoints <= 0) return
+    const remaining =
+      typeof summary.balanceAfter === 'number'
+        ? `，剩餘 ${summary.balanceAfter} 點`
+        : ''
+    window.alert(`本次${label}扣除 ${summary.chargedPoints} 點${remaining}`)
+  }
+
+  const closeInkSessionOnce = async () => {
+    if (hasClosedSessionRef.current) return null
+    hasClosedSessionRef.current = true
+    return await closeInkSession()
+  }
+
+  const ensureInkSessionReady = (setErr: (message: string | null) => void) => {
+    if (inkSessionError) {
+      setErr(inkSessionError)
+      return false
+    }
+    if (!inkSessionReady) {
+      setErr('正在建立批改會話，請稍候再試')
+      return false
+    }
+    return true
+  }
 
   useEffect(() => {
     const loadClassrooms = async () => {
@@ -183,6 +223,42 @@ export default function AssignmentSetup({
     }
     void loadAssignments()
   }, [selectedClassroomId])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!inkSessionStartRef.current) {
+      inkSessionStartRef.current = true
+      const initInkSession = async () => {
+        setInkSessionReady(false)
+        setInkSessionError(null)
+        try {
+          const data = await startInkSession()
+          if (cancelled) return
+          if (!data?.sessionId) {
+            throw new Error('無法建立批改會話')
+          }
+          setInkSessionReady(true)
+        } catch (err) {
+          if (cancelled) return
+          const message = err instanceof Error ? err.message : '無法建立批改會話'
+          setInkSessionError(message)
+        }
+      }
+      void initInkSession()
+    }
+
+    return () => {
+      if (import.meta.env.DEV && skipInkSessionCleanupRef.current) {
+        skipInkSessionCleanupRef.current = false
+        return
+      }
+      cancelled = true
+      if (hasClosedSessionRef.current) return
+      void closeInkSessionOnce().then((summary) => {
+        notifyInkSettlement(inkSessionLabel, summary)
+      })
+    }
+  }, [])
 
   // 計算該班級已使用的作業資料夾（包含空資料夾）
   const usedFolders = useMemo(() => {
@@ -426,46 +502,6 @@ export default function AssignmentSetup({
     return { merged: { questions: sortedQuestions, totalScore }, notice }
   }
 
-  const notifyInkSettlement = (
-    label: string,
-    summary: {
-      chargedPoints?: number
-      balanceAfter?: number | null
-    } | null | undefined
-  ) => {
-    if (!summary || typeof summary.chargedPoints !== 'number') return
-    const remaining =
-      typeof summary.balanceAfter === 'number'
-        ? `，剩餘 ${summary.balanceAfter} 點`
-        : ''
-    window.alert(`本次${label}扣除 ${summary.chargedPoints} 點${remaining}`)
-  }
-
-  async function runInkSessionTask<T>(
-    label: string,
-    task: () => Promise<T>,
-    onSessionError?: (message: string) => void
-  ): Promise<T> {
-    let sessionId: string | null = null
-    try {
-      const started = await startInkSession()
-      sessionId = started?.sessionId ?? null
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '無法建立批改會話'
-      if (onSessionError) onSessionError(message)
-      throw err
-    }
-
-    try {
-      return await task()
-    } finally {
-      if (sessionId) {
-        const summary = await closeInkSession(sessionId)
-        notifyInkSettlement(label, summary)
-      }
-    }
-  }
-
   const extractAndSetAnswerKey = async (
     file: File,
     currentKey: AnswerKey | null,
@@ -482,6 +518,9 @@ export default function AssignmentSetup({
     const fileType = getFileType(file)
     if (fileType !== 'image' && fileType !== 'pdf') {
       setErr('不支援的檔案格式，請改用圖片或 PDF')
+      return
+    }
+    if (!ensureInkSessionReady(setErr)) {
       return
     }
 
@@ -556,15 +595,10 @@ export default function AssignmentSetup({
       }
 
       console.log('🧠 呼叫 Gemini API 提取標準答案...')
-      const extracted = await runInkSessionTask(
-        'AI 擷取答案',
-        () =>
-          extractAnswerKeyFromImage(imageBlob, {
-            domain,
-            priorWeightTypes: priorWeights
-          }),
-        setErr
-      )
+      const extracted = await extractAnswerKeyFromImage(imageBlob, {
+        domain,
+        priorWeightTypes: priorWeights
+      })
       console.log('✅ AI 提取完成', { questionCount: extracted.questions.length, totalScore: extracted.totalScore })
       
       const { merged, notice } = mergeAnswerKeys(currentKey, extracted)
@@ -579,14 +613,33 @@ export default function AssignmentSetup({
     }
   }
 
-  const handleRequireInkTopUp = () => {
+  const handleRequireInkTopUp = async () => {
     const shouldTopUp = window.confirm(createBlockedMessage)
-    if (!shouldTopUp) return
-    if (onRequireInkTopUp) {
-      onRequireInkTopUp()
-      return
+    if (!shouldTopUp || isClosingSession) return
+    setIsClosingSession(true)
+    try {
+      const summary = await closeInkSessionOnce()
+      notifyInkSettlement(inkSessionLabel, summary)
+    } finally {
+      setIsClosingSession(false)
+      if (onRequireInkTopUp) {
+        onRequireInkTopUp()
+        return
+      }
+      window.location.href = '/?page=ink-topup'
     }
-    window.location.href = '/?page=ink-topup'
+  }
+
+  const handleExit = async () => {
+    if (!onBack || isClosingSession) return
+    setIsClosingSession(true)
+    try {
+      const summary = await closeInkSessionOnce()
+      notifyInkSettlement(inkSessionLabel, summary)
+    } finally {
+      setIsClosingSession(false)
+      onBack()
+    }
   }
 
   const handleSubmit = async (e: FormEvent) => {
@@ -668,6 +721,9 @@ export default function AssignmentSetup({
   const handleExtractAnswerKey = async () => {
     if (answerKeyFile.length === 0) {
       setAnswerKeyError('請選擇檔案，支援 PDF 或圖片')
+      return
+    }
+    if (!ensureInkSessionReady(setAnswerKeyError)) {
       return
     }
 
@@ -781,15 +837,10 @@ export default function AssignmentSetup({
       }
 
       // 呼叫多圖片版本的 extractAnswerKeyFromImages
-      const extracted = await runInkSessionTask(
-        'AI 擷取答案',
-        () =>
-          extractAnswerKeyFromImages(imageBlobs, {
-            domain: assignmentDomain,
-            priorWeightTypes
-          }),
-        setAnswerKeyError
-      )
+      const extracted = await extractAnswerKeyFromImages(imageBlobs, {
+        domain: assignmentDomain,
+        priorWeightTypes
+      })
 
       console.log('📥 AI 回傳 AnswerKey：', extracted)
       const normalizedExtracted = normalizeAnswerKey(extracted)
@@ -877,20 +928,17 @@ export default function AssignmentSetup({
 
     if (!confirmed) return
 
+    if (!ensureInkSessionReady(setErrorFn)) return
+
     setIsReanalyzing(true)
     setErrorFn(null)
 
     try {
-      const reanalyzedQuestions = await runInkSessionTask(
-        '重新分析',
-        () =>
-          reanalyzeQuestions(
-            currentImage,
-            markedQuestions,
-            currentDomain,
-            currentPriorWeightTypes
-          ),
-        setErrorFn
+      const reanalyzedQuestions = await reanalyzeQuestions(
+        currentImage,
+        markedQuestions,
+        currentDomain,
+        currentPriorWeightTypes
       )
 
       // Merge reanalyzed questions back into current answer key
@@ -1580,7 +1628,7 @@ export default function AssignmentSetup({
       <div className="max-w-5xl mx-auto pt-8">
         {onBack && (
           <button
-            onClick={onBack}
+            onClick={handleExit}
             className="mb-4 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -1641,7 +1689,7 @@ export default function AssignmentSetup({
             </p>
             {onBack && (
               <button
-                onClick={onBack}
+                onClick={handleExit}
                 className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
               >
                 返回班級管理
@@ -3201,3 +3249,4 @@ export default function AssignmentSetup({
     </div>
   )
 }
+

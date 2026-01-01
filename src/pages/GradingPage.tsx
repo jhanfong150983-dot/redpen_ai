@@ -146,7 +146,7 @@ export default function GradingPage({
         const summary = await closeInkSession()
         hasClosedSessionRef.current = true
 
-        if (summary && typeof summary.chargedPoints === 'number') {
+        if (summary && typeof summary.chargedPoints === 'number' && summary.chargedPoints > 0) {
           const remaining =
             typeof summary.balanceAfter === 'number'
               ? `，剩餘 ${summary.balanceAfter} 點`
