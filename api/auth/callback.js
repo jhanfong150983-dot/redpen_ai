@@ -61,13 +61,6 @@ export default async function handler(req, res) {
     const avatarUrl = user.user_metadata?.avatar_url || ''
 
     const nowIso = new Date().toISOString()
-    const baseProfile = {
-      id: user.id,
-      email: user.email,
-      name: fullName,
-      avatar_url: avatarUrl,
-      updated_at: nowIso
-    }
 
     const { data: existingProfile, error: existingError } = await supabaseAdmin
       .from('profiles')
@@ -80,21 +73,29 @@ export default async function handler(req, res) {
       return
     }
 
-    const profilePayload = existingProfile
-      ? {
-          ...baseProfile
-          // 保留現有的 role, permission_tier, ink_balance,不覆蓋
-        }
-      : {
-          ...baseProfile,
-          role: 'user',
-          permission_tier: 'basic',
-          ink_balance: 10
-        }
-
-    const query = existingProfile
-      ? supabaseAdmin.from('profiles').update(profilePayload).eq('id', user.id)
-      : supabaseAdmin.from('profiles').insert(profilePayload)
+    let query
+    if (existingProfile) {
+      // 已存在的用戶：只更新基本資料，不覆蓋 role, permission_tier, ink_balance
+      const updatePayload = {
+        name: fullName,
+        avatar_url: avatarUrl,
+        updated_at: nowIso
+      }
+      query = supabaseAdmin.from('profiles').update(updatePayload).eq('id', user.id)
+    } else {
+      // 新用戶：創建完整的 profile
+      const insertPayload = {
+        id: user.id,
+        email: user.email,
+        name: fullName,
+        avatar_url: avatarUrl,
+        role: 'user',
+        permission_tier: 'basic',
+        ink_balance: 10,
+        updated_at: nowIso
+      }
+      query = supabaseAdmin.from('profiles').insert(insertPayload)
+    }
 
     const { error: profileError } = await query
 
