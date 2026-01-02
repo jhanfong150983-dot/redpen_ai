@@ -48,7 +48,7 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/admin/users', { credentials: 'include' })
+      const response = await fetch('/api/admin/users?action=users', { credentials: 'include' })
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
         setUsers([])
@@ -150,7 +150,7 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
 
     setIsSaving(true)
     try {
-      const response = await fetch('/api/admin/users', {
+      const response = await fetch('/api/admin/users?action=users', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -182,7 +182,7 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
     setModalError(null)
 
     try {
-      const response = await fetch('/api/admin/users', {
+      const response = await fetch('/api/admin/users?action=users', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

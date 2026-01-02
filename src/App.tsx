@@ -8,7 +8,8 @@ import {
   Shield,
   Droplet,
   Receipt,
-  Crown
+  Crown,
+  BarChart3
 } from 'lucide-react'
 import ClassroomManagement from '@/pages/ClassroomManagement'
 import AssignmentSetup from '@/pages/AssignmentSetup'
@@ -23,6 +24,7 @@ import Gradebook from '@/pages/Gradebook'
 import AdminUsers from '@/pages/AdminUsers'
 import InkTopUp from '@/pages/InkTopUp'
 import AdminOrders from '@/pages/AdminOrders'
+import AdminAnalytics from '@/pages/AdminAnalytics'
 import { SyncIndicator } from '@/components'
 import { checkWebPSupport } from '@/lib/webpSupport'
 import { INK_BALANCE_EVENT, type InkBalanceDetail } from '@/lib/ink-events'
@@ -46,6 +48,7 @@ type Page =
   | 'admin-users'
   | 'ink-topup'
   | 'admin-orders'
+  | 'admin-analytics'
 
 type AuthState =
   | { status: 'loading' }
@@ -437,6 +440,9 @@ function App() {
       case 'admin-users':
         nextPage = isAdmin ? 'admin-users' : null
         break
+      case 'admin-analytics':
+        nextPage = isAdmin ? 'admin-analytics' : null
+        break
       case 'gradebook':
         nextPage = canAccessTracking ? 'gradebook' : null
         break
@@ -635,6 +641,30 @@ function App() {
     return <AdminOrders onBack={() => setCurrentPage('home')} />
   }
 
+  // 使用情形儀表板
+  if (currentPage === 'admin-analytics') {
+    if (!isAdmin) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              只有管理者可以進入此頁面。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return <AdminAnalytics onBack={() => setCurrentPage('home')} />
+  }
+
   // 補充墨水
   if (currentPage === 'ink-topup') {
     return (
@@ -788,6 +818,16 @@ function App() {
               <Droplet className="w-4 h-4" />
               補充墨水
             </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setCurrentPage('admin-analytics')}
+                className="px-3 py-2 text-xs font-semibold rounded-lg border border-purple-200 text-purple-700 hover:border-purple-300 hover:text-purple-800 transition-colors inline-flex items-center gap-2"
+              >
+                <BarChart3 className="w-4 h-4" />
+                使用情形儀表板
+              </button>
+            )}
             {isAdmin && (
               <button
                 type="button"

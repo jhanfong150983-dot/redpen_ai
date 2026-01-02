@@ -156,7 +156,7 @@ export default function AdminOrders({ onBack }: AdminOrdersProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/admin/ink-orders', {
+      const response = await fetch('/api/admin/ink-orders?action=ink-orders', {
         credentials: 'include'
       })
       if (!response.ok) {

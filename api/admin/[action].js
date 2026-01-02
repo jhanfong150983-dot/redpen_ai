@@ -70,6 +70,16 @@ function getPendingCutoffIso() {
   return new Date(Date.now() - PENDING_TTL_MINUTES * 60 * 1000).toISOString()
 }
 
+function normalizePermissionTier(value) {
+  if (value === 'basic' || value === 'advanced') return value
+  return null
+}
+
+function normalizeRole(value) {
+  if (value === 'admin' || value === 'user') return value
+  return null
+}
+
 async function requireAdmin(req, res) {
   const { user } = await getAuthUser(req, res)
   if (!user) {
@@ -113,6 +123,136 @@ async function hasOrderLedger(supabaseAdmin, userId, orderId) {
   return (data ?? []).length > 0
 }
 
+// ========== USERS ==========
+async function handleUsers(req, res, supabaseAdmin) {
+  if (req.method === 'GET') {
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .select('id, email, name, avatar_url, role, permission_tier, ink_balance, admin_note, created_at, updated_at')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      res.status(500).json({ error: '讀取使用者清單失敗' })
+      return
+    }
+
+    res.status(200).json({ users: data ?? [] })
+    return
+  }
+
+  if (req.method === 'PATCH') {
+    const payload = parseJsonBody(req, res)
+    if (!payload) return
+
+    const {
+      userId,
+      role,
+      permission_tier: permissionTier,
+      ink_balance: inkBalance,
+      ink_balance_delta: inkBalanceDelta,
+      admin_note: adminNote
+    } = payload
+
+    if (!userId) {
+      res.status(400).json({ error: 'Missing userId' })
+      return
+    }
+
+    const { data: profile, error: fetchError } = await supabaseAdmin
+      .from('profiles')
+      .select('ink_balance')
+      .eq('id', userId)
+      .maybeSingle()
+
+    if (fetchError) {
+      res.status(500).json({ error: '讀取使用者資料失敗' })
+      return
+    }
+
+    if (!profile) {
+      res.status(404).json({ error: '使用者不存在' })
+      return
+    }
+
+    const updates = { updated_at: new Date().toISOString() }
+    const nextRole = normalizeRole(role)
+    const nextTier = normalizePermissionTier(permissionTier)
+
+    if (nextRole) updates.role = nextRole
+    if (nextTier) updates.permission_tier = nextTier
+    if (typeof adminNote === 'string') updates.admin_note = adminNote
+
+    let ledgerEntry = null
+    const currentBalance = typeof profile.ink_balance === 'number' ? profile.ink_balance : 0
+
+    if (typeof inkBalanceDelta === 'number' && Number.isFinite(inkBalanceDelta)) {
+      const nextBalance = Math.max(0, currentBalance + inkBalanceDelta)
+      updates.ink_balance = nextBalance
+      ledgerEntry = {
+        user_id: userId,
+        delta: nextBalance - currentBalance,
+        reason: 'admin_adjustment',
+        metadata: { before: currentBalance, after: nextBalance }
+      }
+    } else if (typeof inkBalance === 'number' && Number.isFinite(inkBalance)) {
+      const nextBalance = Math.max(0, Math.floor(inkBalance))
+      updates.ink_balance = nextBalance
+      ledgerEntry = {
+        user_id: userId,
+        delta: nextBalance - currentBalance,
+        reason: 'admin_set_balance',
+        metadata: { before: currentBalance, after: nextBalance }
+      }
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from('profiles')
+      .update(updates)
+      .eq('id', userId)
+
+    if (updateError) {
+      res.status(500).json({ error: '更新使用者資料失敗' })
+      return
+    }
+
+    if (ledgerEntry && ledgerEntry.delta !== 0) {
+      const { error: ledgerError } = await supabaseAdmin
+        .from('ink_ledger')
+        .insert(ledgerEntry)
+      if (ledgerError) {
+        res.status(500).json({ error: '寫入點數紀錄失敗' })
+        return
+      }
+    }
+
+    res.status(200).json({ success: true })
+    return
+  }
+
+  if (req.method === 'DELETE') {
+    const payload = parseJsonBody(req, res)
+    if (!payload) return
+
+    const { userId } = payload
+    if (!userId) {
+      res.status(400).json({ error: 'Missing userId' })
+      return
+    }
+
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(userId)
+    if (error) {
+      res.status(500).json({ error: error.message || '刪除使用者失敗' })
+      return
+    }
+
+    res.status(200).json({ success: true })
+    return
+  }
+
+  res.status(405).json({ error: 'Method Not Allowed' })
+}
+
+// ========== INK-ORDERS - PACKAGES ==========
 async function handlePackages(req, res, supabaseAdmin) {
   if (req.method === 'GET') {
     const { data, error } = await supabaseAdmin
@@ -342,18 +482,8 @@ async function handlePackages(req, res, supabaseAdmin) {
   res.status(405).json({ error: 'Method Not Allowed' })
 }
 
-export default async function handler(req, res) {
-  const adminContext = await requireAdmin(req, res)
-  if (!adminContext) return
-
-  const { supabaseAdmin, user: adminUser } = adminContext
-  const action = resolveAction(req)
-
-  if (action === 'packages') {
-    await handlePackages(req, res, supabaseAdmin)
-    return
-  }
-
+// ========== INK-ORDERS ==========
+async function handleInkOrders(req, res, supabaseAdmin, adminUser) {
   if (req.method === 'GET') {
     const cutoffIso = getPendingCutoffIso()
     const nowIso = new Date().toISOString()
@@ -449,7 +579,7 @@ export default async function handler(req, res) {
 
     if (status === 'cancelled') {
       if (hasLedger) {
-        res.status(400).json({ error: '訂單已加點，不可取消' })
+        res.status(400).json({ error: '訂單已加點,不可取消' })
         return
       }
 
@@ -547,4 +677,245 @@ export default async function handler(req, res) {
   }
 
   res.status(405).json({ error: 'Method Not Allowed' })
+}
+
+// ========== ANALYTICS ==========
+async function handleAnalytics(req, res, supabaseAdmin) {
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  try {
+    // 1. 系統概覽統計
+    const [
+      totalUsersResult,
+      totalOrdersResult,
+      totalRevenueResult,
+      totalInkDistributedResult,
+      activeUsersResult
+    ] = await Promise.all([
+      supabaseAdmin
+        .from('profiles')
+        .select('id', { count: 'exact', head: true }),
+
+      supabaseAdmin
+        .from('ink_orders')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'paid'),
+
+      supabaseAdmin
+        .from('ink_orders')
+        .select('amount_twd')
+        .eq('status', 'paid'),
+
+      supabaseAdmin
+        .from('ink_ledger')
+        .select('delta')
+        .gt('delta', 0),
+
+      supabaseAdmin
+        .from('profiles')
+        .select('id', { count: 'exact', head: true })
+        .gte('updated_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+    ])
+
+    const totalRevenue = totalRevenueResult.data?.reduce((sum, order) => sum + (order.amount_twd || 0), 0) || 0
+    const totalInkDistributed = totalInkDistributedResult.data?.reduce((sum, ledger) => sum + (ledger.delta || 0), 0) || 0
+
+    // 2. 最近註冊的用戶
+    const { data: recentUsers } = await supabaseAdmin
+      .from('profiles')
+      .select('id, email, name, avatar_url, created_at')
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    // 3. 最活躍用戶
+    const { data: inkUsageData } = await supabaseAdmin
+      .from('ink_ledger')
+      .select('user_id, delta')
+      .lt('delta', 0)
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+
+    const userUsageMap = {}
+    inkUsageData?.forEach(record => {
+      if (!userUsageMap[record.user_id]) {
+        userUsageMap[record.user_id] = 0
+      }
+      userUsageMap[record.user_id] += Math.abs(record.delta)
+    })
+
+    const topUserIds = Object.entries(userUsageMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([userId]) => userId)
+
+    const { data: topUsers } = topUserIds.length > 0
+      ? await supabaseAdmin
+          .from('profiles')
+          .select('id, email, name, avatar_url, ink_balance')
+          .in('id', topUserIds)
+      : { data: [] }
+
+    const topUsersWithUsage = topUsers?.map(user => ({
+      ...user,
+      ink_used: userUsageMap[user.id] || 0
+    })).sort((a, b) => b.ink_used - a.ink_used) || []
+
+    // 4. 訂單統計
+    const { data: recentOrders } = await supabaseAdmin
+      .from('ink_orders')
+      .select('id, status, amount_twd, created_at')
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false })
+
+    const ordersByStatus = {
+      paid: recentOrders?.filter(o => o.status === 'paid').length || 0,
+      pending: recentOrders?.filter(o => o.status === 'pending').length || 0,
+      cancelled: recentOrders?.filter(o => o.status === 'cancelled').length || 0
+    }
+
+    const recentRevenue = recentOrders?.filter(o => o.status === 'paid').reduce((sum, o) => sum + (o.amount_twd || 0), 0) || 0
+
+    // 5. 每日訂單趨勢
+    const dailyOrders = {}
+    recentOrders?.forEach(order => {
+      if (order.status === 'paid') {
+        const date = order.created_at.split('T')[0]
+        if (!dailyOrders[date]) {
+          dailyOrders[date] = { count: 0, revenue: 0 }
+        }
+        dailyOrders[date].count++
+        dailyOrders[date].revenue += order.amount_twd || 0
+      }
+    })
+
+    const dailyOrdersArray = Object.entries(dailyOrders)
+      .map(([date, data]) => ({ date, ...data }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    // 6. 熱門購買方案
+    const { data: packageStats } = await supabaseAdmin
+      .from('ink_orders')
+      .select('package_id, package_label, drops, bonus_drops')
+      .eq('status', 'paid')
+      .not('package_id', 'is', null)
+
+    const packageSalesMap = {}
+    packageStats?.forEach(order => {
+      const key = order.package_id
+      if (!packageSalesMap[key]) {
+        packageSalesMap[key] = {
+          package_id: order.package_id,
+          package_label: order.package_label,
+          drops: order.drops,
+          bonus_drops: order.bonus_drops,
+          sales_count: 0
+        }
+      }
+      packageSalesMap[key].sales_count++
+    })
+
+    const topPackages = Object.values(packageSalesMap)
+      .sort((a, b) => b.sales_count - a.sales_count)
+      .slice(0, 5)
+
+    // 7. 墨水點數統計
+    const { data: allProfiles } = await supabaseAdmin
+      .from('profiles')
+      .select('ink_balance')
+
+    const totalInkBalance = allProfiles?.reduce((sum, p) => sum + (p.ink_balance || 0), 0) || 0
+    const avgInkBalance = allProfiles?.length > 0 ? Math.round(totalInkBalance / allProfiles.length) : 0
+
+    // 8. 最近墨水點數變動記錄
+    const { data: recentInkLedger } = await supabaseAdmin
+      .from('ink_ledger')
+      .select(`
+        id,
+        user_id,
+        delta,
+        reason,
+        metadata,
+        created_at,
+        profiles:user_id (
+          email,
+          name
+        )
+      `)
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    // 9. 用戶成長趨勢
+    const { data: userGrowthData } = await supabaseAdmin
+      .from('profiles')
+      .select('created_at')
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+
+    const dailyNewUsers = {}
+    userGrowthData?.forEach(user => {
+      const date = user.created_at.split('T')[0]
+      dailyNewUsers[date] = (dailyNewUsers[date] || 0) + 1
+    })
+
+    const userGrowthArray = Object.entries(dailyNewUsers)
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    const analytics = {
+      overview: {
+        totalUsers: totalUsersResult.count || 0,
+        activeUsers: activeUsersResult.count || 0,
+        totalOrders: totalOrdersResult.count || 0,
+        totalRevenue,
+        totalInkDistributed,
+        totalInkBalance,
+        avgInkBalance
+      },
+      recentUsers: recentUsers || [],
+      topUsers: topUsersWithUsage,
+      orders: {
+        byStatus: ordersByStatus,
+        recentRevenue,
+        dailyTrend: dailyOrdersArray
+      },
+      topPackages,
+      recentInkLedger: recentInkLedger || [],
+      userGrowth: userGrowthArray
+    }
+
+    return res.status(200).json(analytics)
+
+  } catch (error) {
+    console.error('Analytics error:', error)
+    return res.status(500).json({ error: '取得統計資料失敗' })
+  }
+}
+
+// ========== MAIN HANDLER ==========
+export default async function handler(req, res) {
+  const adminContext = await requireAdmin(req, res)
+  if (!adminContext) return
+
+  const { supabaseAdmin, user: adminUser } = adminContext
+  const action = resolveAction(req)
+
+  // 路由到對應的處理函數
+  if (action === 'users') {
+    return await handleUsers(req, res, supabaseAdmin)
+  }
+
+  if (action === 'packages') {
+    return await handlePackages(req, res, supabaseAdmin)
+  }
+
+  if (action === 'ink-orders') {
+    return await handleInkOrders(req, res, supabaseAdmin, adminUser)
+  }
+
+  if (action === 'analytics') {
+    return await handleAnalytics(req, res, supabaseAdmin)
+  }
+
+  res.status(404).json({ error: 'Unknown action' })
 }
