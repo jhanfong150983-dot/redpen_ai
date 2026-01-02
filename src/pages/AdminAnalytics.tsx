@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, TrendingUp, Users, ShoppingCart, Droplet, Activity } from 'lucide-react'
+import { ArrowLeft, Users, ShoppingCart, Droplet, Activity, TrendingUp } from 'lucide-react'
 import './AdminAnalytics.css'
 
 type AnalyticsData = {
@@ -69,6 +69,74 @@ type Props = {
   onBack: () => void
 }
 
+// SVG 趨勢線圖組件
+function LineChart({ data, height = 150 }: { data: Array<{ date: string; value: number }>; height?: number }) {
+  if (data.length === 0) {
+    return <div className="no-data">無資料</div>
+  }
+
+  const width = 800
+  const padding = { top: 20, right: 20, bottom: 30, left: 40 }
+  const chartWidth = width - padding.left - padding.right
+  const chartHeight = height - padding.top - padding.bottom
+
+  const maxValue = Math.max(...data.map(d => d.value), 1)
+  const minValue = Math.min(...data.map(d => d.value), 0)
+  const valueRange = maxValue - minValue || 1
+
+  // 計算點的位置
+  const points = data.map((item, index) => {
+    const x = padding.left + (index / (data.length - 1 || 1)) * chartWidth
+    const y = padding.top + chartHeight - ((item.value - minValue) / valueRange) * chartHeight
+    return { x, y, ...item }
+  })
+
+  // 生成路徑
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+
+  // 生成填充區域路徑
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`
+
+  return (
+    <div className="line-chart-container">
+      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        {/* 填充區域 */}
+        <path d={areaPath} fill="rgba(99, 102, 241, 0.1)" />
+
+        {/* 趨勢線 */}
+        <path d={linePath} stroke="#6366f1" strokeWidth="2" fill="none" />
+
+        {/* 數據點 */}
+        {points.map((point, i) => (
+          <circle
+            key={i}
+            cx={point.x}
+            cy={point.y}
+            r="4"
+            fill="#6366f1"
+            className="chart-point"
+          >
+            <title>{`${point.date}: ${point.value}`}</title>
+          </circle>
+        ))}
+      </svg>
+
+      {/* X軸標籤 */}
+      <div className="chart-labels">
+        {data.map((item, i) => {
+          // 只顯示部分標籤避免擁擠
+          if (data.length > 15 && i % Math.ceil(data.length / 10) !== 0) return null
+          return (
+            <span key={i} className="chart-label">
+              {item.date.slice(5)}
+            </span>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function AdminAnalytics({ onBack }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -127,7 +195,7 @@ export default function AdminAnalytics({ onBack }: Props) {
       <div className="admin-analytics">
         <header className="analytics-header">
           <button onClick={onBack} className="back-btn">
-            <ArrowLeft />
+            <ArrowLeft size={20} />
             返回
           </button>
           <h1>使用情形儀表板</h1>
@@ -142,7 +210,7 @@ export default function AdminAnalytics({ onBack }: Props) {
       <div className="admin-analytics">
         <header className="analytics-header">
           <button onClick={onBack} className="back-btn">
-            <ArrowLeft />
+            <ArrowLeft size={20} />
             返回
           </button>
           <h1>使用情形儀表板</h1>
@@ -158,7 +226,7 @@ export default function AdminAnalytics({ onBack }: Props) {
     <div className="admin-analytics">
       <header className="analytics-header">
         <button onClick={onBack} className="back-btn">
-          <ArrowLeft />
+          <ArrowLeft size={20} />
           返回
         </button>
         <h1>使用情形儀表板</h1>
@@ -170,12 +238,9 @@ export default function AdminAnalytics({ onBack }: Props) {
       <div className="analytics-content">
         {/* 系統概覽 */}
         <section className="overview-section">
-          <h2>系統概覽</h2>
           <div className="stats-grid">
             <div className="stat-card">
-              <div className="stat-icon users-icon">
-                <Users />
-              </div>
+              <Users size={20} className="stat-icon" />
               <div className="stat-info">
                 <div className="stat-label">總用戶數</div>
                 <div className="stat-value">{data.overview.totalUsers.toLocaleString()}</div>
@@ -184,9 +249,7 @@ export default function AdminAnalytics({ onBack }: Props) {
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon orders-icon">
-                <ShoppingCart />
-              </div>
+              <ShoppingCart size={20} className="stat-icon" />
               <div className="stat-info">
                 <div className="stat-label">總訂單數</div>
                 <div className="stat-value">{data.overview.totalOrders.toLocaleString()}</div>
@@ -195,9 +258,7 @@ export default function AdminAnalytics({ onBack }: Props) {
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon revenue-icon">
-                <TrendingUp />
-              </div>
+              <TrendingUp size={20} className="stat-icon" />
               <div className="stat-info">
                 <div className="stat-label">總收入</div>
                 <div className="stat-value">{formatCurrency(data.overview.totalRevenue)}</div>
@@ -206,84 +267,38 @@ export default function AdminAnalytics({ onBack }: Props) {
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon ink-icon">
-                <Droplet />
-              </div>
+              <Droplet size={20} className="stat-icon" />
               <div className="stat-info">
                 <div className="stat-label">墨水點數</div>
                 <div className="stat-value">{data.overview.totalInkDistributed.toLocaleString()}</div>
-                <div className="stat-sub">已發放 / 餘額: {data.overview.totalInkBalance.toLocaleString()}</div>
+                <div className="stat-sub">餘額: {data.overview.totalInkBalance.toLocaleString()}</div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* 用戶成長趨勢 */}
+        {/* 用戶成長趨勢線圖 */}
         <section className="chart-section">
           <h2>用戶成長趨勢 (最近30天)</h2>
-          <div className="simple-chart">
-            {data.userGrowth.length === 0 ? (
-              <div className="no-data">無資料</div>
-            ) : (
-              <div className="chart-bars">
-                {data.userGrowth.map((item) => (
-                  <div key={item.date} className="chart-bar-group">
-                    <div
-                      className="chart-bar"
-                      style={{
-                        height: `${Math.max(20, (item.count / Math.max(...data.userGrowth.map(d => d.count))) * 150)}px`
-                      }}
-                      title={`${item.date}: ${item.count} 位新用戶`}
-                    />
-                    <div className="chart-label">{item.date.slice(5)}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <LineChart
+            data={data.userGrowth.map(item => ({ date: item.date, value: item.count }))}
+            height={200}
+          />
         </section>
 
-        {/* 訂單趨勢 */}
+        {/* 訂單與收入趨勢線圖 */}
         <section className="chart-section">
           <h2>訂單與收入趨勢 (最近30天)</h2>
           <div className="orders-summary">
-            <div className="order-status-item">
-              <span className="status-label paid">已完成:</span>
-              <span className="status-count">{data.orders.byStatus.paid}</span>
-            </div>
-            <div className="order-status-item">
-              <span className="status-label pending">待處理:</span>
-              <span className="status-count">{data.orders.byStatus.pending}</span>
-            </div>
-            <div className="order-status-item">
-              <span className="status-label cancelled">已取消:</span>
-              <span className="status-count">{data.orders.byStatus.cancelled}</span>
-            </div>
-            <div className="order-status-item">
-              <span className="status-label revenue">近期收入:</span>
-              <span className="status-count">{formatCurrency(data.orders.recentRevenue)}</span>
-            </div>
+            <span>已完成: <strong>{data.orders.byStatus.paid}</strong></span>
+            <span>待處理: <strong>{data.orders.byStatus.pending}</strong></span>
+            <span>已取消: <strong>{data.orders.byStatus.cancelled}</strong></span>
+            <span>近期收入: <strong>{formatCurrency(data.orders.recentRevenue)}</strong></span>
           </div>
-          <div className="simple-chart">
-            {data.orders.dailyTrend.length === 0 ? (
-              <div className="no-data">無訂單資料</div>
-            ) : (
-              <div className="chart-bars">
-                {data.orders.dailyTrend.map((item) => (
-                  <div key={item.date} className="chart-bar-group">
-                    <div
-                      className="chart-bar revenue-bar"
-                      style={{
-                        height: `${Math.max(20, (item.revenue / Math.max(...data.orders.dailyTrend.map(d => d.revenue))) * 150)}px`
-                      }}
-                      title={`${item.date}: ${item.count} 筆訂單, ${formatCurrency(item.revenue)}`}
-                    />
-                    <div className="chart-label">{item.date.slice(5)}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <LineChart
+            data={data.orders.dailyTrend.map(item => ({ date: item.date, value: item.revenue }))}
+            height={200}
+          />
         </section>
 
         {/* 兩欄佈局 */}
@@ -291,8 +306,8 @@ export default function AdminAnalytics({ onBack }: Props) {
           {/* 最活躍用戶 */}
           <section className="list-section">
             <h2>
-              <Activity />
-              最活躍用戶 (30天墨水使用量)
+              <Activity size={18} />
+              最活躍用戶 (30天)
             </h2>
             <div className="user-list">
               {data.topUsers.length === 0 ? (
@@ -310,8 +325,8 @@ export default function AdminAnalytics({ onBack }: Props) {
                       <div className="user-email">{user.email}</div>
                     </div>
                     <div className="user-stats">
-                      <div className="ink-used">使用: {user.ink_used}</div>
-                      <div className="ink-balance">餘額: {user.ink_balance}</div>
+                      <div>使用: {user.ink_used}</div>
+                      <div>餘額: {user.ink_balance}</div>
                     </div>
                   </div>
                 ))
@@ -322,8 +337,8 @@ export default function AdminAnalytics({ onBack }: Props) {
           {/* 最近註冊用戶 */}
           <section className="list-section">
             <h2>
-              <Users />
-              最近註冊用戶 (30天內)
+              <Users size={18} />
+              最近註冊用戶 (30天)
             </h2>
             <div className="user-list">
               {data.recentUsers.length === 0 ? (
@@ -353,14 +368,14 @@ export default function AdminAnalytics({ onBack }: Props) {
         {/* 熱門購買方案 */}
         <section className="list-section">
           <h2>
-            <ShoppingCart />
+            <ShoppingCart size={18} />
             熱門購買方案
           </h2>
           <div className="package-list">
             {data.topPackages.length === 0 ? (
               <div className="no-data">無方案銷售資料</div>
             ) : (
-              <table className="package-table">
+              <table className="data-table">
                 <thead>
                   <tr>
                     <th>方案名稱</th>
@@ -373,11 +388,11 @@ export default function AdminAnalytics({ onBack }: Props) {
                 <tbody>
                   {data.topPackages.map((pkg) => (
                     <tr key={pkg.package_id}>
-                      <td className="package-name">{pkg.package_label}</td>
+                      <td>{pkg.package_label}</td>
                       <td>{pkg.drops}</td>
                       <td>{pkg.bonus_drops || 0}</td>
-                      <td className="package-total">{pkg.drops + (pkg.bonus_drops || 0)}</td>
-                      <td className="sales-count">{pkg.sales_count}</td>
+                      <td><strong>{pkg.drops + (pkg.bonus_drops || 0)}</strong></td>
+                      <td><strong>{pkg.sales_count}</strong></td>
                     </tr>
                   ))}
                 </tbody>
@@ -389,36 +404,36 @@ export default function AdminAnalytics({ onBack }: Props) {
         {/* 最近墨水點數變動 */}
         <section className="list-section">
           <h2>
-            <Droplet />
-            最近墨水點數變動記錄 (50筆)
+            <Droplet size={18} />
+            最近墨水點數變動 (50筆)
           </h2>
           <div className="ledger-list">
             {data.recentInkLedger.length === 0 ? (
               <div className="no-data">無變動記錄</div>
             ) : (
-              <table className="ledger-table">
+              <table className="data-table">
                 <thead>
                   <tr>
                     <th>時間</th>
                     <th>用戶</th>
                     <th>變動量</th>
                     <th>原因</th>
-                    <th>詳細資訊</th>
+                    <th>詳細</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.recentInkLedger.map((record) => (
                     <tr key={record.id}>
-                      <td className="ledger-time">{formatDate(record.created_at)}</td>
-                      <td className="ledger-user">
+                      <td className="text-sm">{formatDate(record.created_at)}</td>
+                      <td>
                         <div>{record.profiles?.name || '未知'}</div>
-                        <div className="user-email-small">{record.profiles?.email || ''}</div>
+                        <div className="text-sm text-gray">{record.profiles?.email || ''}</div>
                       </td>
-                      <td className={`ledger-delta ${record.delta > 0 ? 'positive' : 'negative'}`}>
-                        {record.delta > 0 ? '+' : ''}{record.delta}
+                      <td className={record.delta > 0 ? 'text-positive' : 'text-negative'}>
+                        <strong>{record.delta > 0 ? '+' : ''}{record.delta}</strong>
                       </td>
-                      <td className="ledger-reason">{getReasonText(record.reason)}</td>
-                      <td className="ledger-metadata">
+                      <td>{getReasonText(record.reason)}</td>
+                      <td className="text-sm">
                         {record.metadata ? (
                           <span>
                             {record.metadata.before !== undefined && `前: ${record.metadata.before} `}
