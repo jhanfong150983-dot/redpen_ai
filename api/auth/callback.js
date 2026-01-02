@@ -82,10 +82,8 @@ export default async function handler(req, res) {
 
     const profilePayload = existingProfile
       ? {
-          ...baseProfile,
-          ...(existingProfile.role ? {} : { role: 'user' }),
-          ...(existingProfile.permission_tier ? {} : { permission_tier: 'basic' }),
-          ...(existingProfile.ink_balance == null ? { ink_balance: 10 } : {})
+          ...baseProfile
+          // 保留現有的 role, permission_tier, ink_balance,不覆蓋
         }
       : {
           ...baseProfile,
