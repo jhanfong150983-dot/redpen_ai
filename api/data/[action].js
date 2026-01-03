@@ -5,6 +5,8 @@ import {
   isServiceRoleKey
 } from '../../server/_supabase.js'
 
+const TAG_QUIET_MINUTES = 5
+
 function resolveAction(req) {
   const actionParam = req.query?.action
   if (Array.isArray(actionParam)) {
@@ -63,6 +65,22 @@ function compactObject(obj) {
   )
 }
 
+function parseBooleanParam(value) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === '1' || normalized === 'true') return true
+    if (normalized === '0' || normalized === 'false') return false
+  }
+  return false
+}
+
+function addMinutesIso(date, minutes) {
+  const base = date instanceof Date ? date : new Date(date)
+  if (Number.isNaN(base.getTime())) return null
+  return new Date(base.getTime() + minutes * 60 * 1000).toISOString()
+}
+
 function normalizeDeletedList(items) {
   if (!Array.isArray(items)) return []
   return items
@@ -109,6 +127,62 @@ async function fetchDeletedSet(supabaseDb, tableName, ids, ownerId) {
     throw new Error(result.error.message)
   }
   return new Set((result.data || []).map((row) => row.record_id))
+}
+
+async function touchAssignmentTagStates(supabaseDb, ownerId, assignmentIds) {
+  if (!assignmentIds.length) return
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const nextRunAtIso = addMinutesIso(now, TAG_QUIET_MINUTES)
+
+  const { data, error } = await supabaseDb
+    .from('assignment_tag_state')
+    .select('assignment_id, status, window_started_at, dirty')
+    .eq('owner_id', ownerId)
+    .in('assignment_id', assignmentIds)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const stateMap = new Map(
+    (data || []).map((row) => [row.assignment_id, row])
+  )
+
+  const rows = assignmentIds.map((assignmentId) => {
+    const existing = stateMap.get(assignmentId)
+    const status = existing?.status ?? 'idle'
+    const isRunning = status === 'running'
+    const resetWindow =
+      !existing ||
+      !existing.window_started_at ||
+      status === 'idle' ||
+      status === 'failed' ||
+      status === 'ready' ||
+      status === 'insufficient_samples'
+    const windowStartedAt = resetWindow ? nowIso : existing.window_started_at
+
+    return compactObject({
+      owner_id: ownerId,
+      assignment_id: assignmentId,
+      status: isRunning ? 'running' : 'pending',
+      window_started_at: windowStartedAt,
+      last_event_at: nowIso,
+      next_run_at: nextRunAtIso ?? undefined,
+      dirty: isRunning ? true : existing?.dirty ?? false,
+      updated_at: nowIso
+    })
+  })
+
+  if (!rows.length) return
+
+  const result = await supabaseDb
+    .from('assignment_tag_state')
+    .upsert(rows, { onConflict: 'owner_id,assignment_id' })
+
+  if (result.error) {
+    throw new Error(result.error.message)
+  }
 }
 
 async function handleSync(req, res) {
@@ -166,6 +240,72 @@ async function handleSync(req, res) {
       }
       if (deletedResult.error) {
         throw new Error(deletedResult.error.message)
+      }
+
+      const includeTags = parseBooleanParam(req.query?.includeTags)
+      let assignmentTags = undefined
+      if (includeTags) {
+        const [stateResult, tagsResult] = await Promise.all([
+          supabaseDb
+            .from('assignment_tag_state')
+            .select(
+              'assignment_id, status, sample_count, last_event_at, next_run_at, last_generated_at, model, prompt_version'
+            )
+            .eq('owner_id', user.id),
+          supabaseDb
+            .from('assignment_tag_aggregates')
+            .select('assignment_id, tag_label, tag_count, examples')
+            .eq('owner_id', user.id)
+        ])
+
+        if (stateResult.error) {
+          throw new Error(stateResult.error.message)
+        }
+        if (tagsResult.error) {
+          throw new Error(tagsResult.error.message)
+        }
+
+        const stateMap = new Map(
+          (stateResult.data || []).map((row) => [row.assignment_id, row])
+        )
+        const tagMap = new Map()
+
+        for (const row of tagsResult.data || []) {
+          const assignmentId = row.assignment_id
+          if (!assignmentId) continue
+          if (!tagMap.has(assignmentId)) tagMap.set(assignmentId, [])
+          const list = tagMap.get(assignmentId)
+          if (list) {
+            list.push(
+              compactObject({
+                label: row.tag_label,
+                count: toNumber(row.tag_count) ?? 0,
+                examples: Array.isArray(row.examples) ? row.examples : undefined
+              })
+            )
+          }
+        }
+
+        const assignmentIdSet = new Set([
+          ...Array.from(stateMap.keys()),
+          ...Array.from(tagMap.keys())
+        ])
+
+        assignmentTags = Array.from(assignmentIdSet).map((assignmentId) => {
+          const state = stateMap.get(assignmentId)
+          const tags = tagMap.get(assignmentId) ?? []
+          const status = state?.status ?? (tags.length ? 'ready' : 'pending')
+          return compactObject({
+            assignmentId,
+            source: status === 'ready' ? 'ai' : 'rule',
+            status,
+            sampleCount: state?.sample_count ?? undefined,
+            lastEventAt: toMillis(state?.last_event_at) ?? undefined,
+            nextRunAt: toMillis(state?.next_run_at) ?? undefined,
+            lastGeneratedAt: toMillis(state?.last_generated_at) ?? undefined,
+            tags
+          })
+        })
       }
 
       const deleted = {
@@ -263,7 +403,8 @@ async function handleSync(req, res) {
         assignments: assignments.filter((row) => !deletedSets.assignments.has(row.id)),
         submissions: submissions.filter((row) => !deletedSets.submissions.has(row.id)),
         folders: folders.filter((row) => !deletedSets.folders.has(row.id)),
-        deleted
+        deleted,
+        ...(assignmentTags ? { assignmentTags } : {})
       })
     } catch (err) {
       res.status(500).json({
@@ -453,6 +594,21 @@ async function handleSync(req, res) {
           .from('submissions')
           .upsert(submissionRows, { onConflict: 'id' })
         if (result.error) throw new Error(result.error.message)
+      }
+
+      const touchedAssignments = new Set(
+        submissionRows
+          .filter((row) => row.assignment_id)
+          .filter((row) => row.grading_result !== undefined || row.status === 'graded')
+          .map((row) => row.assignment_id)
+      )
+
+      if (touchedAssignments.size > 0) {
+        await touchAssignmentTagStates(
+          supabaseDb,
+          user.id,
+          Array.from(touchedAssignments)
+        )
       }
 
       const folderRows = await buildUpsertRows(

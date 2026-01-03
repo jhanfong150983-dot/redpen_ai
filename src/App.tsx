@@ -25,6 +25,7 @@ import AdminUsers from '@/pages/AdminUsers'
 import InkTopUp from '@/pages/InkTopUp'
 import AdminOrders from '@/pages/AdminOrders'
 import AdminAnalytics from '@/pages/AdminAnalytics'
+import AiReport from '@/pages/AiReport'
 import { SyncIndicator } from '@/components'
 import { checkWebPSupport } from '@/lib/webpSupport'
 import { INK_BALANCE_EVENT, type InkBalanceDetail } from '@/lib/ink-events'
@@ -45,6 +46,7 @@ type Page =
   | 'assignment-import'
   | 'correction-select'
   | 'correction'
+  | 'ai-report'
   | 'admin-users'
   | 'ink-topup'
   | 'admin-orders'
@@ -450,6 +452,9 @@ function App() {
       case 'correction-select':
         nextPage = canAccessTracking ? 'correction-select' : null
         break
+      case 'ai-report':
+        nextPage = canAccessTracking ? 'ai-report' : null
+        break
       default:
         nextPage = null
     }
@@ -591,6 +596,29 @@ function App() {
       )
     }
     return <Gradebook onBack={() => setCurrentPage('home')} />
+  }
+
+  if (currentPage === 'ai-report') {
+    if (!canAccessTracking) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              Pro 權限才可使用 AI 學情報告。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return <AiReport onBack={() => setCurrentPage('home')} />
   }
 
   // 管理者介面
@@ -981,6 +1009,34 @@ function App() {
                 </span>
                 <span className="text-xs text-gray-500">
                   {canAccessTracking ? '查詢成績與匯出' : '需要 Pro 權限'}
+                </span>
+              </button>
+              <button
+                onClick={() => {
+                  if (!canAccessTracking) return
+                  setCurrentPage('ai-report')
+                }}
+                disabled={!canAccessTracking}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ${
+                  canAccessTracking
+                    ? 'bg-white border-gray-200 hover:border-blue-400'
+                    : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                <span
+                  className={`flex items-center gap-2 font-medium ${
+                    canAccessTracking ? 'text-gray-800' : 'text-gray-400'
+                  }`}
+                >
+                  <BarChart3
+                    className={`w-5 h-5 ${
+                      canAccessTracking ? 'text-blue-600' : 'text-gray-300'
+                    }`}
+                  />
+                  AI 學情報告
+                </span>
+                <span className="text-xs text-gray-500">
+                  {canAccessTracking ? '雷達圖與能力標籤' : '需要 Pro 權限'}
                 </span>
               </button>
             </div>

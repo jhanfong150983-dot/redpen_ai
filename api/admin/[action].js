@@ -2,6 +2,13 @@ import { getAuthUser } from '../../server/_auth.js'
 import { getSupabaseAdmin } from '../../server/_supabase.js'
 
 const PENDING_TTL_MINUTES = 30
+const TAG_QUIET_MINUTES = 5
+const TAG_MAX_WAIT_MINUTES = 30
+const TAG_MIN_SAMPLE_COUNT = 5
+const TAG_TOP_ISSUES = 50
+const TAG_LIMIT = 8
+const TAG_MODEL = 'gemini-3-flash-preview'
+const TAG_PROMPT_VERSION = 'v1.0'
 
 function parseJsonBody(req, res) {
   const body = req.body
@@ -80,6 +87,151 @@ function normalizeRole(value) {
   return null
 }
 
+function normalizeTagLabel(label) {
+  if (!label) return ''
+  return String(label).replace(/\s+/g, '').trim().toLowerCase()
+}
+
+function normalizeIssueText(text) {
+  if (!text) return ''
+  return String(text).replace(/\s+/g, ' ').trim()
+}
+
+function addMinutesIso(date, minutes) {
+  const base = date instanceof Date ? date : new Date(date)
+  if (Number.isNaN(base.getTime())) return null
+  return new Date(base.getTime() + minutes * 60 * 1000).toISOString()
+}
+
+function extractJsonFromText(text) {
+  const match = String(text).match(/\{[\s\S]*\}/)
+  if (!match) return null
+  try {
+    return JSON.parse(match[0])
+  } catch {
+    return null
+  }
+}
+
+function parseGradingResult(raw) {
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+  if (typeof raw === 'object') return raw
+  return null
+}
+
+function extractIssuesFromGrading(grading) {
+  if (!grading) return []
+  const mistakes = Array.isArray(grading.mistakes) ? grading.mistakes : []
+  if (mistakes.length > 0) {
+    return mistakes
+      .map((item) => {
+        if (!item || typeof item !== 'object') return ''
+        const reason = item.reason || ''
+        const question = item.question || ''
+        return [reason, question].filter(Boolean).join(' ')
+      })
+      .map(normalizeIssueText)
+      .filter((text) => text.length > 0)
+  }
+  const weaknesses = Array.isArray(grading.weaknesses) ? grading.weaknesses : []
+  return weaknesses.map(normalizeIssueText).filter((text) => text.length > 0)
+}
+
+function buildIssueStats(submissions) {
+  const issueMap = new Map()
+
+  submissions.forEach((submission) => {
+    const grading = parseGradingResult(submission.grading_result)
+    const issues = extractIssuesFromGrading(grading)
+    if (!issues.length) return
+
+    const ownerKey = submission.student_id || submission.id
+    const uniqueIssues = new Set(issues)
+    uniqueIssues.forEach((issue) => {
+      if (!issueMap.has(issue)) issueMap.set(issue, new Set())
+      const bucket = issueMap.get(issue)
+      if (bucket && ownerKey) bucket.add(ownerKey)
+    })
+  })
+
+  return Array.from(issueMap.entries())
+    .map(([issue, set]) => ({ issue, count: set.size }))
+    .sort((a, b) => b.count - a.count)
+}
+
+function getSystemApiKey() {
+  return process.env.SYSTEM_GEMINI_API_KEY || process.env.SECRET_API_KEY || ''
+}
+
+async function callGeminiText(prompt) {
+  const apiKey = getSystemApiKey()
+  if (!apiKey) {
+    throw new Error('Server API Key missing')
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${TAG_MODEL}:generateContent?key=${apiKey}`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    })
+  })
+
+  const text = await response.text()
+  let data = null
+  try {
+    data = JSON.parse(text)
+  } catch {
+    data = { raw: text }
+  }
+
+  if (!response.ok) {
+    const message = data?.error?.message || data?.error || 'Gemini request failed'
+    throw new Error(message)
+  }
+
+  const output = (data?.candidates ?? [])
+    .flatMap((candidate) => candidate?.content?.parts ?? [])
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('')
+    .trim()
+
+  if (!output) {
+    throw new Error('Gemini response empty')
+  }
+
+  return output
+}
+
+function buildTagPrompt(issueStats, dictionaryLabels) {
+  const issueLines = issueStats
+    .map((item) => `- ${item.issue}｜${item.count}人`)
+    .join('\n')
+  const dictionaryText = dictionaryLabels.length
+    ? dictionaryLabels.join('、')
+    : '（尚無）'
+
+  return `你是教學分析助理。請根據以下「錯誤現象清單」聚類成 4~8 個高階錯誤標籤，標籤需為繁體中文且 2~6 字，不要包含題目細節。
+若與既有標籤相近，請沿用既有標籤字樣；若沒有適合者可新增。
+請只輸出 JSON，格式如下：
+{"tags":[{"label":"標籤","count":12,"examples":["示例1","示例2"]}]}
+
+既有標籤：
+${dictionaryText}
+
+錯誤現象清單：
+${issueLines}
+`
+}
+
 async function requireAdmin(req, res) {
   const { user } = await getAuthUser(req, res)
   if (!user) {
@@ -105,6 +257,27 @@ async function requireAdmin(req, res) {
   }
 
   return { user, supabaseAdmin }
+}
+
+async function requireAdminOrCron(req, res) {
+  const cronSecret = process.env.CRON_SECRET
+  const headerSecret = req.headers['x-cron-secret']
+  const authHeader = req.headers.authorization || req.headers.Authorization
+
+  const bearerToken =
+    typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length).trim()
+      : ''
+
+  if (
+    cronSecret &&
+    ((headerSecret && headerSecret === cronSecret) ||
+      (bearerToken && bearerToken === cronSecret))
+  ) {
+    return { user: null, supabaseAdmin: getSupabaseAdmin(), isCron: true }
+  }
+
+  return requireAdmin(req, res)
 }
 
 async function hasOrderLedger(supabaseAdmin, userId, orderId) {
@@ -892,13 +1065,344 @@ async function handleAnalytics(req, res, supabaseAdmin) {
   }
 }
 
+async function finalizeAssignmentTagState(
+  supabaseAdmin,
+  ownerId,
+  assignmentId,
+  nowIso,
+  sampleCount,
+  model,
+  promptVersion
+) {
+  const { data: latest, error } = await supabaseAdmin
+    .from('assignment_tag_state')
+    .select('dirty, last_event_at')
+    .eq('owner_id', ownerId)
+    .eq('assignment_id', assignmentId)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const baseUpdate = {
+    sample_count: sampleCount,
+    last_generated_at: nowIso,
+    model,
+    prompt_version: promptVersion,
+    updated_at: nowIso,
+    dirty: false
+  }
+
+  if (latest?.dirty) {
+    const lastEventAt = latest.last_event_at || nowIso
+    const nextRunAt = addMinutesIso(lastEventAt, TAG_QUIET_MINUTES)
+    const result = await supabaseAdmin
+      .from('assignment_tag_state')
+      .update({
+        ...baseUpdate,
+        status: 'pending',
+        window_started_at: lastEventAt,
+        next_run_at: nextRunAt ?? undefined
+      })
+      .eq('owner_id', ownerId)
+      .eq('assignment_id', assignmentId)
+
+    if (result.error) {
+      throw new Error(result.error.message)
+    }
+    return
+  }
+
+  const result = await supabaseAdmin
+    .from('assignment_tag_state')
+    .update({
+      ...baseUpdate,
+      status: 'ready'
+    })
+    .eq('owner_id', ownerId)
+    .eq('assignment_id', assignmentId)
+
+  if (result.error) {
+    throw new Error(result.error.message)
+  }
+}
+
+async function aggregateAssignmentTags(supabaseAdmin, stateRow) {
+  const ownerId = stateRow.owner_id
+  const assignmentId = stateRow.assignment_id
+  const nowIso = new Date().toISOString()
+
+  const runningUpdate = await supabaseAdmin
+    .from('assignment_tag_state')
+    .update({ status: 'running', updated_at: nowIso })
+    .eq('owner_id', ownerId)
+    .eq('assignment_id', assignmentId)
+
+  if (runningUpdate.error) {
+    throw new Error(runningUpdate.error.message)
+  }
+
+  const { data: submissions, error: submissionsError } = await supabaseAdmin
+    .from('submissions')
+    .select('id, student_id, grading_result, status')
+    .eq('owner_id', ownerId)
+    .eq('assignment_id', assignmentId)
+
+  if (submissionsError) {
+    throw new Error(submissionsError.message)
+  }
+
+  const gradedSubmissions = (submissions || []).filter(
+    (row) => row.grading_result !== null || row.status === 'graded'
+  )
+
+  const sampleCount = gradedSubmissions.length
+  if (sampleCount < TAG_MIN_SAMPLE_COUNT) {
+    const result = await supabaseAdmin
+      .from('assignment_tag_state')
+      .update({
+        status: 'insufficient_samples',
+        sample_count: sampleCount,
+        updated_at: nowIso
+      })
+      .eq('owner_id', ownerId)
+      .eq('assignment_id', assignmentId)
+
+    if (result.error) {
+      throw new Error(result.error.message)
+    }
+    return { assignmentId, status: 'insufficient_samples', sampleCount }
+  }
+
+  const issueStats = buildIssueStats(gradedSubmissions).slice(0, TAG_TOP_ISSUES)
+
+  if (issueStats.length === 0) {
+    await supabaseAdmin
+      .from('assignment_tag_aggregates')
+      .delete()
+      .eq('owner_id', ownerId)
+      .eq('assignment_id', assignmentId)
+
+    await finalizeAssignmentTagState(
+      supabaseAdmin,
+      ownerId,
+      assignmentId,
+      nowIso,
+      sampleCount,
+      TAG_MODEL,
+      TAG_PROMPT_VERSION
+    )
+
+    return { assignmentId, status: 'ready', sampleCount }
+  }
+
+  const { data: dictionaryRows, error: dictionaryError } = await supabaseAdmin
+    .from('tag_dictionary')
+    .select('id, label, normalized_label')
+    .eq('owner_id', ownerId)
+    .eq('status', 'active')
+
+  if (dictionaryError) {
+    throw new Error(dictionaryError.message)
+  }
+
+  const dictionaryMap = new Map()
+  const dictionaryLabels = []
+  for (const row of dictionaryRows || []) {
+    const normalized = row.normalized_label || normalizeTagLabel(row.label)
+    dictionaryMap.set(normalized, row)
+    if (row.label) dictionaryLabels.push(row.label)
+  }
+
+  const prompt = buildTagPrompt(issueStats, dictionaryLabels)
+  const responseText = await callGeminiText(prompt)
+  const parsed = extractJsonFromText(responseText)
+  const rawTags = Array.isArray(parsed?.tags) ? parsed.tags : []
+
+  const normalizedTags = rawTags
+    .map((tag) => {
+      const label =
+        typeof tag?.label === 'string'
+          ? tag.label.trim()
+          : typeof tag?.tag === 'string'
+            ? tag.tag.trim()
+            : ''
+      const count = parseInt(tag?.count, 10)
+      if (!label || !Number.isFinite(count) || count <= 0) return null
+      const examples = Array.isArray(tag?.examples)
+        ? tag.examples
+            .map((item) => (typeof item === 'string' ? item.trim() : ''))
+            .filter((item) => item.length > 0)
+            .slice(0, 2)
+        : undefined
+      return {
+        label,
+        count: Math.min(count, sampleCount),
+        examples
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, TAG_LIMIT)
+
+  if (!normalizedTags.length) {
+    throw new Error('Gemini tag output invalid')
+  }
+
+  const newDictionaryRows = []
+  normalizedTags.forEach((tag) => {
+    const normalizedLabel = normalizeTagLabel(tag.label)
+    if (!dictionaryMap.has(normalizedLabel)) {
+      newDictionaryRows.push({
+        owner_id: ownerId,
+        label: tag.label,
+        normalized_label: normalizedLabel,
+        status: 'active',
+        created_at: nowIso,
+        updated_at: nowIso
+      })
+    }
+  })
+
+  if (newDictionaryRows.length > 0) {
+    const insertResult = await supabaseAdmin
+      .from('tag_dictionary')
+      .insert(newDictionaryRows)
+      .select('id, label, normalized_label')
+
+    if (insertResult.error) {
+      throw new Error(insertResult.error.message)
+    }
+  }
+
+  await supabaseAdmin
+    .from('assignment_tag_aggregates')
+    .delete()
+    .eq('owner_id', ownerId)
+    .eq('assignment_id', assignmentId)
+
+  const aggregateRows = normalizedTags.map((tag) => ({
+    owner_id: ownerId,
+    assignment_id: assignmentId,
+    tag_label: tag.label,
+    tag_count: tag.count,
+    examples: tag.examples ?? null,
+    generated_at: nowIso,
+    model: TAG_MODEL,
+    prompt_version: TAG_PROMPT_VERSION,
+    updated_at: nowIso
+  }))
+
+  const insertResult = await supabaseAdmin
+    .from('assignment_tag_aggregates')
+    .insert(aggregateRows)
+
+  if (insertResult.error) {
+    throw new Error(insertResult.error.message)
+  }
+
+  await finalizeAssignmentTagState(
+    supabaseAdmin,
+    ownerId,
+    assignmentId,
+    nowIso,
+    sampleCount,
+    TAG_MODEL,
+    TAG_PROMPT_VERSION
+  )
+
+  return { assignmentId, status: 'ready', sampleCount }
+}
+
+async function handleAggregateTags(req, res, supabaseAdmin) {
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    res.status(405).json({ error: 'Method Not Allowed' })
+    return
+  }
+
+  let body = parseJsonBody(req, res)
+  if (body === null) {
+    if (res.headersSent) return
+    body = {}
+  }
+  const ownerId = body.ownerId || req.query?.ownerId || null
+  const assignmentId = body.assignmentId || req.query?.assignmentId || null
+
+  const stateQuery = supabaseAdmin
+    .from('assignment_tag_state')
+    .select('*')
+    .eq('status', 'pending')
+
+  if (ownerId) stateQuery.eq('owner_id', ownerId)
+  if (assignmentId) stateQuery.eq('assignment_id', assignmentId)
+
+  const { data: states, error } = await stateQuery
+  if (error) {
+    res.status(500).json({ error: error.message })
+    return
+  }
+
+  const nowMs = Date.now()
+  const dueStates = (states || []).filter((row) => {
+    const nextRunAtMs = row.next_run_at ? Date.parse(row.next_run_at) : NaN
+    const windowStartMs = row.window_started_at
+      ? Date.parse(row.window_started_at)
+      : NaN
+    const lastEventMs = row.last_event_at ? Date.parse(row.last_event_at) : NaN
+    const quietDue =
+      Number.isFinite(nextRunAtMs) && nowMs >= nextRunAtMs
+        ? true
+        : Number.isFinite(lastEventMs)
+          ? nowMs - lastEventMs >= TAG_QUIET_MINUTES * 60 * 1000
+          : false
+    const maxWaitDue =
+      Number.isFinite(windowStartMs) &&
+      nowMs - windowStartMs >= TAG_MAX_WAIT_MINUTES * 60 * 1000
+    return quietDue || maxWaitDue
+  })
+
+  const results = []
+  for (const stateRow of dueStates) {
+    try {
+      const result = await aggregateAssignmentTags(supabaseAdmin, stateRow)
+      results.push({ assignmentId: stateRow.assignment_id, ok: true, ...result })
+    } catch (err) {
+      await supabaseAdmin
+        .from('assignment_tag_state')
+        .update({ status: 'failed', updated_at: new Date().toISOString() })
+        .eq('owner_id', stateRow.owner_id)
+        .eq('assignment_id', stateRow.assignment_id)
+
+      results.push({
+        assignmentId: stateRow.assignment_id,
+        ok: false,
+        error: err instanceof Error ? err.message : 'aggregate failed'
+      })
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    processed: results.length,
+    results
+  })
+}
+
 // ========== MAIN HANDLER ==========
 export default async function handler(req, res) {
+  const action = resolveAction(req)
+
+  if (action === 'aggregate-tags') {
+    const context = await requireAdminOrCron(req, res)
+    if (!context) return
+    return await handleAggregateTags(req, res, context.supabaseAdmin)
+  }
+
   const adminContext = await requireAdmin(req, res)
   if (!adminContext) return
 
   const { supabaseAdmin, user: adminUser } = adminContext
-  const action = resolveAction(req)
 
   // 路由到對應的處理函數
   if (action === 'users') {
