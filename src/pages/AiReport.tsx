@@ -1187,12 +1187,12 @@ const assignmentTagInfo = useMemo(() => {
     )
     const hasThreshold = typeof threshold === 'number' && threshold > 0
 
-    return abilityStudentProfiles.map((profile) => {
+    return abilityStudentProfiles.map((profile): StudentProfile => {
       const metric = metricById.get(profile.id)
       if (!metric || profile.submissions.length === 0) {
         return {
           ...profile,
-          status: 'risk',
+          status: 'risk' as const,
           statusLabel: '資料不足',
           statusHint: '尚未取得跨領域作業資料。'
         }
@@ -1204,7 +1204,7 @@ const assignmentTagInfo = useMemo(() => {
       if (crossDomain) {
         return {
           ...profile,
-          status: 'risk',
+          status: 'risk' as const,
           statusLabel: '需關注',
           statusHint: '同一能力在多領域反覆出現，需追蹤。'
         }
@@ -1213,7 +1213,7 @@ const assignmentTagInfo = useMemo(() => {
       if (isTop) {
         return {
           ...profile,
-          status: 'warn',
+          status: 'warn' as const,
           statusLabel: '留意',
           statusHint: '能力標籤數落在班級前段，建議觀察。'
         }
@@ -1221,7 +1221,7 @@ const assignmentTagInfo = useMemo(() => {
 
       return {
         ...profile,
-        status: 'good',
+        status: 'good' as const,
         statusLabel: '穩定',
         statusHint: '跨領域表現穩定。'
       }
@@ -1233,22 +1233,9 @@ const assignmentTagInfo = useMemo(() => {
     tagAbilityLookup
   ])
 
-  const assignmentTitle = selectedAssignment
-    ? getAssignmentTitle(selectedAssignment.assignment)
-    : '未選擇作業'
-
-  const assignmentDate = selectedAssignment
-    ? formatDate(selectedAssignment.lastActivity)
-    : '--'
-
   const assignmentSampleCount = assignmentReport?.sampleCount ?? 0
   const hasInsufficientSamples =
     assignmentTagInfo?.status === 'insufficient_samples' || assignmentSampleCount < 5
-  const tagStatusLabel = hasInsufficientSamples
-    ? `批改份數不足（${assignmentSampleCount}/5）`
-    : assignmentReport?.tags?.length
-      ? '已產出'
-      : '待產出'
 
   useEffect(() => {
     let isActive = true
@@ -1375,7 +1362,7 @@ const assignmentTagInfo = useMemo(() => {
           used.add(matchIndex)
         } else {
           const fallbackIndex = bullets.findIndex(
-            (line, lineIndex) => !used.has(lineIndex)
+            (_line, lineIndex) => !used.has(lineIndex)
           )
           if (fallbackIndex >= 0) {
             bullet = bullets[fallbackIndex]

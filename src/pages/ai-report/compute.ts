@@ -62,7 +62,7 @@ export function buildTagLevels(report: AssignmentTagReport | null): TagLevels {
 
   const items = sortTags(tags).map((tag) => {
     const ratio = sampleCount > 0 ? tag.count / sampleCount : 0
-    const severity =
+    const severity: 'high' | 'med' | 'low' =
       ratio >= 0.3 ? 'high' : ratio >= 0.1 ? 'med' : 'low'
 
     return {

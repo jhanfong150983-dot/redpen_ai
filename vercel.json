@@ -1,8 +1,21 @@
 {
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "installCommand": "npm install",
+  "env": {
+    "NODE_OPTIONS": "--no-deprecation"
+  },
   "crons": [
     {
       "path": "/api/admin/aggregate-tags",
       "schedule": "*/1 * * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/((?!api).*)",
+      "destination": "/index.html"
     }
   ]
 }
