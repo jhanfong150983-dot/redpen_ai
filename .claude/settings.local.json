@@ -14,7 +14,10 @@
       "Bash(npm run build:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(psql:*)"
+      "Bash(psql:*)",
+      "Bash(node --trace-deprecation node_modules/vite/bin/vite.js build:*)",
+      "Bash(npm outdated:*)",
+      "Bash(npm update:*)"
     ]
   }
 }

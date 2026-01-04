@@ -1,3 +1,4 @@
+import '../api/_suppress-warnings.js'
 import { createClient } from '@supabase/supabase-js'
 
 let cachedClient = null

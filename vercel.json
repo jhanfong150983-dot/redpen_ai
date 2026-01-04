@@ -3,6 +3,12 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "installCommand": "npm install",
+  "functions": {
+    "api/**/*.js": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  },
   "env": {
     "NODE_OPTIONS": "--no-deprecation"
   },
