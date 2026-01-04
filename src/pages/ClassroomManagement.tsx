@@ -16,6 +16,12 @@ import { db, generateId } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { checkFolderNameUnique } from '@/lib/utils'
+import {
+  type SortOption,
+  getSortPreference,
+  setSortPreference,
+  sortClassrooms
+} from '@/lib/sort-preferences'
 import type { Classroom, Student } from '@/lib/db'
 
 interface ClassroomManagementProps {
@@ -42,6 +48,9 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
 
   // 資料夾篩選
   const [selectedFolder, setSelectedFolder] = useState<string>('__uncategorized__')
+
+  // 排序功能
+  const [sortOption, setSortOption] = useState<SortOption>(() => getSortPreference('classroom'))
 
   // 拖放功能
   const [draggedClassroomId, setDraggedClassroomId] = useState<string | null>(null)
@@ -131,12 +140,19 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
 
   // 篩選邏輯
   const filteredItems = useMemo(() => {
-    if (!selectedFolder) return items
-    return items.filter((item) =>
-      item.classroom.folder === selectedFolder ||
-      (!item.classroom.folder && selectedFolder === '__uncategorized__')
-    )
-  }, [items, selectedFolder])
+    let result = items
+    if (selectedFolder) {
+      result = items.filter((item) =>
+        item.classroom.folder === selectedFolder ||
+        (!item.classroom.folder && selectedFolder === '__uncategorized__')
+      )
+    }
+    // 应用排序
+    return sortClassrooms(result.map(item => item.classroom), sortOption).map(classroom => {
+      const original = result.find(item => item.classroom.id === classroom.id)
+      return original!
+    })
+  }, [items, selectedFolder, sortOption])
 
   // 解析匯入的學生名單（座號 + 姓名）
   const parseImportedStudents = (text: string): Array<{ seatNumber: number; name: string }> => {
@@ -661,9 +677,26 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   已建立的班級
                 </h2>
               </div>
-              {isLoading && (
-                <Loader className="w-4 h-4 text-gray-400 animate-spin" />
-              )}
+              <div className="flex items-center gap-2">
+                <select
+                  value={sortOption}
+                  onChange={(e) => {
+                    const newOption = e.target.value as SortOption
+                    setSortOption(newOption)
+                    setSortPreference('classroom', newOption)
+                  }}
+                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  aria-label="排序方式"
+                >
+                  <option value="time-desc">依建立時間（新→舊）</option>
+                  <option value="time-asc">依建立時間（舊→新）</option>
+                  <option value="name-asc">依名稱A-Z（國字筆畫）</option>
+                  <option value="name-desc">依名稱Z-A（國字筆畫）</option>
+                </select>
+                {isLoading && (
+                  <Loader className="w-4 h-4 text-gray-400 animate-spin" />
+                )}
+              </div>
             </div>
 
             {filteredItems.length === 0 && !isLoading && (

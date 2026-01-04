@@ -32,6 +32,12 @@ import { startInkSession, closeInkSession } from '@/lib/ink-session'
 import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
 import { compressImageFile, validateBlobSize } from '@/lib/imageCompression'
 import { checkFolderNameUnique } from '@/lib/utils'
+import {
+  type SortOption,
+  getSortPreference,
+  setSortPreference,
+  sortAssignments
+} from '@/lib/sort-preferences'
 
 interface AssignmentSetupProps {
   onBack?: () => void
@@ -54,6 +60,9 @@ export default function AssignmentSetup({
 
   // 資料夾管理
   const [selectedFolder, setSelectedFolder] = useState('__uncategorized__')
+
+  // 排序功能
+  const [sortOption, setSortOption] = useState<SortOption>(() => getSortPreference('assignment'))
 
   // 拖放功能
   const [draggedAssignmentId, setDraggedAssignmentId] = useState<string | null>(null)
@@ -272,12 +281,16 @@ export default function AssignmentSetup({
 
   // 根據選擇的資料夾篩選作業
   const filteredAssignments = useMemo(() => {
-    if (!selectedFolder) return assignments
-    return assignments.filter((a) =>
-      a.folder === selectedFolder ||
-      (!a.folder && selectedFolder === '__uncategorized__')
-    )
-  }, [assignments, selectedFolder])
+    let result = assignments
+    if (selectedFolder) {
+      result = assignments.filter((a) =>
+        a.folder === selectedFolder ||
+        (!a.folder && selectedFolder === '__uncategorized__')
+      )
+    }
+    // 应用排序
+    return sortAssignments(result, sortOption)
+  }, [assignments, selectedFolder, sortOption])
 
   const resetForm = () => {
     setAssignmentTitle('')
@@ -1704,7 +1717,7 @@ export default function AssignmentSetup({
                     <Loader className="w-4 h-4 text-gray-400 animate-spin" />
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <label className="text-xs text-gray-600">班級</label>
                   <select
                     value={selectedClassroomId}
@@ -1716,6 +1729,21 @@ export default function AssignmentSetup({
                         {c.name}
                       </option>
                     ))}
+                  </select>
+                  <select
+                    value={sortOption}
+                    onChange={(e) => {
+                      const newOption = e.target.value as SortOption
+                      setSortOption(newOption)
+                      setSortPreference('assignment', newOption)
+                    }}
+                    className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    aria-label="排序方式"
+                  >
+                    <option value="time-desc">依建立時間（新→舊）</option>
+                    <option value="time-asc">依建立時間（舊→新）</option>
+                    <option value="name-asc">依名稱A-Z（國字筆畫）</option>
+                    <option value="name-desc">依名稱Z-A（國字筆畫）</option>
                   </select>
                 </div>
               </div>
