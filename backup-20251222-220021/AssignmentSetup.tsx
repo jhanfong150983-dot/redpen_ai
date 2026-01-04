@@ -432,7 +432,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
                 <BookOpen className="w-8 h-8 text-green-600" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">作業設定</h1>
+                <h1 className="text-2xl font-bold text-gray-900">作業管理</h1>
                 <p className="text-sm text-gray-600">
                   檢視、編輯或刪除作業，並可建立新作業與標準答案。
                 </p>

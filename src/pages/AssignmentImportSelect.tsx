@@ -186,7 +186,7 @@ export default function AssignmentImportSelect({
               尚未建立任何作業
             </h3>
             <p className="text-gray-600 mb-4">
-              請先到「作業設定」建立作業與標準答案，再回到這裡匯入作業。
+              請先到「作業管理」建立作業與標準答案，再回到這裡匯入作業。
             </p>
           </div>
         ) : filteredAssignments.length === 0 ? (
