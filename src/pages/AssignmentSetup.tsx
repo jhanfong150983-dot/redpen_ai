@@ -38,6 +38,8 @@ import {
   setSortPreference,
   sortAssignments
 } from '@/lib/sort-preferences'
+import { useTutorial } from '@/hooks/useTutorial'
+import { TutorialOverlay } from '@/components/TutorialOverlay'
 
 interface AssignmentSetupProps {
   onBack?: () => void
@@ -50,6 +52,9 @@ export default function AssignmentSetup({
   inkBalance,
   onRequireInkTopUp
 }: AssignmentSetupProps) {
+  // 引导式教学
+  const tutorial = useTutorial('assignment')
+
   const [classrooms, setClassrooms] = useState<Classroom[]>([])
   const [selectedClassroomId, setSelectedClassroomId] = useState('')
   const [assignments, setAssignments] = useState<Assignment[]>([])
@@ -1795,9 +1800,7 @@ export default function AssignmentSetup({
             </div>
             <button
               type="button"
-              onClick={() => {
-                alert('引導教學功能開發中...')
-              }}
+              onClick={() => tutorial.restart()}
               className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-gray-600 shadow hover:bg-gray-200"
               title="使用教學"
             >
@@ -3463,6 +3466,9 @@ export default function AssignmentSetup({
           </div>
         </div>
       )}
+
+      {/* 引导式教学覆盖层 */}
+      <TutorialOverlay tutorial={tutorial} />
     </div>
   )
 }
