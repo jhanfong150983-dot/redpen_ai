@@ -8,7 +8,8 @@ import {
   Layers,
   Loader,
   Folder,
-  X
+  X,
+  HelpCircle
 } from 'lucide-react'
 import { NumericInput } from '@/components/NumericInput'
 import { db, generateId } from '@/lib/db'
@@ -200,7 +201,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       const classroom: Classroom = {
         id: generateId(),
         name: trimmedName,
-        folder: undefined  // 新班級預設為未分類
+        folder: undefined  // 新班級預設為全部
       }
       await db.classrooms.add(classroom)
 
@@ -334,7 +335,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
 
     const count = items.filter((item) => item.classroom.folder === folderName).length
     const message = count > 0
-      ? `資料夾「${folderName}」內有 ${count} 個班級，刪除後這些班級會變成「未分類」。確定要刪除此資料夾嗎？`
+      ? `資料夾「${folderName}」內有 ${count} 個班級，刪除後這些班級會變成「全部」。確定要刪除此資料夾嗎？`
       : `確定要刪除資料夾「${folderName}」嗎？`
 
     const ok = window.confirm(message)
@@ -371,7 +372,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       // 4. 重新載入資料
       await loadData()
 
-      // 5. 切換到「未分類」
+      // 5. 切換到「全部」
       setSelectedFolder('__uncategorized__')
     } catch (error) {
       console.error('刪除資料夾失敗:', error)
@@ -633,15 +634,12 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
             <button
               type="button"
               onClick={() => {
-                setNewName('')
-                setNewStudentCount(30)
-                setImportText('')
-                setIsCreateModalOpen(true)
+                alert('引導教學功能開發中...')
               }}
-              className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-blue-600 text-white shadow hover:bg-blue-700"
-              title="新增班級"
+              className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-gray-600 shadow hover:bg-gray-200"
+              title="使用教學"
             >
-              <Plus className="w-5 h-5" />
+              <HelpCircle className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -757,6 +755,21 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   </div>
                 </div>
               ))}
+
+              {/* 新增班級按鈕 */}
+              <button
+                type="button"
+                onClick={() => {
+                  setNewName('')
+                  setNewStudentCount(30)
+                  setImportText('')
+                  setIsCreateModalOpen(true)
+                }}
+                className="w-full px-4 py-6 rounded-xl text-center border-2 border-dashed border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all flex flex-col items-center justify-center gap-2"
+              >
+                <Plus className="w-6 h-6" />
+                <span className="font-medium">新增班級</span>
+              </button>
             </div>
           </div>
 
@@ -784,7 +797,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-medium">未分類</span>
+                    <span className="font-medium">全部</span>
                     <span className="text-sm font-semibold">
                       {items.filter((item) => !item.classroom.folder).length}
                     </span>

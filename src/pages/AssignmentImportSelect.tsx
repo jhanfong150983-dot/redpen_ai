@@ -162,7 +162,7 @@ export default function AssignmentImportSelect({
                   className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all bg-white"
                 >
                   <option value="__uncategorized__">
-                    未分類 ({classAssignments.filter((a) => !a.folder).length})
+                    全部 ({classAssignments.filter((a) => !a.folder).length})
                   </option>
                   {usedFolders.map((folder) => {
                     const count = classAssignments.filter((a) => a.folder === folder).length

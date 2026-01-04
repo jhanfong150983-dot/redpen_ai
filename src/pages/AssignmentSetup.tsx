@@ -11,7 +11,8 @@ import {
   AlertTriangle,
   RefreshCw,
   Folder,
-  Copy
+  Copy,
+  HelpCircle
 } from 'lucide-react'
 import { NumericInput } from '@/components/NumericInput'
 import {
@@ -676,7 +677,7 @@ export default function AssignmentSetup({
         title: assignmentTitle.trim(),
         totalPages,
         domain: assignmentDomain,
-        folder: undefined,  // 新作業預設為未分類
+        folder: undefined,  // 新作業預設為全部
         priorWeightTypes,
         answerKey: answerKey || undefined
       }
@@ -1067,7 +1068,7 @@ export default function AssignmentSetup({
 
     const count = assignments.filter((a) => a.folder === folderName).length
     const message = count > 0
-      ? `資料夾「${folderName}」內有 ${count} 個作業，刪除後這些作業會變成「未分類」。確定要刪除此資料夾嗎？`
+      ? `資料夾「${folderName}」內有 ${count} 個作業，刪除後這些作業會變成「全部」。確定要刪除此資料夾嗎？`
       : `確定要刪除資料夾「${folderName}」嗎？`
 
     const ok = window.confirm(message)
@@ -1121,7 +1122,7 @@ export default function AssignmentSetup({
         setEmptyFolders(emptyAssignmentFolders)
       }
 
-      // 5. 切換到「未分類」
+      // 5. 切換到「全部」
       setSelectedFolder('__uncategorized__')
     } catch (error) {
       console.error('刪除資料夾失敗:', error)
@@ -1652,17 +1653,12 @@ export default function AssignmentSetup({
             <button
               type="button"
               onClick={() => {
-                if (!canCreateAssignment) {
-                  handleRequireInkTopUp()
-                  return
-                }
-                resetForm()
-                setIsCreateModalOpen(true)
+                alert('引導教學功能開發中...')
               }}
-              className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-green-600 text-white shadow hover:bg-green-700"
-              title="新增作業"
+              className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-gray-600 shadow hover:bg-gray-200"
+              title="使用教學"
             >
-              <Plus className="w-5 h-5" />
+              <HelpCircle className="w-5 h-5" />
             </button>
           </div>
           {isInkNegative && (
@@ -1823,6 +1819,22 @@ export default function AssignmentSetup({
                     </div>
                   </div>
                 ))}
+
+                {/* 新增作業按鈕 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!canCreateAssignment) {
+                      handleRequireInkTopUp()
+                      return
+                    }
+                    setIsCreateModalOpen(true)
+                  }}
+                  className="w-full px-4 py-6 rounded-xl text-center border-2 border-dashed border-gray-300 text-gray-600 hover:border-green-400 hover:text-green-600 hover:bg-green-50 transition-all flex flex-col items-center justify-center gap-2"
+                >
+                  <Plus className="w-6 h-6" />
+                  <span className="font-medium">新增作業</span>
+                </button>
               </div>
             </div>
 
@@ -1849,7 +1861,7 @@ export default function AssignmentSetup({
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-medium">未分類</span>
+                      <span className="font-medium">全部</span>
                       <span className="text-sm font-semibold">
                         {assignments.filter((a) => !a.folder).length}
                       </span>

@@ -553,7 +553,7 @@ function buildAbilityInsight(
 
 function normalizeDomain(domain?: string) {
   const value = domain?.trim()
-  if (!value || value === 'uncategorized') return '未分類'
+  if (!value || value === 'uncategorized') return '全部'
   return value
 }
 

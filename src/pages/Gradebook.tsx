@@ -280,7 +280,7 @@ export default function Gradebook({ onBack }: GradebookProps) {
               aria-label="選擇資料夾"
             >
               <option value="__uncategorized__">
-                未分類 ({assignments.filter((a) => !a.folder).length})
+                全部 ({assignments.filter((a) => !a.folder).length})
               </option>
               {usedFolders.map((folder) => {
                 const count = assignments.filter((a) => a.folder === folder).length
