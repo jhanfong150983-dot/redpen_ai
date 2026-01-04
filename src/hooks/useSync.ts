@@ -9,6 +9,7 @@ import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { fixCorruptedBase64 } from '@/lib/utils'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 import { debugLog, infoLog } from '@/lib/logger'
+import { useAdminViewAs } from '@/lib/admin-view-as'
 
 interface SyncStatus {
   isSyncing: boolean
@@ -105,6 +106,9 @@ const toMillis = (value: unknown): number | undefined => {
 
 export function useSync(options: UseSyncOptions = {}) {
   const { autoSync = true } = options
+  const { viewAs } = useAdminViewAs()
+  const viewAsOwnerId = viewAs?.ownerId?.trim() || null
+  const isReadOnly = Boolean(viewAsOwnerId)
 
   const isOnline = useOnlineStatus()
   const [status, setStatus] = useState<SyncStatus>({
@@ -119,6 +123,21 @@ export function useSync(options: UseSyncOptions = {}) {
   const lastFocusSyncRef = useRef(0)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
   const syncBlockedReasonRef = useRef<string | null>(null)
+  const viewAsRef = useRef<string | null>(viewAsOwnerId)
+
+  const buildSyncUrl = useCallback(
+    (extraParams?: URLSearchParams) => {
+      const params = extraParams
+        ? new URLSearchParams(extraParams)
+        : new URLSearchParams()
+      if (viewAsOwnerId) {
+        params.set('ownerId', viewAsOwnerId)
+      }
+      const query = params.toString()
+      return query ? `/api/data/sync?${query}` : '/api/data/sync'
+    },
+    [viewAsOwnerId]
+  )
 
   const updateSubmissionImageCache = async (
     submissionId: string,
@@ -362,6 +381,10 @@ export function useSync(options: UseSyncOptions = {}) {
    * 上傳本機資料到雲端
    */
   const pushMetadata = useCallback(async () => {
+    if (isReadOnly) {
+      debugLog('?? 檢視模式：略過 pushMetadata')
+      return
+    }
     debugLog('📤 pushMetadata 開始')
     const [classrooms, students, assignments, submissions, folders, deleteQueue] =
       await Promise.all([
@@ -473,7 +496,7 @@ export function useSync(options: UseSyncOptions = {}) {
         updatedAt: f.updatedAt
       }))
 
-    const response = await fetch('/api/data/sync', {
+    const response = await fetch(buildSyncUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -507,14 +530,14 @@ export function useSync(options: UseSyncOptions = {}) {
     if (deleteQueueIds.length > 0) {
       await clearDeleteQueue(deleteQueueIds)
     }
-  }, [])
+  }, [isReadOnly, buildSyncUrl])
 
   /**
    * 從雲端拉回資料
    */
   const pullMetadata = useCallback(async () => {
     debugLog('📥 pullMetadata 開始')
-    const response = await fetch('/api/data/sync', {
+    const response = await fetch(buildSyncUrl(), {
       method: 'GET',
       credentials: 'include'
     })
@@ -793,7 +816,48 @@ export function useSync(options: UseSyncOptions = {}) {
       const localFolders = await db.folders.toArray()
       debugLog('🔍 pullMetadata 後本地 folders:', localFolders)
     }
-  }, [])
+  }, [buildSyncUrl])
+
+  useEffect(() => {
+    if (viewAsRef.current === viewAsOwnerId) return
+    viewAsRef.current = viewAsOwnerId
+    syncBlockedReasonRef.current = null
+
+    const resetLocal = async () => {
+      isSyncingRef.current = false
+      syncQueuedRef.current = false
+      await Promise.all([
+        db.classrooms.clear(),
+        db.students.clear(),
+        db.assignments.clear(),
+        db.submissions.clear(),
+        db.syncQueue.clear(),
+        db.folders.clear(),
+        db.answerExtractionCorrections.clear()
+      ])
+      setStatus((prev) => ({
+        ...prev,
+        lastSyncTime: null,
+        pendingCount: 0,
+        error: null
+      }))
+
+      if (!isOnline) return
+
+      await pullMetadata()
+      if (!syncBlockedReasonRef.current) {
+        const remainingCount = await updatePendingCount()
+        setStatus((prev) => ({
+          ...prev,
+          lastSyncTime: Date.now(),
+          pendingCount: remainingCount,
+          error: null
+        }))
+      }
+    }
+
+    void resetLocal()
+  }, [viewAsOwnerId, isOnline, pullMetadata, updatePendingCount])
 
   /**
    * 執行同步
@@ -820,6 +884,28 @@ export function useSync(options: UseSyncOptions = {}) {
     try {
       isSyncingRef.current = true
       setStatus((prev) => ({ ...prev, isSyncing: true, error: null }))
+
+      if (isReadOnly) {
+        debugLog('?? 檢視模式：僅拉取雲端資料')
+        await pullMetadata()
+        if (syncBlockedReasonRef.current) {
+          setStatus((prev) => ({
+            ...prev,
+            isSyncing: false,
+            error: null
+          }))
+          return
+        }
+        const remainingCount = await updatePendingCount()
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          lastSyncTime: Date.now(),
+          pendingCount: remainingCount,
+          error: null
+        }))
+        return
+      }
 
       // 檢查 performSync 開始時的 folders
       const performSyncStart = await db.folders.toArray()
@@ -922,7 +1008,7 @@ export function useSync(options: UseSyncOptions = {}) {
         }, 0)
       }
     }
-  }, [isOnline, updatePendingCount, pushMetadata, pullMetadata])
+  }, [isOnline, isReadOnly, updatePendingCount, pushMetadata, pullMetadata])
 
   /**
    * 提供給外部手動觸發同步
@@ -993,8 +1079,15 @@ export function useSync(options: UseSyncOptions = {}) {
 
   return {
     ...status,
+    readOnly: isReadOnly,
+    viewAsOwnerId: viewAsOwnerId ?? undefined,
     triggerSync,
     updatePendingCount
   }
 }
+
+
+
+
+
 

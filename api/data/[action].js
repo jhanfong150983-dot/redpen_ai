@@ -75,6 +75,37 @@ function parseBooleanParam(value) {
   return false
 }
 
+function resolveOwnerIdParam(req) {
+  const raw = req.query?.ownerId ?? req.query?.owner_id
+  if (Array.isArray(raw)) {
+    return typeof raw[0] === 'string' ? raw[0].trim() : null
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    return trimmed || null
+  }
+  return null
+}
+
+async function requireAdminOverride(userId) {
+  const supabaseAdmin = getSupabaseAdmin()
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error('讀取使用者權限失敗')
+  }
+
+  if (data?.role !== 'admin') {
+    return null
+  }
+
+  return supabaseAdmin
+}
+
 function addMinutesIso(date, minutes) {
   const base = date instanceof Date ? date : new Date(date)
   if (Number.isNaN(base.getTime())) return null
@@ -137,7 +168,7 @@ async function touchAssignmentTagStates(supabaseDb, ownerId, assignmentIds) {
 
   const { data, error } = await supabaseDb
     .from('assignment_tag_state')
-    .select('assignment_id, status, window_started_at, dirty')
+    .select('assignment_id, status, window_started_at, dirty, manual_locked')
     .eq('owner_id', ownerId)
     .in('assignment_id', assignmentIds)
 
@@ -151,7 +182,8 @@ async function touchAssignmentTagStates(supabaseDb, ownerId, assignmentIds) {
 
   const rows = assignmentIds.map((assignmentId) => {
     const existing = stateMap.get(assignmentId)
-    const status = existing?.status ?? 'idle'
+    const isManualLocked = Boolean(existing?.manual_locked)
+    const status = isManualLocked ? 'ready' : existing?.status ?? 'idle'
     const isRunning = status === 'running'
     const resetWindow =
       !existing ||
@@ -165,11 +197,12 @@ async function touchAssignmentTagStates(supabaseDb, ownerId, assignmentIds) {
     return compactObject({
       owner_id: ownerId,
       assignment_id: assignmentId,
-      status: isRunning ? 'running' : 'pending',
+      status: isManualLocked ? 'ready' : isRunning ? 'running' : 'pending',
       window_started_at: windowStartedAt,
       last_event_at: nowIso,
-      next_run_at: nextRunAtIso ?? undefined,
-      dirty: isRunning ? true : existing?.dirty ?? false,
+      next_run_at: isManualLocked ? undefined : nextRunAtIso ?? undefined,
+      dirty: isManualLocked ? false : isRunning ? true : existing?.dirty ?? false,
+      manual_locked: isManualLocked ? true : existing?.manual_locked ?? false,
       updated_at: nowIso
     })
   })
@@ -192,15 +225,42 @@ async function handleSync(req, res) {
     return
   }
 
+  const requestedOwnerId = resolveOwnerIdParam(req)
+  const isOwnerOverride =
+    requestedOwnerId && requestedOwnerId !== user.id
+
   const useAdmin = isServiceRoleKey()
-  if (!useAdmin && !accessToken) {
+  if (!useAdmin && !accessToken && !isOwnerOverride) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }
 
-  const supabaseDb = useAdmin
+  if (isOwnerOverride && req.method !== 'GET') {
+    res.status(403).json({ error: 'Read-only view mode' })
+    return
+  }
+
+  let ownerId = user.id
+  let supabaseDb = useAdmin
     ? getSupabaseAdmin()
     : getSupabaseUserClient(accessToken)
+
+  if (isOwnerOverride) {
+    try {
+      const supabaseAdmin = await requireAdminOverride(user.id)
+      if (!supabaseAdmin) {
+        res.status(403).json({ error: 'Forbidden' })
+        return
+      }
+      ownerId = requestedOwnerId
+      supabaseDb = supabaseAdmin
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : '讀取使用者權限失敗'
+      })
+      return
+    }
+  }
 
   if (req.method === 'GET') {
     try {
@@ -212,15 +272,15 @@ async function handleSync(req, res) {
         foldersResult,
         deletedResult
       ] = await Promise.all([
-        supabaseDb.from('classrooms').select('*').eq('owner_id', user.id),
-        supabaseDb.from('students').select('*').eq('owner_id', user.id),
-        supabaseDb.from('assignments').select('*').eq('owner_id', user.id),
-        supabaseDb.from('submissions').select('*').eq('owner_id', user.id),
-        supabaseDb.from('folders').select('*').eq('owner_id', user.id),
+        supabaseDb.from('classrooms').select('*').eq('owner_id', ownerId),
+        supabaseDb.from('students').select('*').eq('owner_id', ownerId),
+        supabaseDb.from('assignments').select('*').eq('owner_id', ownerId),
+        supabaseDb.from('submissions').select('*').eq('owner_id', ownerId),
+        supabaseDb.from('folders').select('*').eq('owner_id', ownerId),
         supabaseDb
           .from('deleted_records')
           .select('table_name, record_id, deleted_at')
-          .eq('owner_id', user.id)
+          .eq('owner_id', ownerId)
       ])
 
       if (classroomsResult.error) {
@@ -251,11 +311,11 @@ async function handleSync(req, res) {
             .select(
               'assignment_id, status, sample_count, last_event_at, next_run_at, last_generated_at, model, prompt_version'
             )
-            .eq('owner_id', user.id),
+            .eq('owner_id', ownerId),
           supabaseDb
             .from('assignment_tag_aggregates')
             .select('assignment_id, tag_label, tag_count, examples')
-            .eq('owner_id', user.id)
+            .eq('owner_id', ownerId)
         ])
 
         if (stateResult.error) {
@@ -761,6 +821,169 @@ async function handleSubmission(req, res) {
   }
 }
 
+async function handleReport(req, res) {
+  const { user, accessToken } = await getAuthUser(req, res)
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+
+  const requestedOwnerId = resolveOwnerIdParam(req)
+  const isOwnerOverride =
+    requestedOwnerId && requestedOwnerId !== user.id
+
+  const useAdmin = isServiceRoleKey()
+  if (!useAdmin && !accessToken && !isOwnerOverride) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+
+  let ownerId = user.id
+  let supabaseDb = useAdmin
+    ? getSupabaseAdmin()
+    : getSupabaseUserClient(accessToken)
+
+  if (isOwnerOverride) {
+    try {
+      const supabaseAdmin = await requireAdminOverride(user.id)
+      if (!supabaseAdmin) {
+        res.status(403).json({ error: 'Forbidden' })
+        return
+      }
+      ownerId = requestedOwnerId
+      supabaseDb = supabaseAdmin
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : '讀取使用者權限失敗'
+      })
+      return
+    }
+  }
+
+  if (req.method !== 'GET') {
+    res.status(405).json({ error: 'Method Not Allowed' })
+    return
+  }
+
+  try {
+    const [
+      domainResult,
+      abilityAggResult,
+      abilityDictResult,
+      tagMapResult,
+      tagDictResult
+    ] = await Promise.all([
+      supabaseDb
+        .from('domain_tag_aggregates')
+        .select(
+          'domain, tag_label, tag_count, assignment_count, sample_count, generated_at'
+        )
+        .eq('owner_id', ownerId)
+        .order('tag_count', { ascending: false }),
+      supabaseDb
+        .from('ability_aggregates')
+        .select(
+          'ability_id, total_count, assignment_count, domain_count, generated_at'
+        )
+        .eq('owner_id', ownerId)
+        .order('total_count', { ascending: false }),
+      supabaseDb
+        .from('ability_dictionary')
+        .select('id, label')
+        .eq('owner_id', ownerId)
+        .eq('status', 'active'),
+      supabaseDb
+        .from('tag_ability_map')
+        .select('tag_id, ability_id, confidence')
+        .eq('owner_id', ownerId),
+      supabaseDb
+        .from('tag_dictionary')
+        .select('id, label, normalized_label, status, merged_to_tag_id')
+        .eq('owner_id', ownerId)
+    ])
+
+    if (domainResult.error) throw new Error(domainResult.error.message)
+    if (abilityAggResult.error) throw new Error(abilityAggResult.error.message)
+    if (abilityDictResult.error) throw new Error(abilityDictResult.error.message)
+    if (tagMapResult.error) throw new Error(tagMapResult.error.message)
+    if (tagDictResult.error) throw new Error(tagDictResult.error.message)
+
+    const dictionaryRows = tagDictResult.data ?? []
+    const dictionaryById = new Map(dictionaryRows.map((row) => [row.id, row]))
+    const dictionary = dictionaryRows.map((row) => {
+      const mergedTarget = row.merged_to_tag_id
+        ? dictionaryById.get(row.merged_to_tag_id)
+        : null
+      return {
+        id: row.id,
+        label: row.label,
+        normalized_label: row.normalized_label,
+        status: row.status,
+        merged_to_tag_id: row.merged_to_tag_id ?? null,
+        merged_to_label: mergedTarget?.label ?? null
+      }
+    })
+
+    const domainMap = new Map()
+    ;(domainResult.data || []).forEach((row) => {
+      const domain = row.domain || 'uncategorized'
+      if (!domainMap.has(domain)) domainMap.set(domain, [])
+      domainMap.get(domain).push({
+        label: row.tag_label,
+        count: toNumber(row.tag_count) ?? 0,
+        assignmentCount: toNumber(row.assignment_count) ?? 0,
+        sampleCount: toNumber(row.sample_count) ?? null,
+        generatedAt: toIsoTimestamp(row.generated_at)
+      })
+    })
+
+    const domains = Array.from(domainMap.entries()).map(([domain, tags]) => ({
+      domain,
+      tags
+    }))
+
+    const abilityLabelById = new Map(
+      (abilityDictResult.data || []).map((row) => [row.id, row.label])
+    )
+    const abilities = (abilityAggResult.data || []).map((row) => ({
+      id: row.ability_id,
+      label: abilityLabelById.get(row.ability_id) || row.ability_id,
+      totalCount: toNumber(row.total_count) ?? 0,
+      assignmentCount: toNumber(row.assignment_count) ?? 0,
+      domainCount: toNumber(row.domain_count) ?? 0,
+      generatedAt: toIsoTimestamp(row.generated_at)
+    }))
+
+    const tagLabelById = new Map(
+      dictionaryRows.map((row) => [row.id, row.label || row.normalized_label])
+    )
+    const tagAbilityMap = new Map()
+    ;(tagMapResult.data || []).forEach((row) => {
+      const tagLabel = tagLabelById.get(row.tag_id)
+      const abilityLabel = abilityLabelById.get(row.ability_id)
+      if (!tagLabel || !abilityLabel) return
+      const key = `${tagLabel}::${abilityLabel}`
+      if (tagAbilityMap.has(key)) return
+      tagAbilityMap.set(key, {
+        tag: tagLabel,
+        ability: abilityLabel,
+        confidence: toNumber(row.confidence)
+      })
+    })
+
+    res.status(200).json({
+      domains,
+      abilities,
+      tagAbilityMap: Array.from(tagAbilityMap.values()),
+      dictionary
+    })
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : '讀取報告資料失敗'
+    })
+  }
+}
+
 export default async function handler(req, res) {
   const action = resolveAction(req)
   if (action === 'sync') {
@@ -769,6 +992,10 @@ export default async function handler(req, res) {
   }
   if (action === 'submission') {
     await handleSubmission(req, res)
+    return
+  }
+  if (action === 'report') {
+    await handleReport(req, res)
     return
   }
   res.status(404).json({ error: 'Not Found' })

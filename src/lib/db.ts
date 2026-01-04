@@ -228,6 +228,26 @@ export interface Folder {
   updatedAt?: number
 }
 
+export interface TeacherSummaryCache {
+  cacheKey: string
+  assignmentId: string
+  bullets: string[]
+  remedy?: string
+  updatedAt: number
+}
+
+export interface DomainDiagnosisCache {
+  cacheKey: string
+  domain: string
+  startDate: string
+  endDate: string
+  overview: string
+  trendSummary: string
+  teachingActions: string[]
+  abilityInsight?: string
+  updatedAt: number
+}
+
 /**
  * Dexie DB 定義
  */
@@ -239,6 +259,8 @@ class RedPenDatabase extends Dexie {
   syncQueue!: EntityTable<SyncQueue, 'id'>
   answerExtractionCorrections!: EntityTable<AnswerExtractionCorrection, 'id'>
   folders!: EntityTable<Folder, 'id'>
+  teacherSummaryCache!: EntityTable<TeacherSummaryCache, 'cacheKey'>
+  domainDiagnosisCache!: EntityTable<DomainDiagnosisCache, 'cacheKey'>
 
   constructor() {
     super('RedPenDB')
@@ -411,6 +433,33 @@ class RedPenDatabase extends Dexie {
       } catch (error) {
         console.error('? 資料庫 version 5 升級失敗:', error)
       }
+    })
+
+    this.version(6).stores({
+      classrooms: '&id, name, folder',
+      students: '&id, classroomId, seatNumber, name',
+      assignments: '&id, classroomId, title, folder',
+      submissions:
+        '&id, assignmentId, studentId, status, createdAt, [assignmentId+studentId]',
+      syncQueue: '++id, tableName, recordId, createdAt',
+      answerExtractionCorrections:
+        '++id, assignmentId, studentId, submissionId, questionId, createdAt',
+      folders: '&id, name, type, classroomId, [type+classroomId], [type+classroomId+name]',
+      teacherSummaryCache: '&cacheKey, assignmentId, updatedAt'
+    })
+
+    this.version(7).stores({
+      classrooms: '&id, name, folder',
+      students: '&id, classroomId, seatNumber, name',
+      assignments: '&id, classroomId, title, folder',
+      submissions:
+        '&id, assignmentId, studentId, status, createdAt, [assignmentId+studentId]',
+      syncQueue: '++id, tableName, recordId, createdAt',
+      answerExtractionCorrections:
+        '++id, assignmentId, studentId, submissionId, questionId, createdAt',
+      folders: '&id, name, type, classroomId, [type+classroomId], [type+classroomId+name]',
+      teacherSummaryCache: '&cacheKey, assignmentId, updatedAt',
+      domainDiagnosisCache: '&cacheKey, domain, startDate, endDate, updatedAt'
     })
 
     const setUpdatedAt = (value: unknown) => {

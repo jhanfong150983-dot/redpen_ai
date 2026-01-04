@@ -9,6 +9,7 @@ import {
   Loader,
   Crown
 } from 'lucide-react'
+import { useAdminViewAs } from '@/lib/admin-view-as'
 
 interface AdminUsersProps {
   onBack?: () => void
@@ -30,6 +31,7 @@ interface AdminUser {
 type BalanceMode = 'none' | 'set' | 'delta'
 
 export default function AdminUsers({ onBack }: AdminUsersProps) {
+  const { viewAs, setViewAs, clearViewAs } = useAdminViewAs()
   const [users, setUsers] = useState<AdminUser[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,6 +45,10 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
   const [balanceValue, setBalanceValue] = useState('')
   const [modalError, setModalError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+
+  const viewAsLabel = viewAs
+    ? viewAs.name || viewAs.email || viewAs.ownerId
+    : ''
 
   const loadUsers = useCallback(async () => {
     setIsLoading(true)
@@ -241,6 +247,21 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
             </button>
           </div>
 
+          {viewAs && (
+            <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              <div>
+                目前檢視中：<span className="font-semibold">{viewAsLabel}</span>
+              </div>
+              <button
+                type="button"
+                onClick={clearViewAs}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-white"
+              >
+                退出檢視
+              </button>
+            </div>
+          )}
+
           <div className="mt-4 flex flex-col md:flex-row md:items-center gap-3">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -276,11 +297,13 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
                 查無符合條件的使用者
               </div>
             ) : (
-              filteredUsers.map((user) => (
-                <div
-                  key={user.id}
-                  className="bg-white rounded-2xl shadow p-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
-                >
+              filteredUsers.map((user) => {
+                const isViewing = viewAs?.ownerId === user.id
+                return (
+                  <div
+                    key={user.id}
+                    className="bg-white rounded-2xl shadow p-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
+                  >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-semibold flex-shrink-0">
                       {(user.name || user.email || '?').charAt(0).toUpperCase()}
@@ -321,6 +344,24 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      onClick={() =>
+                        setViewAs({
+                          ownerId: user.id,
+                          name: user.name,
+                          email: user.email
+                        })
+                      }
+                      className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
+                        isViewing
+                          ? 'border-emerald-200 text-emerald-700 bg-emerald-50'
+                          : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                      }`}
+                      disabled={isViewing}
+                    >
+                      {isViewing ? '檢視中' : '切換檢視'}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => openEdit(user)}
                       className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50"
                     >
@@ -328,8 +369,9 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
                       編輯
                     </button>
                   </div>
-                </div>
-              ))
+                  </div>
+                )
+              })
             )}
           </div>
         )}

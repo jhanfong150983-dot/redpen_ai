@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import {
   Users,
   BookOpen,
@@ -9,7 +9,8 @@ import {
   Droplet,
   Receipt,
   Crown,
-  BarChart3
+  BarChart3,
+  Tags
 } from 'lucide-react'
 import ClassroomManagement from '@/pages/ClassroomManagement'
 import AssignmentSetup from '@/pages/AssignmentSetup'
@@ -25,6 +26,7 @@ import AdminUsers from '@/pages/AdminUsers'
 import InkTopUp from '@/pages/InkTopUp'
 import AdminOrders from '@/pages/AdminOrders'
 import AdminAnalytics from '@/pages/AdminAnalytics'
+import AdminTags from '@/pages/AdminTags'
 import AiReport from '@/pages/AiReport'
 import { SyncIndicator } from '@/components'
 import { checkWebPSupport } from '@/lib/webpSupport'
@@ -33,6 +35,7 @@ import '@/lib/debug-sync'
 import { debugLog } from '@/lib/logger'
 import { LEGAL_MODAL_EVENT, type LegalModalDetail } from '@/lib/legal-events'
 import { TERMS_VERSION, PRIVACY_VERSION, REFUND_FEE_RATE } from '@/lib/legal'
+import { useAdminViewAs } from '@/lib/admin-view-as'
 
 type Page =
   | 'home'
@@ -51,6 +54,7 @@ type Page =
   | 'ink-topup'
   | 'admin-orders'
   | 'admin-analytics'
+  | 'admin-tags'
 
 type AuthState =
   | { status: 'loading' }
@@ -94,6 +98,7 @@ function App() {
     totalDrops: 0,
     amountTwd: 0
   })
+  const { viewAs, clearViewAs } = useAdminViewAs()
   const inkBalance =
     auth.status === 'authenticated' ? auth.user.inkBalance ?? 0 : null
 
@@ -403,6 +408,11 @@ function App() {
 
   const isAdmin =
     auth.status === 'authenticated' && auth.user.role === 'admin'
+  const isViewAsActive =
+    isAdmin && viewAs?.ownerId && viewAs.ownerId !== auth.user.id
+  const viewAsLabel = viewAs
+    ? viewAs.name || viewAs.email || viewAs.ownerId
+    : ''
   const isProTier =
     auth.status === 'authenticated' &&
     (auth.user.permissionTier === 'advanced' || hasPaidOrder)
@@ -424,6 +434,34 @@ function App() {
     return true
   }, [auth, setCurrentPage])
 
+  const viewAsBanner = isViewAsActive ? (
+    <div className="fixed top-0 left-0 right-0 z-50 bg-slate-900 text-white text-sm px-4 py-2 shadow-lg">
+      <div className="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+        <div>
+          目前為管理者檢視模式：
+          <span className="font-semibold"> {viewAsLabel}</span> · 僅可讀取資料
+        </div>
+        <button
+          type="button"
+          onClick={clearViewAs}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs"
+        >
+          退出檢視
+        </button>
+      </div>
+    </div>
+  ) : null
+
+  const renderWithViewAs = (content: ReactNode) =>
+    isViewAsActive ? (
+      <>
+        {viewAsBanner}
+        <div className="pt-12">{content}</div>
+      </>
+    ) : (
+      content
+    )
+
   useEffect(() => {
     if (urlPageHandled) return
     if (auth.status !== 'authenticated') return
@@ -444,6 +482,9 @@ function App() {
         break
       case 'admin-analytics':
         nextPage = isAdmin ? 'admin-analytics' : null
+        break
+      case 'admin-tags':
+        nextPage = isAdmin ? 'admin-tags' : null
         break
       case 'gradebook':
         nextPage = canAccessTracking ? 'gradebook' : null
@@ -474,7 +515,7 @@ function App() {
   }, [auth.status, canAccessTracking, isAdmin, urlPageHandled])
 
   if (auth.status === 'loading') {
-    return (
+    return renderWithViewAs(
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
         <div className="text-center">
           <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -485,7 +526,7 @@ function App() {
   }
 
   if (auth.status === 'unauthenticated') {
-    return (
+    return renderWithViewAs(
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
         <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
           <img
@@ -518,12 +559,14 @@ function App() {
 
   // 班級管理
   if (currentPage === 'classroom-management') {
-    return <ClassroomManagement onBack={() => setCurrentPage('home')} />
+    return renderWithViewAs(
+      <ClassroomManagement onBack={() => setCurrentPage('home')} />
+    )
   }
 
   // 作業管理
   if (currentPage === 'assignment-setup') {
-    return (
+    return renderWithViewAs(
       <AssignmentSetup
         onBack={() => setCurrentPage('home')}
         inkBalance={auth.user.inkBalance ?? 0}
@@ -534,7 +577,7 @@ function App() {
 
   // 作業匯入：選擇作業並決定匯入方式
   if (currentPage === 'assignment-import-select') {
-    return (
+    return renderWithViewAs(
       <AssignmentImportSelect
         onBack={() => setCurrentPage('home')}
         onSelectScanImport={(assignmentId) => {
@@ -551,7 +594,7 @@ function App() {
 
   // 掃描匯入
   if (currentPage === 'assignment-scan' && selectedAssignmentId) {
-    return (
+    return renderWithViewAs(
       <AssignmentScanImport
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('assignment-import-select')}
@@ -562,7 +605,7 @@ function App() {
 
   // AI 批改：作業列表
   if (currentPage === 'grading-list') {
-    return (
+    return renderWithViewAs(
       <AssignmentList
         onBack={() => setCurrentPage('home')}
         onSelectAssignment={(assignmentId) => {
@@ -577,7 +620,7 @@ function App() {
   // 成績簿
   if (currentPage === 'gradebook') {
     if (!canAccessTracking) {
-      return (
+      return renderWithViewAs(
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -595,12 +638,12 @@ function App() {
         </div>
       )
     }
-    return <Gradebook onBack={() => setCurrentPage('home')} />
+    return renderWithViewAs(<Gradebook onBack={() => setCurrentPage('home')} />)
   }
 
   if (currentPage === 'ai-report') {
     if (!canAccessTracking) {
-      return (
+      return renderWithViewAs(
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -618,13 +661,13 @@ function App() {
         </div>
       )
     }
-    return <AiReport onBack={() => setCurrentPage('home')} />
+    return renderWithViewAs(<AiReport onBack={() => setCurrentPage('home')} />)
   }
 
   // 管理者介面
   if (currentPage === 'admin-users') {
     if (!isAdmin) {
-      return (
+      return renderWithViewAs(
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -642,13 +685,15 @@ function App() {
         </div>
       )
     }
-    return <AdminUsers onBack={() => setCurrentPage('home')} />
+    return renderWithViewAs(
+      <AdminUsers onBack={() => setCurrentPage('home')} />
+    )
   }
 
   // 訂單管理
   if (currentPage === 'admin-orders') {
     if (!isAdmin) {
-      return (
+      return renderWithViewAs(
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -666,13 +711,15 @@ function App() {
         </div>
       )
     }
-    return <AdminOrders onBack={() => setCurrentPage('home')} />
+    return renderWithViewAs(
+      <AdminOrders onBack={() => setCurrentPage('home')} />
+    )
   }
 
   // 使用情形儀表板
   if (currentPage === 'admin-analytics') {
     if (!isAdmin) {
-      return (
+      return renderWithViewAs(
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -690,12 +737,38 @@ function App() {
         </div>
       )
     }
-    return <AdminAnalytics onBack={() => setCurrentPage('home')} />
+    return renderWithViewAs(
+      <AdminAnalytics onBack={() => setCurrentPage('home')} />
+    )
+  }
+
+  // 標籤字典管理
+  if (currentPage === 'admin-tags') {
+    if (!isAdmin) {
+      return renderWithViewAs(
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              只有管理者可以進入此頁面。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return renderWithViewAs(<AdminTags onBack={() => setCurrentPage('home')} />)
   }
 
   // 補充墨水
   if (currentPage === 'ink-topup') {
-    return (
+    return renderWithViewAs(
       <>
         <InkTopUp
           onBack={() => setCurrentPage('home')}
@@ -708,7 +781,7 @@ function App() {
 
   // AI 批改：單一作業批改介面
   if (currentPage === 'grading' && selectedAssignmentId) {
-    return (
+    return renderWithViewAs(
       <GradingPage
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('grading-list')}
@@ -719,7 +792,7 @@ function App() {
 
   // 批次匯入（PDF／檔案）
   if (currentPage === 'assignment-import' && selectedAssignmentId) {
-    return (
+    return renderWithViewAs(
       <AssignmentImport
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('assignment-import-select')}
@@ -730,7 +803,7 @@ function App() {
   // 訂正管理：選擇作業
   if (currentPage === 'correction-select') {
     if (!canAccessTracking) {
-      return (
+      return renderWithViewAs(
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -748,7 +821,7 @@ function App() {
         </div>
       )
     }
-    return (
+    return renderWithViewAs(
       <CorrectionSelect
         onBack={() => setCurrentPage('home')}
         onSelectAssignment={(id) => {
@@ -762,7 +835,7 @@ function App() {
   // 訂正管理：看板
   if (currentPage === 'correction' && selectedAssignmentId) {
     if (!canAccessTracking) {
-      return (
+      return renderWithViewAs(
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -780,7 +853,7 @@ function App() {
         </div>
       )
     }
-    return (
+    return renderWithViewAs(
       <CorrectionManagement
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('correction-select')}
@@ -788,7 +861,7 @@ function App() {
     )
   }
 
-  return (
+  return renderWithViewAs(
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="w-full max-w-5xl bg-white rounded-2xl shadow-xl p-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-4">
@@ -874,6 +947,16 @@ function App() {
               >
                 <Shield className="w-4 h-4" />
                 管理者介面
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setCurrentPage('admin-tags')}
+                className="px-3 py-2 text-xs font-semibold rounded-lg border border-purple-200 text-purple-700 hover:border-purple-300 hover:text-purple-800 transition-colors inline-flex items-center gap-2"
+              >
+                <Tags className="w-4 h-4" />
+                標籤字典
               </button>
             )}
             <button

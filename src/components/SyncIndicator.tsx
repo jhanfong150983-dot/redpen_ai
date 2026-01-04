@@ -8,7 +8,9 @@ interface SyncIndicatorProps {
 
 export default function SyncIndicator({ autoSync = true }: SyncIndicatorProps) {
   const isOnline = useOnlineStatus()
-  const { isSyncing, lastSyncTime, pendingCount, error } = useSync({ autoSync })
+  const { isSyncing, lastSyncTime, pendingCount, error, readOnly } = useSync({
+    autoSync
+  })
 
   const formatLastSyncTime = (timestamp: number) => {
     const now = Date.now()
@@ -26,23 +28,24 @@ export default function SyncIndicator({ autoSync = true }: SyncIndicatorProps) {
     })
   }
 
-  let text = '已同步'
+  const prefix = readOnly ? '檢視模式（唯讀） · ' : ''
+  let text = `${prefix}已同步`
   let icon = <CheckCircle className="w-4 h-4 text-green-600" />
 
   if (!isOnline) {
-    text = '離線，待連線後同步'
+    text = `${prefix}離線，待連線後同步`
     icon = <CloudOff className="w-4 h-4 text-gray-400" />
   } else if (error) {
-    text = '同步失敗，等待下次變更'
+    text = `${prefix}同步失敗，等待下次變更`
     icon = <AlertCircle className="w-4 h-4 text-red-500" />
   } else if (isSyncing) {
-    text = '同步中...'
+    text = `${prefix}同步中...`
     icon = <RefreshCw className="w-4 h-4 text-blue-600 animate-spin" />
   } else if (pendingCount > 0) {
-    text = `待同步 ${pendingCount} 筆`
+    text = `${prefix}待同步 ${pendingCount} 筆`
     icon = <RefreshCw className="w-4 h-4 text-blue-600" />
   } else if (lastSyncTime) {
-    text = `已同步 · ${formatLastSyncTime(lastSyncTime)}`
+    text = `${prefix}已同步 · ${formatLastSyncTime(lastSyncTime)}`
     icon = <CheckCircle className="w-4 h-4 text-green-600" />
   }
 
