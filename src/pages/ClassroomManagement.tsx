@@ -135,8 +135,41 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       .map((item) => item.classroom.folder)
       .filter((f): f is string => !!f && !!f.trim())
     const allFolders = [...new Set([...folders, ...emptyFolders])]
+
+    // 根據排序選項排序資料夾
+    if (sortOption === 'name-asc') {
+      // A-Z 中文筆畫排序
+      const collator = new Intl.Collator('zh-Hans-CN', { sensitivity: 'base', numeric: true })
+      return allFolders.sort((a, b) => collator.compare(a, b))
+    } else if (sortOption === 'name-desc') {
+      // Z-A 中文筆畫排序
+      const collator = new Intl.Collator('zh-Hans-CN', { sensitivity: 'base', numeric: true })
+      return allFolders.sort((a, b) => collator.compare(b, a))
+    } else if (sortOption === 'time-desc' || sortOption === 'time-asc') {
+      // 時間排序：按資料夾中班級的時間排序
+      return allFolders.sort((a, b) => {
+        // 找出每個資料夾中的班級
+        const itemsA = items.filter(item => item.classroom.folder === a)
+        const itemsB = items.filter(item => item.classroom.folder === b)
+
+        // 如果資料夾為空，使用0作為時間
+        const timeA = itemsA.length > 0
+          ? (sortOption === 'time-desc'
+            ? Math.max(...itemsA.map(item => item.classroom.updatedAt ?? 0))
+            : Math.min(...itemsA.map(item => item.classroom.updatedAt ?? 0)))
+          : 0
+        const timeB = itemsB.length > 0
+          ? (sortOption === 'time-desc'
+            ? Math.max(...itemsB.map(item => item.classroom.updatedAt ?? 0))
+            : Math.min(...itemsB.map(item => item.classroom.updatedAt ?? 0)))
+          : 0
+
+        return sortOption === 'time-desc' ? timeB - timeA : timeA - timeB
+      })
+    }
+
     return allFolders.sort()
-  }, [items, emptyFolders])
+  }, [items, emptyFolders, sortOption])
 
   // 篩選邏輯
   const filteredItems = useMemo(() => {
@@ -677,26 +710,9 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   已建立的班級
                 </h2>
               </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={sortOption}
-                  onChange={(e) => {
-                    const newOption = e.target.value as SortOption
-                    setSortOption(newOption)
-                    setSortPreference('classroom', newOption)
-                  }}
-                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  aria-label="排序方式"
-                >
-                  <option value="time-desc">依建立時間（新→舊）</option>
-                  <option value="time-asc">依建立時間（舊→新）</option>
-                  <option value="name-asc">依名稱A-Z（國字筆畫）</option>
-                  <option value="name-desc">依名稱Z-A（國字筆畫）</option>
-                </select>
-                {isLoading && (
-                  <Loader className="w-4 h-4 text-gray-400 animate-spin" />
-                )}
-              </div>
+              {isLoading && (
+                <Loader className="w-4 h-4 text-gray-400 animate-spin" />
+              )}
             </div>
 
             {filteredItems.length === 0 && !isLoading && (
@@ -808,10 +824,27 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
 
           {/* 右側：資料夾列表 */}
           <div className="md:w-1/2 p-6">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <Folder className="w-4 h-4" />
-              資料夾
-            </h3>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <Folder className="w-4 h-4" />
+                資料夾
+              </h3>
+              <select
+                value={sortOption}
+                onChange={(e) => {
+                  const newOption = e.target.value as SortOption
+                  setSortOption(newOption)
+                  setSortPreference('classroom', newOption)
+                }}
+                className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                aria-label="排序方式"
+              >
+                <option value="time-desc">依建立時間（新→舊）</option>
+                <option value="time-asc">依建立時間（舊→新）</option>
+                <option value="name-asc">依名稱A-Z（國字筆畫）</option>
+                <option value="name-desc">依名稱Z-A（國字筆畫）</option>
+              </select>
+            </div>
             <div className="space-y-2">
               {/* 未分類 */}
               {items.some((item) => !item.classroom.folder) && (

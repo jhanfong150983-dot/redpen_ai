@@ -53,7 +53,7 @@ const chineseCollator = new Intl.Collator('zh-Hans-CN', {
 /**
  * 排序班级列表
  */
-export function sortClassrooms<T extends { name: string; createdAt?: number }>(
+export function sortClassrooms<T extends { name: string; updatedAt?: number }>(
   classrooms: T[],
   option: SortOption
 ): T[] {
@@ -61,18 +61,18 @@ export function sortClassrooms<T extends { name: string; createdAt?: number }>(
 
   switch (option) {
     case 'time-desc':
-      // 时间降序：新→旧（最新创建的在前）
+      // 时间降序：新→旧（最新更新的在前）
       return sorted.sort((a, b) => {
-        const timeA = a.createdAt ?? 0
-        const timeB = b.createdAt ?? 0
+        const timeA = a.updatedAt ?? 0
+        const timeB = b.updatedAt ?? 0
         return timeB - timeA
       })
 
     case 'time-asc':
-      // 时间升序：旧→新（最早创建的在前）
+      // 时间升序：旧→新（最早更新的在前）
       return sorted.sort((a, b) => {
-        const timeA = a.createdAt ?? 0
-        const timeB = b.createdAt ?? 0
+        const timeA = a.updatedAt ?? 0
+        const timeB = b.updatedAt ?? 0
         return timeA - timeB
       })
 
@@ -92,7 +92,7 @@ export function sortClassrooms<T extends { name: string; createdAt?: number }>(
 /**
  * 排序作业列表
  */
-export function sortAssignments<T extends { title: string; createdAt?: number }>(
+export function sortAssignments<T extends { title: string; updatedAt?: number }>(
   assignments: T[],
   option: SortOption
 ): T[] {
@@ -102,16 +102,16 @@ export function sortAssignments<T extends { title: string; createdAt?: number }>
     case 'time-desc':
       // 时间降序：新→旧
       return sorted.sort((a, b) => {
-        const timeA = a.createdAt ?? 0
-        const timeB = b.createdAt ?? 0
+        const timeA = a.updatedAt ?? 0
+        const timeB = b.updatedAt ?? 0
         return timeB - timeA
       })
 
     case 'time-asc':
       // 时间升序：旧→新
       return sorted.sort((a, b) => {
-        const timeA = a.createdAt ?? 0
-        const timeB = b.createdAt ?? 0
+        const timeA = a.updatedAt ?? 0
+        const timeB = b.updatedAt ?? 0
         return timeA - timeB
       })
 

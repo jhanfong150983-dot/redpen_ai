@@ -276,8 +276,41 @@ export default function AssignmentSetup({
       .map((a) => a.folder)
       .filter((f): f is string => !!f && !!f.trim())
     const allFolders = [...new Set([...folders, ...emptyFolders])]
+
+    // 根據排序選項排序資料夾
+    if (sortOption === 'name-asc') {
+      // A-Z 中文筆畫排序
+      const collator = new Intl.Collator('zh-Hans-CN', { sensitivity: 'base', numeric: true })
+      return allFolders.sort((a, b) => collator.compare(a, b))
+    } else if (sortOption === 'name-desc') {
+      // Z-A 中文筆畫排序
+      const collator = new Intl.Collator('zh-Hans-CN', { sensitivity: 'base', numeric: true })
+      return allFolders.sort((a, b) => collator.compare(b, a))
+    } else if (sortOption === 'time-desc' || sortOption === 'time-asc') {
+      // 時間排序：按資料夾中作業的時間排序
+      return allFolders.sort((a, b) => {
+        // 找出每個資料夾中的作業
+        const assignmentsA = assignments.filter(assignment => assignment.folder === a)
+        const assignmentsB = assignments.filter(assignment => assignment.folder === b)
+
+        // 如果資料夾為空，使用0作為時間
+        const timeA = assignmentsA.length > 0
+          ? (sortOption === 'time-desc'
+            ? Math.max(...assignmentsA.map(assignment => assignment.updatedAt ?? 0))
+            : Math.min(...assignmentsA.map(assignment => assignment.updatedAt ?? 0)))
+          : 0
+        const timeB = assignmentsB.length > 0
+          ? (sortOption === 'time-desc'
+            ? Math.max(...assignmentsB.map(assignment => assignment.updatedAt ?? 0))
+            : Math.min(...assignmentsB.map(assignment => assignment.updatedAt ?? 0)))
+          : 0
+
+        return sortOption === 'time-desc' ? timeB - timeA : timeA - timeB
+      })
+    }
+
     return allFolders.sort()
-  }, [assignments, emptyFolders])
+  }, [assignments, emptyFolders, sortOption])
 
   // 根據選擇的資料夾篩選作業
   const filteredAssignments = useMemo(() => {
@@ -1717,7 +1750,7 @@ export default function AssignmentSetup({
                     <Loader className="w-4 h-4 text-gray-400 animate-spin" />
                   )}
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-600">班級</label>
                   <select
                     value={selectedClassroomId}
@@ -1729,21 +1762,6 @@ export default function AssignmentSetup({
                         {c.name}
                       </option>
                     ))}
-                  </select>
-                  <select
-                    value={sortOption}
-                    onChange={(e) => {
-                      const newOption = e.target.value as SortOption
-                      setSortOption(newOption)
-                      setSortPreference('assignment', newOption)
-                    }}
-                    className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    aria-label="排序方式"
-                  >
-                    <option value="time-desc">依建立時間（新→舊）</option>
-                    <option value="time-asc">依建立時間（舊→新）</option>
-                    <option value="name-asc">依名稱A-Z（國字筆畫）</option>
-                    <option value="name-desc">依名稱Z-A（國字筆畫）</option>
                   </select>
                 </div>
               </div>
@@ -1867,10 +1885,27 @@ export default function AssignmentSetup({
             </div>
 
             <div className="md:w-1/2 p-6">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                <Folder className="w-4 h-4" />
-                資料夾
-              </h3>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <Folder className="w-4 h-4" />
+                  資料夾
+                </h3>
+                <select
+                  value={sortOption}
+                  onChange={(e) => {
+                    const newOption = e.target.value as SortOption
+                    setSortOption(newOption)
+                    setSortPreference('assignment', newOption)
+                  }}
+                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  aria-label="排序方式"
+                >
+                  <option value="time-desc">依建立時間（新→舊）</option>
+                  <option value="time-asc">依建立時間（舊→新）</option>
+                  <option value="name-asc">依名稱A-Z（國字筆畫）</option>
+                  <option value="name-desc">依名稱Z-A（國字筆畫）</option>
+                </select>
+              </div>
               <div className="space-y-2">
                 {/* 未分類 */}
                 {assignments.some((a) => !a.folder) && (
