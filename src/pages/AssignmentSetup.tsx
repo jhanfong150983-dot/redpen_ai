@@ -113,6 +113,11 @@ export default function AssignmentSetup({
   // 儲存已建立但尚未使用的空資料夾（從資料庫載入）
   const [emptyFolders, setEmptyFolders] = useState<string[]>([])
 
+  // 資料夾重命名
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
+  const [editingFolderName, setEditingFolderName] = useState('')
+  const [editingFolderError, setEditingFolderError] = useState('')
+
   const [answerKeyModalOpen, setAnswerKeyModalOpen] = useState(false)
   const [editingAnswerAssignment, setEditingAnswerAssignment] =
     useState<Assignment | null>(null)
@@ -1108,6 +1113,98 @@ export default function AssignmentSetup({
     }
   }
 
+  const handleCommitFolderEdit = async () => {
+    const oldName = editingFolderId
+    const newName = editingFolderName.trim()
+
+    // 驗證
+    if (!oldName) return
+    if (!newName) {
+      setEditingFolderError('資料夾名稱不能為空')
+      return
+    }
+    if (newName === oldName) {
+      // 名稱沒變，直接退出編輯模式
+      setEditingFolderId(null)
+      setEditingFolderName('')
+      setEditingFolderError('')
+      return
+    }
+
+    // 檢查名稱唯一性（需要綁定當前班級）
+    const check = await checkFolderNameUnique(newName, 'assignment', selectedClassroomId)
+    if (!check.isUnique) {
+      setEditingFolderError(`此資料夾名稱已被${check.usedBy}使用`)
+      return
+    }
+
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      // 1. 更新 folders 表中的記錄
+      const folderToUpdate = await db.folders
+        .filter((f) =>
+          f.type === 'assignment' &&
+          f.name === oldName &&
+          f.classroomId === selectedClassroomId
+        )
+        .first()
+
+      if (folderToUpdate) {
+        await db.folders.update(folderToUpdate.id, {
+          name: newName,
+          updatedAt: Date.now()
+        })
+      }
+
+      // 2. 更新所有使用此資料夾的作業
+      const assignmentsInFolder = assignments
+        .filter((a) => a.folder === oldName)
+        .map((a) => a.id)
+
+      for (const assignmentId of assignmentsInFolder) {
+        await db.assignments.update(assignmentId, {
+          folder: newName,
+          updatedAt: Date.now()
+        })
+      }
+
+      // 3. 觸發同步
+      requestSync()
+
+      // 4. 重新載入資料
+      const [data, folders] = await Promise.all([
+        db.assignments
+          .where('classroomId')
+          .equals(selectedClassroomId)
+          .toArray(),
+        db.folders
+          .where('[type+classroomId]')
+          .equals(['assignment', selectedClassroomId])
+          .toArray()
+      ])
+      setAssignments(data)
+      const emptyAssignmentFolders = folders.map(f => f.name)
+      setEmptyFolders(emptyAssignmentFolders)
+
+      // 5. 更新選中的資料夾（如果當前選中的是被重命名的資料夾）
+      if (selectedFolder === oldName) {
+        setSelectedFolder(newName)
+      }
+
+      // 6. 清除編輯狀態
+      setEditingFolderId(null)
+      setEditingFolderName('')
+      setEditingFolderError('')
+    } catch (error) {
+      console.error('重新命名資料夾失敗:', error)
+      setEditingFolderError(error instanceof Error ? error.message : '重新命名失敗')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const handleDeleteFolder = async (folderName: string) => {
     if (isSubmitting) return
     if (!selectedClassroomId) return
@@ -1950,14 +2047,59 @@ export default function AssignmentSetup({
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedFolder(folder)}
-                          className="flex-1 text-left flex items-center justify-between min-w-0"
-                        >
-                          <span className="font-medium truncate">{folder}</span>
-                          <span className="text-sm font-semibold ml-2">{count}</span>
-                        </button>
+                        {editingFolderId === folder ? (
+                          <div className="flex-1 flex flex-col gap-1">
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editingFolderName}
+                              onChange={(e) => {
+                                setEditingFolderName(e.target.value)
+                                setEditingFolderError('')
+                              }}
+                              onBlur={() => void handleCommitFolderEdit()}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  void handleCommitFolderEdit()
+                                } else if (e.key === 'Escape') {
+                                  setEditingFolderId(null)
+                                  setEditingFolderName('')
+                                  setEditingFolderError('')
+                                }
+                              }}
+                              placeholder="資料夾名稱"
+                              className="px-2 py-1 border border-green-300 rounded text-sm w-full focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                              disabled={isSubmitting}
+                            />
+                            {editingFolderError && (
+                              <p className="text-xs text-red-600">{editingFolderError}</p>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedFolder(folder)}
+                            className="flex-1 text-left flex items-center justify-between min-w-0"
+                          >
+                            <div className="flex items-center gap-1 min-w-0 flex-1">
+                              <span className="font-medium truncate">{folder}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setEditingFolderId(folder)
+                                  setEditingFolderName(folder)
+                                  setEditingFolderError('')
+                                }}
+                                className="p-1 text-gray-400 hover:text-green-600"
+                                title="重新命名"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <span className="text-sm font-semibold ml-2">{count}</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={(e) => {
