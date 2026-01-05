@@ -26,6 +26,26 @@ export function setInkSessionId(sessionId: string | null) {
   }
 }
 
+/**
+ * 從 API 取得最新的墨水餘額並派發事件更新 UI
+ */
+export async function refreshInkBalance(): Promise<number | null> {
+  try {
+    const response = await fetch('/api/auth/me', { credentials: 'include' })
+    if (!response.ok) return null
+    const data = await response.json()
+    const balance = data?.user?.inkBalance
+    if (typeof balance === 'number' && Number.isFinite(balance)) {
+      console.log('[ink-session] 從 API 刷新墨水餘額:', balance)
+      dispatchInkBalance(balance)
+      return balance
+    }
+  } catch (error) {
+    console.warn('[ink-session] 刷新墨水餘額失敗:', error)
+  }
+  return null
+}
+
 export async function startInkSession() {
   const response = await fetch('/api/ink/sessions?action=start', {
     method: 'POST',
@@ -60,13 +80,14 @@ export async function startInkSession() {
 
 export async function closeInkSession(sessionId?: string | null) {
   const id = sessionId || getInkSessionId()
-  if (!id) return
+  if (!id) return null
   let inkSummary: {
     chargedPoints?: number
     balanceBefore?: number | null
     balanceAfter?: number | null
     applied?: boolean
   } | null = null
+  let balanceDispatched = false
 
   try {
     const response = await fetch('/api/ink/sessions?action=close', {
@@ -85,13 +106,24 @@ export async function closeInkSession(sessionId?: string | null) {
       inkSummary = data?.ink ?? null
       const updatedBalance = Number(data?.ink?.balanceAfter)
       if (Number.isFinite(updatedBalance)) {
+        // 確保事件被派發
+        console.log('[ink-session] 派發墨水餘額更新:', updatedBalance)
         dispatchInkBalance(updatedBalance)
+        balanceDispatched = true
       }
+    } else {
+      console.warn('[ink-session] 關閉會話失敗:', data?.error || response.status)
     }
   } catch (error) {
     console.warn('Ink session close failed:', error)
   } finally {
     setInkSessionId(null)
+  }
+
+  // 如果沒有成功派發餘額更新，嘗試從 API 刷新
+  if (!balanceDispatched) {
+    console.log('[ink-session] 未收到 balanceAfter，嘗試從 API 刷新')
+    await refreshInkBalance()
   }
 
   return inkSummary

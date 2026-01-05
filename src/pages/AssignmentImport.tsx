@@ -571,7 +571,7 @@ export default function AssignmentImport({
                     min={1}
                     max={4}
                     value={pagesPerStudent}
-                    onChange={(v) => setPagesPerStudent(typeof v === 'number' ? v : 1)}
+                    onChange={(v) => setPagesPerStudent(typeof v === 'number' ? v : (v === '' ? ('' as unknown as number) : 1))}
                     className="w-full px-2 py-1 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   />
                 </div>
@@ -583,7 +583,7 @@ export default function AssignmentImport({
                     min={1}
                     max={200}
                     value={startSeat}
-                    onChange={(v) => setStartSeat(typeof v === 'number' ? v : 1)}
+                    onChange={(v) => setStartSeat(typeof v === 'number' ? v : (v === '' ? ('' as unknown as number) : 1))}
                     className="w-full px-2 py-1 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   />
                 </div>

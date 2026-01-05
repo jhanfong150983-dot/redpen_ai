@@ -27,7 +27,7 @@ export function NumericInput({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value
 
-    // 允許空字串
+    // 允許空字串（讓用戶可以清空後重新輸入）
     if (v === '') {
       onChange('')
       return
@@ -39,9 +39,8 @@ export function NumericInput({
       return // 不符合格式，不更新
     }
 
-    // 檢查範圍
+    // 檢查範圍（只檢查 max，min 在 blur 時處理）
     const num = Number(v)
-    if (min !== undefined && num < min) return
     if (max !== undefined && num > max) return
 
     onChange(allowDecimal ? v : num)

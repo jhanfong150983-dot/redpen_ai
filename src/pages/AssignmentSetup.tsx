@@ -2398,7 +2398,7 @@ export default function AssignmentSetup({
                         min={1}
                         max={100}
                         value={totalPages}
-                        onChange={(v) => setTotalPages(typeof v === 'number' ? v : 1)}
+                        onChange={(v) => setTotalPages(typeof v === 'number' ? v : (v === '' ? ('' as unknown as number) : 1))}
                         className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all"
                         disabled={isSubmitting}
                       />

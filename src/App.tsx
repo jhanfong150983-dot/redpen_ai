@@ -183,9 +183,11 @@ function App() {
   useEffect(() => {
     const handleInkBalance = (event: Event) => {
       const detail = (event as CustomEvent<InkBalanceDetail>).detail
+      console.log('[App] 收到墨水餘額事件:', detail)
       if (!detail || !Number.isFinite(detail.inkBalance)) return
       setAuth((prev) => {
         if (prev.status !== 'authenticated') return prev
+        console.log('[App] 更新墨水餘額:', prev.user.inkBalance, '->', detail.inkBalance)
         return {
           ...prev,
           user: {
