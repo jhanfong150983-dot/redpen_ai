@@ -142,18 +142,21 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
   useEffect(() => {
   const stepId = tutorial.flow?.steps?.[tutorial.currentStep]?.id
 
-    const modalStepIds = new Set([
-      'create-classroom-modal',
-      'classroom-name',
-      'classroom-student-count',
-      'classroom-import',
-      'classroom-submit'
-    ])
+  const modalStepIds = new Set([
+    'create-classroom-modal',
+    'classroom-name',
+    'classroom-student-count',
+    'classroom-import',
+    'classroom-submit'
+  ])
 
-    if (stepId && modalStepIds.has(stepId)) {
-      setIsCreateModalOpen(true)
-    }
-  }, [tutorial.currentStep, tutorial.flow])
+  const shouldOpenModal =
+    tutorial.isActive && !!stepId && modalStepIds.has(stepId)
+
+  setIsCreateModalOpen(shouldOpenModal)
+}, [tutorial.isActive, tutorial.currentStep, tutorial.flow])
+
+
 
 
 
