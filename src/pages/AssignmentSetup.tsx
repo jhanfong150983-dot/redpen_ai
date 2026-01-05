@@ -202,6 +202,31 @@ export default function AssignmentSetup({
     void loadClassrooms()
   }, [])
 
+  // ✅ 新增作業 modal：完全由 tutorial stepId 決定開/關（避免殘留、狂按下一步卡住）
+  useEffect(() => {
+    const stepId = tutorial.flow?.steps?.[tutorial.currentStep]?.id
+
+    const createAssignmentModalStepIds = new Set([
+      // 這些 id 你要跟 flow.steps 裡的 step.id 對上
+      'create-assignment-modal',
+      'assignment-classroom',
+      'assignment-title',
+      'assignment-domain',
+      'assignment-prior-weight',
+      'assignment-total-pages',
+      'assignment-upload-answerkey',
+      'assignment-ai-extract',
+      'assignment-preview-answerkey',
+      'assignment-submit'
+    ])
+
+    const shouldOpen =
+      tutorial.isActive && !!stepId && createAssignmentModalStepIds.has(stepId)
+
+    setIsCreateModalOpen(shouldOpen)
+  }, [tutorial.isActive, tutorial.currentStep, tutorial.flow])
+
+
   useEffect(() => {
     if (classrooms.length > 0 && !selectedClassroomId) {
       setSelectedClassroomId(classrooms[0].id)
@@ -1785,7 +1810,7 @@ export default function AssignmentSetup({
           </button>
         )}
 
-        <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
+        <div className="bg-white rounded-2xl shadow-xl p-6 mb-6" data-tutorial="assignment-page">
           <div className="flex items-center justify-between gap-3 mb-2">
             <div className="flex items-center gap-3">
               <div className="p-3 bg-green-100 rounded-xl">
@@ -2146,7 +2171,9 @@ export default function AssignmentSetup({
       </div>
 
       {isCreateModalOpen && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" 
+        data-tutorial="create-assignment-modal"
+        >
           <div className="bg-white rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <div>
@@ -2184,6 +2211,7 @@ export default function AssignmentSetup({
                   </label>
                   <select
                     id="classroom"
+                    data-tutorial="assignment-classroom"
                     value={selectedClassroomId}
                     onChange={(e) => setSelectedClassroomId(e.target.value)}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all bg-white"
@@ -2206,6 +2234,7 @@ export default function AssignmentSetup({
                   </label>
                   <input
                     id="assignmentTitle"
+                    data-tutorial="assignment-title"
                     type="text"
                     value={assignmentTitle}
                     onChange={(e) => setAssignmentTitle(e.target.value)}
@@ -2224,6 +2253,7 @@ export default function AssignmentSetup({
                   </label>
                   <select
                     id="assignmentDomain"
+                    data-tutorial="assignment-domain"
                     value={assignmentDomain}
                     onChange={(e) => setAssignmentDomain(e.target.value)}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all bg-white"
@@ -2238,7 +2268,7 @@ export default function AssignmentSetup({
                   </select>
                 </div>
 
-                <div>
+                <div data-tutorial="assignment-prior-weight">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     整份作業大部分題目屬性是？（可複選，必填）
                     <span className="text-red-500 ml-1">*</span>
@@ -2336,15 +2366,18 @@ export default function AssignmentSetup({
                     拍照或批次分割頁數
                   </label>
                   <div className="relative">
-                    <NumericInput
-                      id="totalPages"
-                      min={1}
-                      max={100}
-                      value={totalPages}
-                      onChange={(v) => setTotalPages(typeof v === 'number' ? v : 1)}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all"
-                      disabled={isSubmitting}
-                    />
+                    <div data-tutorial="assignment-total-pages">
+                      <NumericInput
+                        id="totalPages"
+                        data-tutorial="assignment-total-pages"
+                        min={1}
+                        max={100}
+                        value={totalPages}
+                        onChange={(v) => setTotalPages(typeof v === 'number' ? v : 1)}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition-all"
+                        disabled={isSubmitting}
+                      />
+                    </div>
                     <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
                       頁
                     </div>
@@ -2373,6 +2406,7 @@ export default function AssignmentSetup({
                   <input
                     key={answerKeyInputKey}
                     type="file"
+                    data-tutorial="assignment-upload-answerkey"
                     accept="image/*,application/pdf"
                     multiple
                     onChange={handleAnswerKeyFileChange}
@@ -2395,6 +2429,7 @@ export default function AssignmentSetup({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      data-tutorial="assignment-ai-extract"
                       onClick={handleExtractAnswerKey}
                       disabled={
                         answerKeyFile.length === 0 || isSubmitting || isExtractingAnswerKey
@@ -2431,6 +2466,7 @@ export default function AssignmentSetup({
                 </div>
 
                 {answerKey && (
+                  <div data-tutorial="assignment-preview-answerkey">
                   <div className="mt-2 border border-gray-200 rounded-xl p-4 bg-gray-50">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-semibold text-gray-800">
@@ -2744,6 +2780,7 @@ export default function AssignmentSetup({
                       })}
                     </div>
                   </div>
+                </div>
                 )}
               </div>
 
@@ -2761,6 +2798,7 @@ export default function AssignmentSetup({
                   </button>
                   <button
                     type="submit"
+                    data-tutorial="assignment-submit"
                     disabled={isSubmitting || getMissingFields.length > 0}
                     className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                   >
