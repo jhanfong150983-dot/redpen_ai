@@ -56,14 +56,14 @@ const classroomFlow: TutorialFlow = {
     {
       id: 'drag-drop',
       title: '拖曳分類',
-      content: '您可以直接拖曳左側的作業卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
+      content: '您可以直接拖曳左側的班級卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
       targetSelector: '.space-y-2',
       position: 'right',
       highlightElement: false,
       animation: {
         type: 'drag-drop',
-        fromSelector: '[data-tutorial-card="first-assignment-card"]',
-        toSelector: '[data-tutorial-folder="first-assignment-folder"]'
+        fromSelector: '[data-tutorial-card="first-classroom-card"]',
+        toSelector: '[data-tutorial-folder="first-folder"]'
       }
     },
     {
@@ -120,7 +120,7 @@ const assignmentFlow: TutorialFlow = {
       id: 'select-classroom',
       title: '選擇班級',
       content: '首先選擇要管理作業的班級。每個班級都有獨立的作業列表和資料夾。',
-      targetSelector: 'select[data-tutorial="select-classroom"]',
+      targetSelector: '[data-tutorial="select-classroom"]',
       position: 'bottom',
       highlightElement: true
     },
@@ -128,7 +128,7 @@ const assignmentFlow: TutorialFlow = {
       id: 'create-assignment',
       title: '新增作業',
       content: '點擊「新增作業」按鈕可以建立新作業。您需要上傳作業檔案，系統會自動辨識頁數和題目。',
-      targetSelector: 'select[data-tutorial="create-assignment"]',
+      targetSelector: '[data-tutorial="create-assignment"]',
       position: 'top',
       highlightElement: true
     },
@@ -149,8 +149,8 @@ const assignmentFlow: TutorialFlow = {
       highlightElement: false,
       animation: {
         type: 'drag-drop',
-        fromSelector: '[data-tutorial-card="first-classroom-card"]',
-        toSelector: '[data-tutorial-folder="first-folder"]'
+        fromSelector: '[data-tutorial-card="first-assignment-card"]',
+        toSelector: '[data-tutorial-folder="first-assignment-folder"]'
       }
     },
     {
@@ -158,6 +158,14 @@ const assignmentFlow: TutorialFlow = {
       title: '排序與分類',
       content: '使用排序選單可以調整作業和資料夾的順序。',
       targetSelector: 'select[aria-label="排序方式"]',
+      position: 'bottom',
+      highlightElement: true
+    },
+    {
+      id: 'edit-assignment',
+      title: '編輯作業',
+      content: '點擊作業標題旁的筆圖標可以修改作業名稱。',
+      targetSelector: '[title="修改標題"]',
       position: 'bottom',
       highlightElement: true
     },
@@ -175,14 +183,6 @@ const assignmentFlow: TutorialFlow = {
       content: '點擊複製圖標可以將作業複製到其他班級，節省重複建立的時間。',
       targetSelector: '[title="複製作業到其他班級"]',
       position: 'left',
-      highlightElement: true
-    },
-    {
-      id: 'edit-assignment',
-      title: '編輯作業',
-      content: '點擊作業標題旁的筆圖標可以修改作業名稱。',
-      targetSelector: '[title="修改標題"]',
-      position: 'bottom',
       highlightElement: true
     },
     {
