@@ -28,6 +28,7 @@ import AdminOrders from '@/pages/AdminOrders'
 import AdminAnalytics from '@/pages/AdminAnalytics'
 import AdminTags from '@/pages/AdminTags'
 import AiReport from '@/pages/AiReport'
+import LandingPage from '@/pages/LandingPage'
 import { SyncIndicator } from '@/components'
 import { checkWebPSupport } from '@/lib/webpSupport'
 import { INK_BALANCE_EVENT, type InkBalanceDetail } from '@/lib/ink-events'
@@ -526,35 +527,7 @@ function App() {
   }
 
   if (auth.status === 'unauthenticated') {
-    return renderWithViewAs(
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
-          <img
-            src="/logo.png"
-            alt="RedPen AI logo"
-            className="w-20 h-20 mx-auto object-contain"
-          />
-          <h1 className="text-2xl font-bold text-gray-900">RedPen AI</h1>
-          <p className="text-sm text-gray-600">
-            請先登入 Google 帳號才能使用完整功能。
-          </p>
-          {auth.error && (
-            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
-              {auth.error}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              window.location.href = '/api/auth/google'
-            }}
-            className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors"
-          >
-            使用 Google 登入
-          </button>
-        </div>
-      </div>
-    )
+    return <LandingPage />
   }
 
   // 班級管理
