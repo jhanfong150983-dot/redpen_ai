@@ -139,6 +139,28 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
     void loadData()
   }, [loadData])
 
+  useEffect(() => {
+  // 用 any 取 stepId，避免 UseTutorialReturn 沒 steps 的型別錯
+    const stepId =
+      (tutorial as any)?.currentStep?.id ??
+      (tutorial as any)?.currentStepId ??
+      (tutorial as any)?.stepId
+
+    const modalStepIds = new Set([
+      'create-classroom-modal',
+      'classroom-name',
+      'classroom-student-count',
+      'classroom-import',
+      'classroom-submit'
+    ])
+
+    if (stepId && modalStepIds.has(stepId)) {
+      setIsCreateModalOpen(true)
+    }
+  }, [(tutorial as any)?.currentStep, (tutorial as any)?.currentStepId])
+
+
+
   // 計算已使用的資料夾列表（包含空資料夾）
   const usedFolders = useMemo(() => {
     const folders = items
@@ -296,6 +318,12 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       setIsCreateModalOpen(false)
       await loadData()
       requestSync()
+      // ✅ 教學：建立成功後，跳到「建立資料夾」
+      // 先用 any 避開型別（因為 UseTutorialReturn 沒 steps/沒 goTo）
+      if (tutorial?.isActive) {
+        ;(tutorial as any).goTo?.('create-folder')
+        ;(tutorial as any).next?.()
+      }
     } catch (e) {
       console.error(e)
       setError(e instanceof Error ? e.message : '新增班級失敗')
@@ -1069,10 +1097,15 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       {/* 新增班級懸浮視窗 */}
       {isCreateModalOpen && (
         <div
+          data-tutorial="create-classroom-backdrop"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-          onClick={() => setIsCreateModalOpen(false)}
+          onClick={() => {
+            if (tutorial?.isActive) return
+            setIsCreateModalOpen(false)
+          }}
         >
           <div
+            data-tutorial="create-classroom-modal"
             className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-auto"
             onClick={(e) => e.stopPropagation()}
           >
@@ -1100,6 +1133,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   班級名稱
                 </label>
                 <input
+                  data-tutorial="classroom-name"
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
@@ -1116,6 +1150,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   </label>
                   <div className="relative">
                     <NumericInput
+                      data-tutorial="classroom-student-count"
                       min={1}
                       max={100}
                       value={newStudentCount}
@@ -1137,6 +1172,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                     匯入學生名單（可選）
                   </label>
                   <textarea
+                    data-tutorial="classroom-import"
                     rows={6}
                     value={importText}
                     onChange={(e) => setImportText(e.target.value)}
@@ -1152,6 +1188,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
 
               <div className="pt-2 flex justify-end gap-2">
                 <button
+                  data-tutorial="classroom-cancel"
                   type="button"
                   onClick={() => setIsCreateModalOpen(false)}
                   className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50"
@@ -1160,6 +1197,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   取消
                 </button>
                 <button
+                  data-tutorial="classroom-submit"
                   type="submit"
                   disabled={isCreating || !newName.trim()}
                   className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"

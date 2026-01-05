@@ -46,6 +46,46 @@ const classroomFlow: TutorialFlow = {
       highlightElement: true
     },
     {
+      id: 'create-classroom-modal',
+      title: '填寫班級資訊',
+      content: '這裡會跳出新增班級視窗，接著我們依序填寫。',
+      targetSelector: '[data-tutorial="create-classroom-modal"]',
+      position: 'center',
+      highlightElement: true
+    },
+    {
+      id: 'classroom-name',
+      title: '班級名稱',
+      content: '先輸入班級名稱，例如「七年甲班」。',
+      targetSelector: '[data-tutorial="classroom-name"]',
+      position: 'bottom',
+      highlightElement: true
+    },
+    {
+      id: 'classroom-student-count',
+      title: '學生人數（自動產生）',
+      content: '如果不匯入名單，就用這裡設定學生人數，系統會自動產生座號。',
+      targetSelector: '[data-tutorial="classroom-student-count"]',
+      position: 'bottom',
+      highlightElement: true
+    },
+    {
+      id: 'classroom-import',
+      title: '匯入學生名單（可選）',
+      content: '也可以從 Excel 貼上座號與姓名，系統會以匯入為主。',
+      targetSelector: '[data-tutorial="classroom-import"]',
+      position: 'top',
+      highlightElement: true
+    },
+    {
+      id: 'classroom-submit',
+      title: '建立班級',
+      content: '資料填好後，按「建立班級」完成新增。',
+      targetSelector: '[data-tutorial="classroom-submit"]',
+      position: 'top',
+      highlightElement: true
+    },
+    {
       id: 'create-folder',
       title: '建立資料夾',
       content: '點擊「新建資料夾」按鈕可以建立分類資料夾，例如「112學年度」、「七年級」等，幫助您組織管理班級。',
