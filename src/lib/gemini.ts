@@ -133,167 +133,127 @@ function normalizeParts(parts: GeminiRequestPart[]): GeminiPart[] {
 
 async function generateGeminiText(
   modelName: string,
-  parts: GeminiRequestPart[],
-  options?: { retries?: number; fallbackModels?: boolean }
+  parts: GeminiRequestPart[]
 ): Promise<string> {
-  const maxRetries = options?.retries ?? 2
-  const enableFallback = options?.fallbackModels ?? true
+  const inkSessionId = getInkSessionId()
+  const response = await fetch(geminiProxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      model: modelName,
+      contents: [{ role: 'user', parts: normalizeParts(parts) }],
+      ...(inkSessionId ? { inkSessionId } : {})
+    })
+  })
 
-  // 獲取當前模型在降級鏈中的位置
-  const currentModelIndex = MODEL_FALLBACK_CHAIN.indexOf(modelName as any)
-  const modelsToTry = enableFallback
-    ? MODEL_FALLBACK_CHAIN.slice(currentModelIndex >= 0 ? currentModelIndex : 0)
-    : [modelName]
-
-  let lastError: Error | null = null
-
-  // 遍歷所有可用的模型
-  for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
-    const tryModelName = modelsToTry[modelIndex]
-
-    // 對每個模型嘗試重試
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        if (modelIndex > 0 || attempt > 0) {
-          const waitTime = attempt * 3000 // 0秒、3秒、6秒
-          if (waitTime > 0) {
-            console.warn(`⏱️ 等待 ${waitTime/1000} 秒後重試...`)
-            await new Promise(r => setTimeout(r, waitTime))
-          }
-        }
-
-        if (modelIndex > 0) {
-          console.warn(`🔄 切換到備用模型：${tryModelName}（第 ${modelIndex + 1}/${modelsToTry.length} 個模型）`)
-        } else if (attempt > 0) {
-          console.warn(`🔄 重試 ${attempt}/${maxRetries}：使用模型 ${tryModelName}`)
-        }
-
-        const inkSessionId = getInkSessionId()
-        const response = await fetch(geminiProxyUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            model: tryModelName,
-            contents: [{ role: 'user', parts: normalizeParts(parts) }],
-            ...(inkSessionId ? { inkSessionId } : {})
-          })
-        })
-
-        let data: any = null
-        try {
-          data = await response.json()
-        } catch {
-          data = {}
-        }
-
-        if (!response.ok) {
-          // 特別處理 413 錯誤（檔案過大）- 不重試，直接拋出
-          if (response.status === 413) {
-            throw new Error('檔案總大小過大，超過 AI 處理限制。建議分批上傳檔案。')
-          }
-
-          // 504/503 錯誤：可以重試或降級
-          if (response.status === 504 || response.status === 503) {
-            const isLastModel = modelIndex === modelsToTry.length - 1
-            const isLastAttempt = attempt === maxRetries
-
-            if (isLastModel && isLastAttempt) {
-              // 已經是最後一個模型的最後一次嘗試
-              throw new Error(
-                `Gemini API 持續超時或過載 (${response.status})。\n` +
-                `已嘗試所有模型：${modelsToTry.join(', ')}\n` +
-                `建議：\n` +
-                `1. 減少圖片數量（一次上傳 1 張）\n` +
-                `2. 壓縮圖片後重試（< 500KB）\n` +
-                `3. 稍後再試（Google 伺服器可能過載）`
-              )
-            }
-
-            // 繼續重試或降級
-            const action = isLastAttempt ? '切換模型' : '重試'
-            console.warn(`⚠️ ${response.status} 錯誤，準備${action}...`)
-            lastError = new Error(`Gemini request failed (${response.status})`)
-            continue
-          }
-
-          // 其他錯誤
-          const message =
-            data?.error?.message ||
-            data?.error ||
-            `Gemini request failed (${response.status})`
-          throw new Error(message)
-        }
-
-        // 成功！更新墨水餘額
-        const updatedBalance = Number(data?.ink?.balanceAfter)
-        if (Number.isFinite(updatedBalance)) {
-          dispatchInkBalance(updatedBalance)
-        }
-
-        const text = (data?.candidates ?? [])
-          .flatMap((candidate: any) => candidate?.content?.parts ?? [])
-          .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
-          .join('')
-          .trim()
-
-        if (!text) {
-          throw new Error('Gemini response empty')
-        }
-
-        // 成功後，如果使用了備用模型，更新 currentModelName
-        if (modelIndex > 0) {
-          console.log(`✅ 成功使用備用模型 ${tryModelName}，已更新為預設模型`)
-          currentModelName = tryModelName
-        }
-
-        return text
-
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-
-        // 413 錯誤直接拋出，不重試
-        if (lastError.message.includes('檔案總大小過大')) {
-          throw lastError
-        }
-
-        // 記錄錯誤但繼續嘗試
-        const isLastModel = modelIndex === modelsToTry.length - 1
-        const isLastAttempt = attempt === maxRetries
-
-        if (!isLastModel || !isLastAttempt) {
-          console.warn(`❌ 嘗試失敗：${lastError.message}`)
-        }
-
-        // 網路錯誤也可以重試
-        if (error instanceof TypeError && lastError.message.includes('fetch')) {
-          continue
-        }
-
-        // 如果不是 504/503 錯誤，且不是最後一次嘗試，跳到下一個模型
-        if (!lastError.message.includes('504') && !lastError.message.includes('503')) {
-          if (!isLastModel) {
-            break // 跳到下一個模型
-          }
-        }
-      }
-    }
+  let data: any = null
+  try {
+    data = await response.json()
+  } catch {
+    data = {}
   }
 
-  // 所有嘗試都失敗了
-  throw lastError || new Error('Gemini 請求失敗，已達最大重試次數')
+  if (!response.ok) {
+    // 特別處理 413 錯誤（檔案過大）
+    if (response.status === 413) {
+      throw new Error('檔案總大小過大，超過 AI 處理限制。建議分批上傳檔案。')
+    }
+
+    // 特別處理 504 錯誤（Gateway Timeout）
+    if (response.status === 504) {
+      const errorDetails = {
+        status: 504,
+        model: modelName,
+        timestamp: new Date().toISOString(),
+        message: 'Gemini API 請求超時'
+      }
+      console.error('🚨 504 Gateway Timeout 錯誤詳情:', errorDetails)
+
+      throw new Error(
+        `⏱️ AI 解析超時 (504 Gateway Timeout)\n\n` +
+        `詳細資訊：\n` +
+        `• 使用模型：${modelName}\n` +
+        `• 錯誤時間：${new Date().toLocaleString('zh-TW')}\n` +
+        `• 可能原因：\n` +
+        `  - Google Gemini API 伺服器回應緩慢\n` +
+        `  - 圖片過大或內容過於複雜\n` +
+        `  - 網路連線不穩定\n\n` +
+        `建議解決方式：\n` +
+        `1. 稍等 1-2 分鐘後重試\n` +
+        `2. 一次只上傳 1 張圖片\n` +
+        `3. 壓縮圖片後再上傳（建議 < 500KB）\n` +
+        `4. 如果持續發生，請通知系統管理員\n\n` +
+        `[工程師參考] 錯誤代碼：GEMINI_TIMEOUT_504`
+      )
+    }
+
+    // 特別處理 503 錯誤（Service Unavailable）
+    if (response.status === 503) {
+      const errorDetails = {
+        status: 503,
+        model: modelName,
+        timestamp: new Date().toISOString(),
+        message: 'Gemini API 服務不可用'
+      }
+      console.error('🚨 503 Service Unavailable 錯誤詳情:', errorDetails)
+
+      throw new Error(
+        `⚠️ AI 服務暫時無法使用 (503 Service Unavailable)\n\n` +
+        `詳細資訊：\n` +
+        `• 使用模型：${modelName}\n` +
+        `• 錯誤時間：${new Date().toLocaleString('zh-TW')}\n` +
+        `• 可能原因：\n` +
+        `  - Google Gemini API 伺服器過載\n` +
+        `  - API 服務正在維護中\n` +
+        `  - 達到 API 使用限制\n\n` +
+        `建議解決方式：\n` +
+        `1. 請稍候 5-10 分鐘後重試\n` +
+        `2. 檢查 Google AI Studio 服務狀態\n` +
+        `3. 如果問題持續，請通知系統管理員\n\n` +
+        `[工程師參考] 錯誤代碼：GEMINI_UNAVAILABLE_503`
+      )
+    }
+
+    // 其他錯誤
+    const message =
+      data?.error?.message ||
+      data?.error ||
+      `Gemini request failed (${response.status})`
+
+    // 為其他錯誤也添加詳細資訊
+    if (response.status >= 400) {
+      console.error('🚨 Gemini API 錯誤:', {
+        status: response.status,
+        model: modelName,
+        timestamp: new Date().toISOString(),
+        error: message
+      })
+    }
+
+    throw new Error(message)
+  }
+
+  const updatedBalance = Number(data?.ink?.balanceAfter)
+  if (Number.isFinite(updatedBalance)) {
+    dispatchInkBalance(updatedBalance)
+  }
+
+  const text = (data?.candidates ?? [])
+    .flatMap((candidate: any) => candidate?.content?.parts ?? [])
+    .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('')
+    .trim()
+
+  if (!text) {
+    throw new Error('Gemini response empty')
+  }
+
+  return text
 }
 
-// 模型降級順序：優先使用最新模型，失敗時自動降級
-const MODEL_FALLBACK_CHAIN = [
-  'gemini-3-flash-preview',
-  'gemini-3-preview',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro'
-] as const
-
 // 預設使用的模型名稱
-let currentModelName: string = MODEL_FALLBACK_CHAIN[0]
+let currentModelName = 'gemini-3-flash-preview'
 
 export interface ExtractAnswerKeyOptions {
   domain?: string
