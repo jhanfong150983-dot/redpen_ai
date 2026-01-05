@@ -55,6 +55,8 @@ export default function AssignmentSetup({
   // 引导式教学
   const tutorial = useTutorial('assignment')
 
+  const createAssignmentModalScrollRef = useRef<HTMLDivElement | null>(null)
+
   const [classrooms, setClassrooms] = useState<Classroom[]>([])
   const [selectedClassroomId, setSelectedClassroomId] = useState('')
   const [assignments, setAssignments] = useState<Assignment[]>([])
@@ -201,6 +203,29 @@ export default function AssignmentSetup({
     }
     void loadClassrooms()
   }, [])
+
+  useEffect(() => {
+  if (!isCreateModalOpen) return
+  if (!tutorial.isActive) return
+
+  const step = tutorial.flow?.steps?.[tutorial.currentStep]
+  if (!step?.targetSelector) return
+
+  requestAnimationFrame(() => {
+    const container = createAssignmentModalScrollRef.current
+    const target = document.querySelector(step.targetSelector) as HTMLElement | null
+
+    if (!container || !target) return
+    if (!container.contains(target)) return
+
+    target.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    })
+  })
+}, [isCreateModalOpen, tutorial.isActive, tutorial.currentStep, tutorial.flow])
+
+
 
   // ✅ 新增作業 modal：完全由 tutorial stepId 決定開/關（避免殘留、狂按下一步卡住）
   useEffect(() => {
@@ -2174,7 +2199,7 @@ export default function AssignmentSetup({
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" 
         data-tutorial="create-assignment-modal"
         >
-          <div className="bg-white rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl">
+          <div ref={createAssignmentModalScrollRef} className="bg-white rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">新增作業</h2>

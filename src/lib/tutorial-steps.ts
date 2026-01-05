@@ -250,7 +250,7 @@ const assignmentFlow: TutorialFlow = {
       title: '使用 AI 解析',
       content: '點擊後會解析並合併標準答案，產生下方的「預覽答案」。',
       targetSelector: '[data-tutorial="assignment-ai-extract"]',
-      position: 'bottom',
+      position: 'top',
       highlightElement: true
     },
 
@@ -290,7 +290,7 @@ const assignmentFlow: TutorialFlow = {
       title: '拖曳分類',
       content: '拖曳左側作業卡片到右側資料夾中完成分類，也可以拖曳到「全部」取消分類。',
       targetSelector: '[data-tutorial-card="first-assignment-card"]',
-      position: 'right',
+      position: 'bottom',
       highlightElement: false,
       animation: {
         type: 'drag-drop',
