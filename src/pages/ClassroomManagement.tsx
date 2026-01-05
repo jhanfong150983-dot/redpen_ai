@@ -892,6 +892,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
               {/* 新增班級按鈕 */}
               <button
                 type="button"
+                data-tutorial="create-classroom"
                 onClick={() => {
                   setNewName('')
                   setNewStudentCount(30)

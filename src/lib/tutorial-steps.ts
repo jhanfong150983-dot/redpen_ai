@@ -35,8 +35,8 @@ const classroomFlow: TutorialFlow = {
     {
       id: 'create-classroom',
       title: '新增班級',
-      content: '點擊卡片列表最下方的「新增班級」按鈕，即可快速建立新班級。您可以輸入班級名稱、學生人數，也可以直接匯入學生名單。',
-      targetSelector: '[title="新增班級"]',
+      content: '點擊卡片列表最下方的「新增班級」按鈕，即可快速建立新班級。您可以輸入班級名稱、學生人數，和直接匯入學生名單。',
+      targetSelector: '[data-tutorial="create-classroom"]',
       position: 'top',
       highlightElement: true
     },

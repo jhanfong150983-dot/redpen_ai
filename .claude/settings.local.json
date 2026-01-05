@@ -18,7 +18,8 @@
       "Bash(node --trace-deprecation node_modules/vite/bin/vite.js build:*)",
       "Bash(npm outdated:*)",
       "Bash(npm update:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(rm:*)"
     ]
   }
 }

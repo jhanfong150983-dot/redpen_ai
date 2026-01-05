@@ -35,6 +35,14 @@ export function getSupabaseAdmin() {
     cachedClient = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
         persistSession: false
+      },
+      db: {
+        schema: 'public'
+      },
+      global: {
+        headers: {
+          'X-Client-Info': 'redpen-ai-server'
+        }
       }
     })
   }

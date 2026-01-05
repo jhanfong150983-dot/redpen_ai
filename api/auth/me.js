@@ -28,15 +28,39 @@ export default async function handler(req, res) {
           ? getSupabaseUserClient(accessToken)
           : null
       if (supabaseDb) {
-        const { data } = await supabaseDb
+        const { data, error } = await supabaseDb
           .from('profiles')
           .select('name, avatar_url, role, permission_tier, ink_balance')
           .eq('id', user.id)
           .maybeSingle()
+
+        if (error) {
+          console.error('❌ Profile query failed:', {
+            error: error.message,
+            code: error.code,
+            hint: error.hint,
+            details: error.details,
+            userId: user.id,
+            useAdmin,
+            hasAccessToken: !!accessToken
+          })
+        }
+
         profile = data || null
-        profileLoaded = true
+        profileLoaded = !!data
+      } else {
+        console.warn('⚠️ No Supabase client available', {
+          useAdmin,
+          hasAccessToken: !!accessToken,
+          userId: user.id
+        })
       }
-    } catch {
+    } catch (error) {
+      console.error('❌ Profile query exception:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        userId: user.id
+      })
       profile = null
       profileLoaded = false
     }
