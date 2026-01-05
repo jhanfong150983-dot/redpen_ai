@@ -120,7 +120,7 @@ const assignmentFlow: TutorialFlow = {
       id: 'select-classroom',
       title: '選擇班級',
       content: '首先選擇要管理作業的班級。每個班級都有獨立的作業列表和資料夾。',
-      targetSelector: 'select[aria-label="選擇班級"]',
+      targetSelector: 'select[data-tutorial="select-classroom"]',
       position: 'bottom',
       highlightElement: true
     },
@@ -128,22 +128,43 @@ const assignmentFlow: TutorialFlow = {
       id: 'create-assignment',
       title: '新增作業',
       content: '點擊「新增作業」按鈕可以建立新作業。您需要上傳作業檔案，系統會自動辨識頁數和題目。',
-      targetSelector: '[title="新增作業"]',
+      targetSelector: 'select[data-tutorial="create-assignment"]',
       position: 'top',
       highlightElement: true
     },
     {
+      id: 'create-folder',
+      title: '建立作業資料夾',
+      content: '點擊「新建資料夾」按鈕可以建立分類資料夾，例如：將作業分類為「段考」、「小考」、「作業」等。',
+      targetSelector: '[data-tutorial="create-folder"]',
+      position: 'bottom',
+      highlightElement: true
+    },
+    {
+      id: 'drag-drop',
+      title: '拖曳分類',
+      content: '您可以直接拖曳左側的班級卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
+      targetSelector: '.space-y-2',
+      position: 'right',
+      highlightElement: false,
+      animation: {
+        type: 'drag-drop',
+        fromSelector: '[data-tutorial-card="first-classroom-card"]',
+        toSelector: '[data-tutorial-folder="first-folder"]'
+      }
+    },
+    {
       id: 'sort-and-folder',
       title: '排序與分類',
-      content: '使用排序選單可以調整作業和資料夾的順序。建立資料夾可以將作業分類為「段考」、「小考」、「作業」等。',
+      content: '使用排序選單可以調整作業和資料夾的順序。',
       targetSelector: 'select[aria-label="排序方式"]',
       position: 'bottom',
       highlightElement: true
     },
     {
       id: 'answer-key',
-      title: '設定標準答案',
-      content: '點擊作業卡片上的書本圖標可以設定標準答案。上傳答案卷照片後，AI 會自動辨識並建立評分標準。',
+      title: '編輯作業內容與標準答案',
+      content: '點擊後可以再次編輯作業內容與標準答案，方便您隨時調整作業設定。',
       targetSelector: '[title="編輯標準答案"]',
       position: 'left',
       highlightElement: true

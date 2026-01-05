@@ -1854,6 +1854,7 @@ export default function AssignmentSetup({
                   <label className="text-xs text-gray-600">班級</label>
                   <select
                     value={selectedClassroomId}
+                    data-tutorial="create-assignment"
                     onChange={(e) => setSelectedClassroomId(e.target.value)}
                     className="px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                   >
@@ -2123,6 +2124,7 @@ export default function AssignmentSetup({
                 {/* 新建資料夾按鈕 */}
                 <button
                   type="button"
+                  data-tutorial="create-folder"
                   onClick={() => setIsCreateFolderModalOpen(true)}
                   className="w-full px-4 py-3 rounded-xl text-left border-2 border-dashed border-gray-300 text-gray-600 hover:border-green-400 hover:text-green-600 hover:bg-green-50 transition-all flex items-center justify-center gap-2"
                 >

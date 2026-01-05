@@ -636,6 +636,7 @@ export default function AssignmentSetup({ onBack }: AssignmentSetupProps) {
             </div>
             <button
               type="button"
+              data-tutorial="create-assignment"
               onClick={() => {
                 resetForm()
                 setIsCreateModalOpen(true)
