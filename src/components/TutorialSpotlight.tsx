@@ -49,24 +49,18 @@ export function TutorialSpotlight({ targetElement, highlightElement = true }: Tu
 
   // 使用 box-shadow 实现镂空效果
   return (
-    <>
-      {/* 全屏遮罩层 */}
-      <div className="fixed inset-0 z-[9998] bg-black/60 pointer-events-none" />
-
-      {/* 镂空高亮区域 */}
-      <div
-        className="fixed z-[9999] pointer-events-none"
-        style={{
-          top: rect.top - 4,
-          left: rect.left - 4,
-          width: rect.width + 8,
-          height: rect.height + 8,
-          boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0)',
-          borderRadius: '12px',
-          border: '2px solid rgb(59, 130, 246)',
-          transition: 'all 0.3s ease'
-        }}
-      />
-    </>
+    <div
+      className="fixed z-[9999] pointer-events-none"
+      style={{
+        top: rect.top - 4,
+        left: rect.left - 4,
+        width: rect.width + 8,
+        height: rect.height + 8,
+        boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.6)',
+        borderRadius: '12px',
+        border: '2px solid rgb(59, 130, 246)',
+        transition: 'all 0.3s ease'
+      }}
+    />
   )
 }
