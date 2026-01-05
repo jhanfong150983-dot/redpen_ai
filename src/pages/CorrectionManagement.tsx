@@ -1023,13 +1023,13 @@ export default function CorrectionManagement({
                   onDrop={(e) => handleDropToGroup(e, 0)}
                 >
                   {cards
-                    .filter(c => (tempGroupConfig[c.submissionId] || 0) === 0)
+                    .filter(c => (tempGroupConfig[c.studentId] || 0) === 0)
                     .sort((a, b) => (a.seatNumber || 999) - (b.seatNumber || 999))
                     .map(card => (
                       <div
-                        key={card.submissionId}
+                        key={card.studentId}
                         draggable
-                        onDragStart={(e) => handleDragStart(e, card.submissionId)}
+                        onDragStart={(e) => handleDragStart(e, card.studentId)}
                         onDragEnd={handleDragEnd}
                         className="px-3 py-1.5 bg-white rounded-lg border border-gray-200 shadow-sm cursor-grab hover:shadow-md transition-shadow select-none flex items-center gap-2"
                       >
@@ -1042,7 +1042,7 @@ export default function CorrectionManagement({
                         </span>
                       </div>
                     ))}
-                  {cards.filter(c => (tempGroupConfig[c.submissionId] || 0) === 0).length === 0 && (
+                  {cards.filter(c => (tempGroupConfig[c.studentId] || 0) === 0).length === 0 && (
                     <div className="w-full text-center text-sm text-gray-400 py-2">
                       全部學生已分組
                     </div>
@@ -1053,7 +1053,7 @@ export default function CorrectionManagement({
               {/* 各組區域 */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {Array.from({ length: tempGroupCount }, (_, i) => i + 1).map(groupNum => {
-                  const groupStudents = cards.filter(c => tempGroupConfig[c.submissionId] === groupNum)
+                  const groupStudents = cards.filter(c => tempGroupConfig[c.studentId] === groupNum)
                   return (
                     <div
                       key={groupNum}
@@ -1072,9 +1072,9 @@ export default function CorrectionManagement({
                           .sort((a, b) => (a.seatNumber || 999) - (b.seatNumber || 999))
                           .map(card => (
                             <div
-                              key={card.submissionId}
+                              key={card.studentId}
                               draggable
-                              onDragStart={(e) => handleDragStart(e, card.submissionId)}
+                              onDragStart={(e) => handleDragStart(e, card.studentId)}
                               onDragEnd={handleDragEnd}
                               className="px-2 py-1 bg-blue-50 rounded border border-blue-200 cursor-grab hover:bg-blue-100 transition-colors select-none text-sm"
                             >
