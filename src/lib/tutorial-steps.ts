@@ -41,19 +41,11 @@ const classroomFlow: TutorialFlow = {
       highlightElement: true
     },
     {
-      id: 'sort-options',
-      title: '排序功能',
-      content: '使用右上角的排序選單，可以依建立時間或名稱筆畫順序排列班級和資料夾，方便您快速找到需要的班級。',
-      targetSelector: 'select[aria-label="排序方式"]',
-      position: 'bottom',
-      highlightElement: true
-    },
-    {
       id: 'create-folder',
       title: '建立資料夾',
       content: '點擊「新建資料夾」按鈕可以建立分類資料夾，例如「112學年度」、「七年級」等，幫助您組織管理班級。',
-      targetSelector: '[title="新建資料夾"]',
-      position: 'left',
+      targetSelector: '[data-tutorial="create-folder"]',
+      position: 'bottom',
       highlightElement: true
     },
     {
@@ -65,10 +57,26 @@ const classroomFlow: TutorialFlow = {
       highlightElement: false
     },
     {
+      id: 'sort-options',
+      title: '排序功能',
+      content: '使用右上角的排序選單，可以依建立時間或名稱筆畫順序排列班級和資料夾，方便您快速找到需要的班級。',
+      targetSelector: 'select[aria-label="排序方式"]',
+      position: 'bottom',
+      highlightElement: true
+    },
+    {
       id: 'edit-classroom',
       title: '編輯班級',
-      content: '點擊班級名稱旁的筆圖標可以修改班級名稱，點擊人頭圖標可以編輯學生名單。所有修改都會自動同步到雲端。',
+      content: '點擊班級名稱旁的筆圖標可以修改班級名稱。所有修改都會自動同步到雲端。',
       targetSelector: '[title="更改名稱"]',
+      position: 'bottom',
+      highlightElement: true
+    },
+    {
+      id: 'edit-students',
+      title: '編輯學生名單',
+      content: '點擊人頭圖標可以編輯學生名單。所有修改都會自動同步到雲端。',
+      targetSelector: '[title="編輯學生名單"]',
       position: 'bottom',
       highlightElement: true
     },

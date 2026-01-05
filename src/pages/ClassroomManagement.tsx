@@ -1047,6 +1047,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
               {/* 新建資料夾按鈕 */}
               <button
                 type="button"
+                data-tutorial="create-folder"
                 onClick={() => setIsCreateFolderModalOpen(true)}
                 className="w-full px-4 py-3 rounded-xl text-left border-2 border-dashed border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all flex items-center justify-center gap-2"
               >
