@@ -826,7 +826,8 @@ export default function CorrectionManagement({
         )}
 
         <div className="bg-white rounded-2xl shadow-xl p-6 mb-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+          {/* 標題區 */}
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">訂正管理 · 儀表板</h1>
               <p className="text-sm text-gray-600">
@@ -836,40 +837,15 @@ export default function CorrectionManagement({
                 需訂正學生：{activeCards.length} 人
               </p>
             </div>
+            {/* 匯出按鈕 */}
             <div className="flex flex-wrap gap-2 print-hidden">
-              {/* 排序下拉選單 */}
-              <div className="relative">
-                <select
-                  value={sortOption}
-                  onChange={(e) => handleSortChange(e.target.value as CorrectionSortOption)}
-                  className="appearance-none inline-flex items-center gap-1 pl-8 pr-8 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-100 border border-gray-200 text-sm cursor-pointer"
-                >
-                  <option value="seat-asc">座號 ↑</option>
-                  <option value="seat-desc">座號 ↓</option>
-                  <option value="mistakes-desc">錯題多→少</option>
-                  <option value="mistakes-asc">錯題少→多</option>
-                  <option value="group">按小組</option>
-                </select>
-                <SortAsc className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
-              </div>
-              {/* 編輯小組按鈕 */}
-              {sortOption === 'group' && (
-                <button
-                  type="button"
-                  onClick={openEditGroupModal}
-                  className="inline-flex items-center gap-1 px-3 py-2 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 border border-purple-200 text-sm"
-                >
-                  <Users className="w-4 h-4" />
-                  編輯小組
-                </button>
-              )}
               <button
                 type="button"
                 onClick={handleExportPdf}
                 className="inline-flex items-center gap-1 px-3 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-100 border border-gray-200 text-sm"
               >
                 <Download className="w-4 h-4" />
-                匯出PDF(卡片)
+                匯出PDF
               </button>
               <button
                 type="button"
@@ -877,29 +853,60 @@ export default function CorrectionManagement({
                 className="inline-flex items-center gap-1 px-3 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-100 border border-gray-200 text-sm"
               >
                 <Download className="w-4 h-4" />
-                匯出Excel(分頁)
-              </button>
-              <button
-                type="button"
-                onClick={() => setCompactMode((v) => !v)}
-                className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border text-sm bg-white text-gray-700 hover:bg-gray-100 border-gray-200 transition-colors"
-              >
-                <Columns className="w-4 h-4" />
-                {compactMode ? '切換寬鬆視圖' : '切換緊湊視圖'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowCompleted((v) => !v)}
-                className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg border text-sm transition-colors ${
-                  showCompleted
-                    ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100'
-                }`}
-              >
-                <CheckCircle className="w-4 h-4" />
-                {showCompleted ? '隱藏已完成' : '顯示已完成'}
+                匯出Excel
               </button>
             </div>
+          </div>
+
+          {/* 排序與顯示控制 */}
+          <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100 print-hidden">
+            {/* 排序下拉選單 */}
+            <div className="relative">
+              <select
+                value={sortOption}
+                onChange={(e) => handleSortChange(e.target.value as CorrectionSortOption)}
+                className="appearance-none inline-flex items-center gap-1 pl-8 pr-8 py-1.5 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 border border-gray-200 text-sm cursor-pointer"
+              >
+                <option value="seat-asc">座號 ↑</option>
+                <option value="seat-desc">座號 ↓</option>
+                <option value="mistakes-desc">錯題多→少</option>
+                <option value="mistakes-asc">錯題少→多</option>
+                <option value="group">按小組</option>
+              </select>
+              <SortAsc className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+            </div>
+            {/* 編輯小組按鈕 */}
+            {sortOption === 'group' && (
+              <button
+                type="button"
+                onClick={openEditGroupModal}
+                className="inline-flex items-center gap-1 px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 border border-purple-200 text-sm"
+              >
+                <Users className="w-4 h-4" />
+                編輯小組
+              </button>
+            )}
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={() => setCompactMode((v) => !v)}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-sm bg-white text-gray-700 hover:bg-gray-100 border-gray-200 transition-colors"
+            >
+              <Columns className="w-4 h-4" />
+              {compactMode ? '寬鬆視圖' : '緊湊視圖'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCompleted((v) => !v)}
+              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                showCompleted
+                  ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100'
+              }`}
+            >
+              <CheckCircle className="w-4 h-4" />
+              {showCompleted ? '隱藏已完成' : '顯示已完成'}
+            </button>
           </div>
         </div>
 

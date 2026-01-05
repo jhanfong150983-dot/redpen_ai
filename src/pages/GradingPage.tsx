@@ -1184,6 +1184,18 @@ export default function GradingPage({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      {/* AI 使用計算中 Overlay */}
+      {isClosingSession && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl p-8 flex flex-col items-center gap-4">
+            <Loader className="w-10 h-10 text-blue-500 animate-spin" />
+            <div className="text-center">
+              <p className="text-lg font-semibold text-gray-800">AI 使用計算中...</p>
+              <p className="text-sm text-gray-500 mt-1">正在結算本次批改費用，請稍候</p>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="max-w-7xl mx-auto pt-8">
         {onBack && (
           <button
