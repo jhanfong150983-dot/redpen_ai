@@ -1854,7 +1854,7 @@ export default function AssignmentSetup({
                   <label className="text-xs text-gray-600">班級</label>
                   <select
                     value={selectedClassroomId}
-                    data-tutorial="create-assignment"
+                    data-tutorial="select-classroom"
                     onChange={(e) => setSelectedClassroomId(e.target.value)}
                     className="px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                   >
@@ -1876,9 +1876,10 @@ export default function AssignmentSetup({
               )}
 
               <div className="space-y-2">
-                {filteredAssignments.map((a) => (
+                {filteredAssignments.map((a, index) => (
                   <div
                     key={a.id}
+                    data-tutorial-card={index === 0 ? 'first-assignment-card' : undefined}
                     draggable={editingId !== a.id}
                     onDragStart={() => handleDragStart(a.id)}
                     onDragEnd={handleDragEnd}
@@ -1970,6 +1971,7 @@ export default function AssignmentSetup({
                 {/* 新增作業按鈕 */}
                 <button
                   type="button"
+                  data-tutorial="create-assignment"
                   onClick={() => {
                     if (!canCreateAssignment) {
                       handleRequireInkTopUp()
@@ -2034,11 +2036,12 @@ export default function AssignmentSetup({
                 )}
 
                 {/* 各資料夾 */}
-                {usedFolders.map((folder) => {
+                {usedFolders.map((folder, index) => {
                   const count = assignments.filter((a) => a.folder === folder).length
                   return (
                     <div
                       key={folder}
+                      data-tutorial-folder={index === 0 ? 'first-assignment-folder' : undefined}
                       onDragOver={(e) => handleDragOver(e, folder)}
                       onDragLeave={handleDragLeave}
                       onDrop={(e) => handleDrop(e, folder)}

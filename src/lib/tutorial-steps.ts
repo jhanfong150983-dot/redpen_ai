@@ -56,14 +56,14 @@ const classroomFlow: TutorialFlow = {
     {
       id: 'drag-drop',
       title: '拖曳分類',
-      content: '您可以直接拖曳左側的班級卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
+      content: '您可以直接拖曳左側的作業卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
       targetSelector: '.space-y-2',
       position: 'right',
       highlightElement: false,
       animation: {
         type: 'drag-drop',
-        fromSelector: '[data-tutorial-card="first-classroom-card"]',
-        toSelector: '[data-tutorial-folder="first-folder"]'
+        fromSelector: '[data-tutorial-card="first-assignment-card"]',
+        toSelector: '[data-tutorial-folder="first-assignment-folder"]'
       }
     },
     {
@@ -143,7 +143,7 @@ const assignmentFlow: TutorialFlow = {
     {
       id: 'drag-drop',
       title: '拖曳分類',
-      content: '您可以直接拖曳左側的班級卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
+      content: '您可以直接拖曳左側的作業卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
       targetSelector: '.space-y-2',
       position: 'right',
       highlightElement: false,
@@ -180,8 +180,16 @@ const assignmentFlow: TutorialFlow = {
     {
       id: 'edit-assignment',
       title: '編輯作業',
-      content: '點擊作業標題旁的筆圖標可以修改作業名稱。點擊垃圾桶圖標可以刪除作業（注意：刪除後無法恢復）。',
+      content: '點擊作業標題旁的筆圖標可以修改作業名稱。',
       targetSelector: '[title="修改標題"]',
+      position: 'bottom',
+      highlightElement: true
+    },
+    {
+      id: 'delete-assignment',
+      title: '刪除作業',
+      content: '點擊垃圾桶圖標可以刪除作業（注意：刪除後無法恢復）。',
+      targetSelector: '[title="刪除作業"]',
       position: 'bottom',
       highlightElement: true
     },
