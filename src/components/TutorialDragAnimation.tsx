@@ -23,16 +23,24 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
       if (fromElement && toElement) {
         setFromRect(fromElement.getBoundingClientRect())
         setToRect(toElement.getBoundingClientRect())
+      } else {
+        console.warn(
+          '[Tutorial] 動畫元素未找到',
+          { fromSelector, from: !!fromElement },
+          { toSelector, to: !!toElement }
+        )
       }
     }
 
-    updatePositions()
+    // 稍微延遲以確保 DOM 已完全渲染
+    const timer = setTimeout(updatePositions, 100)
 
     // 监听窗口调整
     window.addEventListener('resize', updatePositions)
     window.addEventListener('scroll', updatePositions, true)
 
     return () => {
+      clearTimeout(timer)
       window.removeEventListener('resize', updatePositions)
       window.removeEventListener('scroll', updatePositions, true)
     }
@@ -49,10 +57,11 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
   const endY = toRect.top + toRect.height / 2
 
   return (
-    <div className="fixed inset-0 z-[10000] pointer-events-none">
+    <div className="fixed inset-0 z-[9999] pointer-events-none" style={{ zIndex: 9999 }}>
       {/* 幽灵卡片 - 从起始位置移动到目标位置 */}
       <motion.div
         className="absolute w-32 h-20 bg-blue-500/30 border-2 border-blue-500 rounded-lg shadow-lg"
+        style={{ zIndex: 9999 }}
         initial={{
           x: startX - 64, // 64 = width/2
           y: startY - 40, // 40 = height/2
@@ -75,6 +84,7 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
       {/* 手形游标 */}
       <motion.div
         className="absolute text-4xl"
+        style={{ zIndex: 9998 }}
         initial={{
           x: startX - 12,
           y: startY - 12,
@@ -102,7 +112,8 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
         className="absolute w-12 h-12 border-2 border-blue-400 rounded-full"
         style={{
           left: startX - 24,
-          top: startY - 24
+          top: startY - 24,
+          zIndex: 9997
         }}
         animate={{
           scale: [1, 1.2, 1],
@@ -120,7 +131,8 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
         className="absolute w-12 h-12 border-2 border-green-400 rounded-full"
         style={{
           left: endX - 24,
-          top: endY - 24
+          top: endY - 24,
+          zIndex: 9997
         }}
         animate={{
           scale: [1, 1.2, 1],
@@ -137,16 +149,30 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
       {/* 虚线路径 */}
       <svg
         className="absolute inset-0 w-full h-full"
-        style={{ pointerEvents: 'none' }}
+        style={{ pointerEvents: 'none', zIndex: 9996 }}
+        viewBox={`0 0 ${window.innerWidth} ${window.innerHeight}`}
       >
+        <defs>
+          <marker
+            id="arrowhead"
+            markerWidth="10"
+            markerHeight="10"
+            refX="9"
+            refY="3"
+            orient="auto"
+          >
+            <polygon points="0 0, 10 3, 0 6" fill="rgba(59, 130, 246, 0.6)" />
+          </marker>
+        </defs>
         <motion.path
           d={`M ${startX} ${startY} Q ${(startX + endX) / 2} ${(startY + endY) / 2 - 50} ${endX} ${endY}`}
           stroke="rgba(59, 130, 246, 0.4)"
           strokeWidth="2"
           fill="none"
           strokeDasharray="5,5"
-          initial={{ pathLength: 0 }}
-          animate={{ pathLength: 1 }}
+          markerEnd="url(#arrowhead)"
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 1 }}
           transition={{
             duration: 2.5,
             repeat: Infinity,
@@ -155,6 +181,8 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
           }}
         />
       </svg>
+    </div>
+  )
     </div>
   )
 }
