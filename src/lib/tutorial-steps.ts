@@ -144,7 +144,7 @@ const assignmentFlow: TutorialFlow = {
       id: 'drag-drop',
       title: '拖曳分類',
       content: '您可以直接拖曳左側的作業卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
-      targetSelector: '.space-y-2',
+      targetSelector: '[data-tutorial-card="first-assignment-card"]',
       position: 'right',
       highlightElement: false,
       animation: {
