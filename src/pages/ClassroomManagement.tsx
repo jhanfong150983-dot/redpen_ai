@@ -806,9 +806,10 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
             )}
 
             <div className="space-y-2">
-              {filteredItems.map((item) => (
+              {filteredItems.map((item, index) => (
                 <div
                   key={item.classroom.id}
+                  data-tutorial-card={index === 0 ? 'first-classroom-card' : undefined}
                   draggable={editingId !== item.classroom.id}
                   onDragStart={() => handleDragStart(item.classroom.id)}
                   onDragEnd={handleDragEnd}
@@ -957,11 +958,12 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
               )}
 
               {/* 各資料夾 */}
-              {usedFolders.map((folder) => {
+              {usedFolders.map((folder, index) => {
                 const count = items.filter((item) => item.classroom.folder === folder).length
                 return (
                   <div
                     key={folder}
+                    data-tutorial-folder={index === 0 ? 'first-folder' : undefined}
                     onDragOver={(e) => handleDragOver(e, folder)}
                     onDragLeave={handleDragLeave}
                     onDrop={(e) => handleDrop(e, folder)}

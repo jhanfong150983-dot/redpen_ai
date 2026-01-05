@@ -9,6 +9,11 @@ export interface TutorialStep {
   targetSelector: string // CSS 选择器定位目标元素
   position: 'top' | 'bottom' | 'left' | 'right' | 'center'
   highlightElement?: boolean // 是否高亮显示目标元素
+  animation?: {
+    type: 'drag-drop' // 动画类型
+    fromSelector: string // 起始元素选择器
+    toSelector: string // 目标元素选择器
+  }
 }
 
 export interface TutorialFlow {
@@ -54,7 +59,12 @@ const classroomFlow: TutorialFlow = {
       content: '您可以直接拖曳左側的班級卡片到右側的資料夾中，輕鬆完成分類。也可以拖曳到「全部」來取消分類。',
       targetSelector: '.space-y-2',
       position: 'right',
-      highlightElement: false
+      highlightElement: false,
+      animation: {
+        type: 'drag-drop',
+        fromSelector: '[data-tutorial-card="first-classroom-card"]',
+        toSelector: '[data-tutorial-folder="first-folder"]'
+      }
     },
     {
       id: 'sort-options',

@@ -6,6 +6,7 @@
 import { createPortal } from 'react-dom'
 import { TutorialSpotlight } from './TutorialSpotlight'
 import { TutorialTooltip } from './TutorialTooltip'
+import { TutorialDragAnimation } from './TutorialDragAnimation'
 import type { UseTutorialReturn } from '@/hooks/useTutorial'
 
 interface TutorialOverlayProps {
@@ -31,6 +32,14 @@ export function TutorialOverlay({ tutorial }: TutorialOverlayProps) {
         targetElement={targetElement}
         highlightElement={step.highlightElement}
       />
+
+      {/* 拖曳动画（如果配置了） */}
+      {step.animation?.type === 'drag-drop' && (
+        <TutorialDragAnimation
+          fromSelector={step.animation.fromSelector}
+          toSelector={step.animation.toSelector}
+        />
+      )}
 
       {/* 提示框 */}
       <TutorialTooltip
