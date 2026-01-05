@@ -421,6 +421,150 @@ await fetch('/api/data/sync', {
 - 不要把 `SUPABASE_SERVICE_ROLE_KEY` 放進前端
 - 若需開放多人共用，再加 RLS 政策與共享權限模型
 
+## 8. Row Level Security (RLS) 政策
+
+若資料表已啟用 RLS，需執行以下 SQL 讓使用者可以操作自己的資料：
+
+```sql
+-- =============================================
+-- classrooms 表 RLS 政策
+-- =============================================
+ALTER TABLE public.classrooms ENABLE ROW LEVEL SECURITY;
+
+-- 允許使用者查看自己的班級
+CREATE POLICY "Users can view own classrooms"
+ON public.classrooms FOR SELECT
+USING (auth.uid() = owner_id);
+
+-- 允許使用者新增班級（owner_id 需為自己）
+CREATE POLICY "Users can insert own classrooms"
+ON public.classrooms FOR INSERT
+WITH CHECK (auth.uid() = owner_id);
+
+-- 允許使用者更新自己的班級
+CREATE POLICY "Users can update own classrooms"
+ON public.classrooms FOR UPDATE
+USING (auth.uid() = owner_id)
+WITH CHECK (auth.uid() = owner_id);
+
+-- 允許使用者刪除自己的班級
+CREATE POLICY "Users can delete own classrooms"
+ON public.classrooms FOR DELETE
+USING (auth.uid() = owner_id);
+
+-- =============================================
+-- students 表 RLS 政策
+-- =============================================
+ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own students"
+ON public.students FOR SELECT
+USING (auth.uid() = owner_id);
+
+CREATE POLICY "Users can insert own students"
+ON public.students FOR INSERT
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can update own students"
+ON public.students FOR UPDATE
+USING (auth.uid() = owner_id)
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can delete own students"
+ON public.students FOR DELETE
+USING (auth.uid() = owner_id);
+
+-- =============================================
+-- assignments 表 RLS 政策
+-- =============================================
+ALTER TABLE public.assignments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own assignments"
+ON public.assignments FOR SELECT
+USING (auth.uid() = owner_id);
+
+CREATE POLICY "Users can insert own assignments"
+ON public.assignments FOR INSERT
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can update own assignments"
+ON public.assignments FOR UPDATE
+USING (auth.uid() = owner_id)
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can delete own assignments"
+ON public.assignments FOR DELETE
+USING (auth.uid() = owner_id);
+
+-- =============================================
+-- submissions 表 RLS 政策
+-- =============================================
+ALTER TABLE public.submissions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own submissions"
+ON public.submissions FOR SELECT
+USING (auth.uid() = owner_id);
+
+CREATE POLICY "Users can insert own submissions"
+ON public.submissions FOR INSERT
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can update own submissions"
+ON public.submissions FOR UPDATE
+USING (auth.uid() = owner_id)
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can delete own submissions"
+ON public.submissions FOR DELETE
+USING (auth.uid() = owner_id);
+
+-- =============================================
+-- folders 表 RLS 政策
+-- =============================================
+ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own folders"
+ON public.folders FOR SELECT
+USING (auth.uid() = owner_id);
+
+CREATE POLICY "Users can insert own folders"
+ON public.folders FOR INSERT
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can update own folders"
+ON public.folders FOR UPDATE
+USING (auth.uid() = owner_id)
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can delete own folders"
+ON public.folders FOR DELETE
+USING (auth.uid() = owner_id);
+
+-- =============================================
+-- deleted_records 表 RLS 政策
+-- =============================================
+ALTER TABLE public.deleted_records ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own deleted_records"
+ON public.deleted_records FOR SELECT
+USING (auth.uid() = owner_id);
+
+CREATE POLICY "Users can insert own deleted_records"
+ON public.deleted_records FOR INSERT
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can update own deleted_records"
+ON public.deleted_records FOR UPDATE
+USING (auth.uid() = owner_id)
+WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Users can delete own deleted_records"
+ON public.deleted_records FOR DELETE
+USING (auth.uid() = owner_id);
+```
+
+**注意**：若您使用 service_role key，RLS 會被 bypass。若使用 user access token，則必須設定上述 policies。
+
 ---
 
 **相關文檔**：
