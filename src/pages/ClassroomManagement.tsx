@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, type FormEvent } from 'react'
 import {
   Users,
   Plus,
@@ -140,11 +140,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
   }, [loadData])
 
   useEffect(() => {
-  // 用 any 取 stepId，避免 UseTutorialReturn 沒 steps 的型別錯
-    const stepId =
-      (tutorial as any)?.currentStep?.id ??
-      (tutorial as any)?.currentStepId ??
-      (tutorial as any)?.stepId
+  const stepId = tutorial.flow?.steps?.[tutorial.currentStep]?.id
 
     const modalStepIds = new Set([
       'create-classroom-modal',
@@ -157,7 +153,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
     if (stepId && modalStepIds.has(stepId)) {
       setIsCreateModalOpen(true)
     }
-  }, [(tutorial as any)?.currentStep, (tutorial as any)?.currentStepId])
+  }, [tutorial.currentStep, tutorial.flow])
 
 
 
@@ -259,7 +255,7 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
     return rows
   }
 
-  const handleCreateClassroom = async (e: React.FormEvent) => {
+  const handleCreateClassroom = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
 
     const trimmedName = newName.trim()
@@ -318,12 +314,12 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       setIsCreateModalOpen(false)
       await loadData()
       requestSync()
-      // ✅ 教學：建立成功後，跳到「建立資料夾」
-      // 先用 any 避開型別（因為 UseTutorialReturn 沒 steps/沒 goTo）
-      if (tutorial?.isActive) {
-        ;(tutorial as any).goTo?.('create-folder')
-        ;(tutorial as any).next?.()
+
+      // ✅ 教學：建立成功後走到「create-folder」
+      if (tutorial.isActive) {
+        tutorial.nextStep()
       }
+
     } catch (e) {
       console.error(e)
       setError(e instanceof Error ? e.message : '新增班級失敗')
@@ -927,6 +923,10 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                   setNewStudentCount(30)
                   setImportText('')
                   setIsCreateModalOpen(true)
+                  const stepId = tutorial.flow?.steps?.[tutorial.currentStep]?.id
+                  if (tutorial.isActive && stepId === 'create-classroom') {
+                    tutorial.nextStep()
+                  }
                 }}
                 className="w-full px-4 py-6 rounded-xl text-center border-2 border-dashed border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all flex flex-col items-center justify-center gap-2"
               >
@@ -1120,7 +1120,10 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
               </div>
               <button
                 type="button"
-                onClick={() => setIsCreateModalOpen(false)}
+                onClick={() => {
+                  if (tutorial.isActive) return
+                  setIsCreateModalOpen(false)
+                }}
                 className="p-1 rounded-full hover:bg-gray-100 text-gray-500"
               >
                 ✕
@@ -1190,7 +1193,10 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
                 <button
                   data-tutorial="classroom-cancel"
                   type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
+                  onClick={() => {
+                    if (tutorial.isActive) return
+                    setIsCreateModalOpen(false)
+                  }}
                   className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50"
                   disabled={isCreating}
                 >
