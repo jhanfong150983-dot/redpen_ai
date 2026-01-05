@@ -410,7 +410,9 @@ export default function AssignmentSetup({
     if (!assignmentDomain) {
       missing.push('作業領域')
     }
-    if (totalPages < 1 || totalPages > 100) {
+    // 檢查 totalPages 是否為空字串或不在有效範圍內
+    const pages = Number(totalPages)
+    if (!Number.isFinite(pages) || pages < 1 || pages > 100) {
       missing.push('每生頁數')
     }
     if (!answerKey) {
@@ -767,7 +769,9 @@ export default function AssignmentSetup({
     if (!assignmentDomain) {
       return
     }
-    if (totalPages < 1 || totalPages > 100) {
+    // 檢查 totalPages 是否為空字串或不在有效範圍內
+    const pages = Number(totalPages)
+    if (!Number.isFinite(pages) || pages < 1 || pages > 100) {
       return
     }
     if (!answerKey) {

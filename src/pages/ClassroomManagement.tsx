@@ -269,7 +269,9 @@ export default function ClassroomManagement({ onBack }: ClassroomManagementProps
       return
     }
 
-    if (imported.length === 0 && (newStudentCount < 1 || newStudentCount > 100)) {
+    // 驗證學生人數（當沒有匯入名單時）
+    const studentNum = Number(newStudentCount)
+    if (imported.length === 0 && (!Number.isFinite(studentNum) || studentNum < 1 || studentNum > 100)) {
       setError('請輸入學生人數，或貼上匯入的學生名單')
       return
     }

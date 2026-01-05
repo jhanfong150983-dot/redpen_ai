@@ -318,6 +318,17 @@ export default function AssignmentImport({
       setError('此班級尚未有學生名單')
       return
     }
+    // 驗證每位學生頁數和起始頁號
+    const pagesNum = Number(pagesPerStudent)
+    const startNum = Number(startSeat)
+    if (!Number.isFinite(pagesNum) || pagesNum < 1) {
+      setError('請填寫有效的每位學生頁數')
+      return
+    }
+    if (!Number.isFinite(startNum) || startNum < 1) {
+      setError('請填寫有效的起始頁號')
+      return
+    }
 
     setError(null)
 
