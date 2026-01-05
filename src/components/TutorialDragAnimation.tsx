@@ -153,17 +153,11 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
         viewBox={`0 0 ${window.innerWidth} ${window.innerHeight}`}
       >
         <defs>
-          <marker
-            id="arrowhead"
-            markerWidth="10"
-            markerHeight="10"
-            refX="9"
-            refY="3"
-            orient="auto"
-          >
+          <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
             <polygon points="0 0, 10 3, 0 6" fill="rgba(59, 130, 246, 0.6)" />
           </marker>
         </defs>
+
         <motion.path
           d={`M ${startX} ${startY} Q ${(startX + endX) / 2} ${(startY + endY) / 2 - 50} ${endX} ${endY}`}
           stroke="rgba(59, 130, 246, 0.4)"
@@ -181,8 +175,6 @@ export function TutorialDragAnimation({ fromSelector, toSelector }: TutorialDrag
           }}
         />
       </svg>
-    </div>
-  )
     </div>
   )
 }
