@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { ArrowLeft, Users, Receipt, BarChart3, Tags } from 'lucide-react'
 import AdminUsers from './AdminUsers'
 import AdminOrders from './AdminOrders'
 import AdminAnalytics from './AdminAnalytics'
 import AdminTags from './AdminTags'
-import { clearAdminViewAs } from '@/lib/admin-view-as'
 
 type AdminPanelProps = {
   onBack: () => void
@@ -16,12 +15,9 @@ type TabType = 'users' | 'orders' | 'analytics' | 'tags'
 export default function AdminPanel({ onBack, initialTab = 'users' }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab)
 
-  // 當離開管理介面時,自動清除 viewAs 狀態
-  useEffect(() => {
-    return () => {
-      clearAdminViewAs()
-    }
-  }, [])
+  // 注意：不再在離開時自動清除 viewAs
+  // 因為用戶可能是點擊「切換檢視」回到主頁面查看其他用戶的資料
+  // viewAs 的清除由橫幅上的「退出檢視」按鈕負責
 
   const tabs = [
     { id: 'users' as TabType, label: '用戶管理', icon: Users, color: 'text-amber-600' },
@@ -31,12 +27,10 @@ export default function AdminPanel({ onBack, initialTab = 'users' }: AdminPanelP
   ]
 
   const renderContent = () => {
-    // 每個 tab 的內容不提供 onBack,讓子頁面的返回按鈕不顯示
-    // 我們在頂部提供統一的返回按鈕
-
     switch (activeTab) {
       case 'users':
-        return <AdminUsers />
+        // 傳遞 onBack 讓切換檢視功能可以導航回主頁面
+        return <AdminUsers onBack={onBack} />
       case 'orders':
         return <AdminOrders />
       case 'analytics':
