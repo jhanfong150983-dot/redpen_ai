@@ -228,7 +228,7 @@ export default function AssignmentImportSelect({
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100"
                     >
                       <Camera className="w-3 h-3" />
-                      拍攝作業匯入
+                      拍照或上傳照片（JPG）
                     </button>
                     <button
                       type="button"
@@ -236,7 +236,7 @@ export default function AssignmentImportSelect({
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
                     >
                       <FileImage className="w-3 h-3" />
-                      批次作業匯入（PDF）
+                      上傳掃描檔（PDF）
                     </button>
                   </div>
                 </div>
