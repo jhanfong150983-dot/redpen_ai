@@ -16,9 +16,13 @@ export default async function handler(req, res) {
 
     let profile = null
     let profileLoaded = false
+    let profileError = null
+
     try {
       // 後端始終使用 service role key 繞過 RLS
       const supabaseDb = getSupabaseAdmin()
+
+      console.log('🔍 Querying profile for user:', user.id)
 
       const { data, error } = await supabaseDb
         .from('profiles')
@@ -27,13 +31,34 @@ export default async function handler(req, res) {
         .maybeSingle()
 
       if (error) {
-        console.error('❌ Profile query failed:', error.message)
+        console.error('❌ Profile query failed:', {
+          userId: user.id,
+          error: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint
+        })
+        profileError = error.message
+      } else if (data) {
+        console.log('✅ Profile loaded:', {
+          userId: user.id,
+          hasName: !!data.name,
+          hasRole: !!data.role,
+          inkBalance: data.ink_balance
+        })
+        profile = data
+        profileLoaded = true
+      } else {
+        console.warn('⚠️ Profile not found in database for user:', user.id)
+        profileError = 'Profile not found'
       }
-
-      profile = data || null
-      profileLoaded = !!data
     } catch (error) {
-      console.error('❌ Profile query exception:', error instanceof Error ? error.message : String(error))
+      console.error('❌ Profile query exception:', {
+        userId: user.id,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      })
+      profileError = error instanceof Error ? error.message : 'Unknown error'
       profile = null
       profileLoaded = false
     }
@@ -50,6 +75,12 @@ export default async function handler(req, res) {
           profileLoaded && typeof profile?.ink_balance === 'number'
             ? profile.ink_balance
             : null
+      },
+      // 除錯資訊：讓前端知道是否從資料庫載入成功
+      _debug: {
+        profileLoaded,
+        profileError,
+        dataSource: profileLoaded ? 'database' : 'oauth_metadata'
       }
     })
   } catch (err) {
