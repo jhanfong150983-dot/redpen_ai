@@ -29,7 +29,7 @@ import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { extractAnswerKeyFromImage, extractAnswerKeyFromImages, reanalyzeQuestions } from '@/lib/gemini'
 import { startInkSession, closeInkSession } from '@/lib/ink-session'
-import { convertPdfToImage, getFileType, fileToBlob } from '@/lib/pdfToImage'
+import { convertPdfToImage, convertPdfToImages, getFileType, fileToBlob } from '@/lib/pdfToImage'
 import { compressImageFile, validateBlobSize } from '@/lib/imageCompression'
 import { checkFolderNameUnique } from '@/lib/utils'
 import {
@@ -885,27 +885,46 @@ export default function AssignmentSetup({
           }
         } else {
           console.log('📄 處理 PDF 檔案', { name: file.name, size: file.size })
-          imageBlob = await convertPdfToImage(file, {
+
+          // 轉換 PDF 所有頁面
+          const pdfBlobs = await convertPdfToImages(file, {
             scale: 1,
             format: 'image/webp',
             quality: 0.5
           })
 
-          // PDF 也需要壓縮檢查
-          if (imageBlob.size > 2 * 1024 * 1024) {
-            console.log(`⚠️ ${file.name} PDF 轉換後仍過大，進行輕度壓縮...`, { originalSize: imageBlob.size })
-            imageBlob = await compressImageFile(imageBlob, {
-              maxWidth: 2000,
-              quality: 0.75,
-              format: 'image/webp'
-            })
-            console.log('✅ PDF 壓縮完成', { compressedSize: imageBlob.size })
+          console.log(`✅ PDF 轉換完成，共 ${pdfBlobs.length} 頁`)
+
+          // 處理每一頁
+          for (let pageIndex = 0; pageIndex < pdfBlobs.length; pageIndex++) {
+            let pageBlob = pdfBlobs[pageIndex]
+
+            // PDF 每頁也需要壓縮檢查
+            if (pageBlob.size > 2 * 1024 * 1024) {
+              console.log(`⚠️ ${file.name} 第 ${pageIndex + 1} 頁過大，進行輕度壓縮...`, { originalSize: pageBlob.size })
+              pageBlob = await compressImageFile(pageBlob, {
+                maxWidth: 2000,
+                quality: 0.75,
+                format: 'image/webp'
+              })
+              console.log('✅ 壓縮完成', { compressedSize: pageBlob.size })
+            }
+
+            // 驗證每頁大小
+            const validation = validateBlobSize(pageBlob, 1.5)
+            if (!validation.valid) {
+              setAnswerKeyError(`${file.name} 第 ${pageIndex + 1} 頁: ${validation.message}`)
+              setIsExtractingAnswerKey(false)
+              return
+            }
+
+            imageBlobs.push(pageBlob)
           }
 
-          console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
+          continue // 跳過下方的單一 imageBlob 處理
         }
 
-        // 驗證單檔大小
+        // 驗證單檔大小 (僅用於圖片檔案)
         const validation = validateBlobSize(imageBlob, 1.5)
         if (!validation.valid) {
           setAnswerKeyError(`${file.name}: ${validation.message}`)
