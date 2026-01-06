@@ -978,13 +978,14 @@ export default function AssignmentImport({
                   <span className="text-xs">旋轉</span>
                 </button>
                 <button
-                type="button"
-                onClick={() => setIsPreviewModalOpen(false)}
-                className="p-2 rounded-full hover:bg-gray-100 text-gray-500"
-                aria-label="關閉"
-              >
-                <X className="w-5 h-5" />
-              </button>
+                  type="button"
+                  onClick={() => setIsPreviewModalOpen(false)}
+                  className="p-2 rounded-full hover:bg-gray-100 text-gray-500"
+                  aria-label="關閉"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             <div className="p-4 bg-gray-50 overflow-y-auto max-h-[85vh]">
               {!selectedMapping || pagesInSelectedRange.length === 0 ? (
