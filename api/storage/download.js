@@ -1,6 +1,29 @@
 import { getAuthUser } from '../../server/_auth.js'
 import { getSupabaseAdmin } from '../../server/_supabase.js'
 
+function resolveOwnerIdParam(req) {
+  const raw = req.query?.ownerId ?? req.query?.owner_id
+  if (Array.isArray(raw)) {
+    return typeof raw[0] === 'string' ? raw[0].trim() : null
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    return trimmed || null
+  }
+  return null
+}
+
+async function isAdminUser(supabaseDb, userId) {
+  const { data, error } = await supabaseDb
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle()
+
+  if (error) return false
+  return data?.role === 'admin'
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     res.status(405).json({ error: 'Method Not Allowed' })
@@ -37,7 +60,20 @@ export default async function handler(req, res) {
       return
     }
 
-    if (!submission || submission.owner_id !== user.id) {
+    // 檢查權限：自己的資料或管理員以他人身份檢視
+    const requestedOwnerId = resolveOwnerIdParam(req)
+    const isOwnerOverride = requestedOwnerId && requestedOwnerId !== user.id
+    
+    let hasAccess = false
+    if (submission?.owner_id === user.id) {
+      // 自己的資料
+      hasAccess = true
+    } else if (isOwnerOverride && submission?.owner_id === requestedOwnerId) {
+      // 管理員以他人身份檢視
+      hasAccess = await isAdminUser(supabaseDb, user.id)
+    }
+
+    if (!submission || !hasAccess) {
       res.status(404).json({ error: 'Submission not found' })
       return
     }

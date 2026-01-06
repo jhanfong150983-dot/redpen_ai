@@ -2,6 +2,8 @@
  * 從伺服器下載圖片為 Blob
  */
 
+import { getAdminViewAs } from './admin-view-as'
+
 /**
  * 從伺服器下載圖片為 Blob
  *
@@ -10,8 +12,16 @@
  */
 export async function downloadImageFromSupabase(submissionId: string): Promise<Blob> {
   try {
+    const params = new URLSearchParams({ submissionId })
+    
+    // 如果在 viewAs 模式下，傳送 ownerId 參數讓 API 知道是管理員檢視
+    const viewAs = getAdminViewAs()
+    if (viewAs?.ownerId) {
+      params.set('ownerId', viewAs.ownerId)
+    }
+    
     const response = await fetch(
-      `/api/storage/download?submissionId=${encodeURIComponent(submissionId)}`,
+      `/api/storage/download?${params.toString()}`,
       { credentials: 'include' }
     )
 
