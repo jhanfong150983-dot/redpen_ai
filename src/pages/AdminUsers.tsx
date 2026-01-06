@@ -344,13 +344,17 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
                         setViewAs({
                           ownerId: user.id,
                           name: user.name,
                           email: user.email
                         })
-                      }
+                        // 導航回主頁面以查看該用戶的資料
+                        if (onBack) {
+                          onBack()
+                        }
+                      }}
                       className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
                         isViewing
                           ? 'border-emerald-200 text-emerald-700 bg-emerald-50'
