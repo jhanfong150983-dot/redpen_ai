@@ -107,7 +107,7 @@ export default function ScanImportFlow({
     }
 
     const confirmed = confirm(
-      `確認要送出 ${capturedData.size} 位學生的作業嗎？`
+      `確認要送出 ${capturedData.size} 位學生的作業嗎？\n\n❗ 提醒：請確認所有圖片方向正確\n• 圖片不可以倒置或歪斜\n• 否則可能影響 AI 辨識結果`
     )
     if (!confirmed) return
 

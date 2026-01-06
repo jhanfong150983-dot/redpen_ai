@@ -124,6 +124,7 @@ export function useSync(options: UseSyncOptions = {}) {
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
   const syncBlockedReasonRef = useRef<string | null>(null)
   const viewAsRef = useRef<string | null>(viewAsOwnerId)
+  const hasInitializedRef = useRef(false)
 
   const buildSyncUrl = useCallback(
     (extraParams?: URLSearchParams) => {
@@ -818,12 +819,26 @@ export function useSync(options: UseSyncOptions = {}) {
     }
   }, [buildSyncUrl])
 
+  // 使用 localStorage 追蹤本地資料對應的 ownerId
+  const SYNC_OWNER_KEY = 'sync_current_owner_id'
+
   useEffect(() => {
-    if (viewAsRef.current === viewAsOwnerId) return
+    // 取得本地資料目前對應的 ownerId
+    const storedOwnerId = localStorage.getItem(SYNC_OWNER_KEY)
+    const currentOwnerId = viewAsOwnerId ?? '__self__'
+    
+    // 如果 ownerId 沒變，跳過重載
+    if (storedOwnerId === currentOwnerId && hasInitializedRef.current) {
+      viewAsRef.current = viewAsOwnerId
+      return
+    }
+    
     viewAsRef.current = viewAsOwnerId
+    hasInitializedRef.current = true
     syncBlockedReasonRef.current = null
 
     const resetLocal = async () => {
+      console.log('🔄 ViewAs 變更，重新載入資料...', { from: storedOwnerId, to: currentOwnerId })
       isSyncingRef.current = false
       syncQueuedRef.current = false
       await Promise.all([
@@ -835,6 +850,10 @@ export function useSync(options: UseSyncOptions = {}) {
         db.folders.clear(),
         db.answerExtractionCorrections.clear()
       ])
+      
+      // 儲存當前的 ownerId
+      localStorage.setItem(SYNC_OWNER_KEY, currentOwnerId)
+      
       setStatus((prev) => ({
         ...prev,
         lastSyncTime: null,

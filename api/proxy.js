@@ -33,8 +33,11 @@ function computeInkPoints(usageMetadata) {
   }
 }
 
+// Session 有效期限：2 小時
+const SESSION_TTL_MINUTES = 120
+
 async function resolveInkSession(supabaseAdmin, userId, inkSessionId) {
-  if (!inkSessionId) return { ok: false }
+  if (!inkSessionId) return { ok: false, reason: 'no_session_id' }
 
   const { data, error } = await supabaseAdmin
     .from('ink_sessions')
@@ -43,18 +46,36 @@ async function resolveInkSession(supabaseAdmin, userId, inkSessionId) {
     .eq('user_id', userId)
     .maybeSingle()
 
-  if (error || !data) return { ok: false }
-  if (data.status !== 'active') return { ok: false }
+  if (error) {
+    console.warn('Ink session query error:', error)
+    return { ok: false, reason: 'query_error' }
+  }
+  
+  if (!data) {
+    console.warn('Ink session not found:', { inkSessionId, userId })
+    return { ok: false, reason: 'not_found' }
+  }
+  
+  if (data.status !== 'active') {
+    console.warn('Ink session not active:', { inkSessionId, status: data.status })
+    return { ok: false, reason: 'not_active', status: data.status }
+  }
 
+  const now = Date.now()
   const expiresAtMs = data.expires_at ? Date.parse(data.expires_at) : NaN
-  if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) {
-    return { ok: false, expired: true }
+  if (Number.isFinite(expiresAtMs) && expiresAtMs <= now) {
+    return { ok: false, expired: true, reason: 'expired' }
   }
 
   try {
+    // 每次活動時延長 session 過期時間（滾動式延長）
+    const newExpiresAt = new Date(now + SESSION_TTL_MINUTES * 60 * 1000).toISOString()
     await supabaseAdmin
       .from('ink_sessions')
-      .update({ last_activity_at: new Date().toISOString() })
+      .update({ 
+        last_activity_at: new Date().toISOString(),
+        expires_at: newExpiresAt  // 延長過期時間
+      })
       .eq('id', inkSessionId)
       .eq('user_id', userId)
   } catch (error) {
@@ -138,9 +159,14 @@ export default async function handler(req, res) {
           inkSessionId
         )
         if (!sessionCheck.ok) {
-          const message = sessionCheck.expired
-            ? '批改會話已過期，請重新進入批改頁'
-            : '批改會話無效，請重新進入批改頁'
+          let message = '批改會話無效，請重新進入批改頁'
+          if (sessionCheck.expired) {
+            message = '批改會話已過期，請重新進入批改頁'
+          } else if (sessionCheck.reason === 'not_active') {
+            message = `批改會話已結束（狀態：${sessionCheck.status}），請重新進入批改頁`
+          } else if (sessionCheck.reason === 'not_found') {
+            message = '批改會話不存在，請重新進入批改頁'
+          }
           res.status(409).json({ error: message })
           return
         }
