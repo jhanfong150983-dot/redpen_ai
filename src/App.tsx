@@ -32,6 +32,7 @@ import { debugLog } from '@/lib/logger'
 import { LEGAL_MODAL_EVENT, type LegalModalDetail } from '@/lib/legal-events'
 import { TERMS_VERSION, PRIVACY_VERSION, REFUND_FEE_RATE } from '@/lib/legal'
 import { useAdminViewAs } from '@/lib/admin-view-as'
+import { closeInkSession } from '@/lib/ink-session'
 
 type Page =
   | 'home'
@@ -94,6 +95,21 @@ function App() {
   const { viewAs, clearViewAs } = useAdminViewAs()
   const inkBalance =
     auth.status === 'authenticated' ? auth.user.inkBalance ?? 0 : null
+
+  // 退出檢視模式：強制關閉 ink session、清除 localStorage、回到首頁
+  const handleExitViewAs = useCallback(async () => {
+    try {
+      // 嘗試關閉 ink session（如果有的話）
+      await closeInkSession()
+    } catch (error) {
+      console.warn('關閉 ink session 失敗:', error)
+    }
+    // 清除 viewAs localStorage
+    clearViewAs()
+    // 回到首頁
+    setCurrentPage('home')
+    setSelectedAssignmentId('')
+  }, [clearViewAs])
 
   const fetchAuth = useCallback(async () => {
     try {
@@ -447,7 +463,7 @@ function App() {
         </div>
         <button
           type="button"
-          onClick={clearViewAs}
+          onClick={handleExitViewAs}
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs"
         >
           退出檢視
