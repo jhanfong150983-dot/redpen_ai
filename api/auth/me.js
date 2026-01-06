@@ -48,6 +48,15 @@ export default async function handler(req, res) {
 
         profile = data || null
         profileLoaded = !!data
+
+        // Debug: 記錄 profile 資料
+        console.log('🔍 Profile data:', {
+          userId: user.id,
+          profileLoaded,
+          profile,
+          ink_balance: profile?.ink_balance,
+          ink_balance_type: typeof profile?.ink_balance
+        })
       } else {
         console.warn('⚠️ No Supabase client available', {
           useAdmin,
