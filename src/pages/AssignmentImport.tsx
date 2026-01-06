@@ -15,7 +15,8 @@ import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import {
   convertPdfToImages,
   getFileType,
-  mergePdfFiles
+  mergePdfFiles,
+  sortFilesByNumber
 } from '@/lib/pdfToImage'
 import { blobToBase64, validateBlobSize } from '@/lib/imageCompression'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
@@ -262,7 +263,8 @@ export default function AssignmentImport({
     return pages.filter((p) => !used.has(p.index))
   }, [pages, mappings])
 
-  const isConfirmDisabled = isSaving || unusedPages.length > 0 || missingStudentCount > 0
+  // 只有在有未分配頁面時才禁用按鈕，缺少學生作業時應該可以點擊（會彈出對話框）
+  const isConfirmDisabled = isSaving || unusedPages.length > 0
 
   const handleFileChange = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -278,13 +280,17 @@ export default function AssignmentImport({
 
     try {
       // 轉換為陣列並驗證檔案類型
-      const fileArray = Array.from(files)
+      let fileArray = Array.from(files)
       for (const file of fileArray) {
         const type = getFileType(file)
         if (type !== 'pdf') {
           throw new Error(`檔案 "${file.name}" 不是 PDF 格式。僅支援 PDF 檔案。`)
         }
       }
+
+      // 智能排序：按照檔案名稱中的數字排序
+      fileArray = sortFilesByNumber(fileArray)
+      console.log('📂 檔案已按數字排序:', fileArray.map(f => f.name))
 
       // 如果選擇多個 PDF,顯示合併確認介面
       if (fileArray.length > 1) {
@@ -417,6 +423,13 @@ export default function AssignmentImport({
     const result: MappingRow[] = []
     let pageIndex = 0
 
+    console.log('🎯 開始自動配對:', {
+      totalPages: pages.length,
+      pagesPerStudent: pagesNum,
+      targetStudents: targetStudents.length,
+      startSeat: startNum
+    })
+
     for (const stu of targetStudents) {
       if (pageIndex >= pages.length) break
 
@@ -436,6 +449,12 @@ export default function AssignmentImport({
 
       pageIndex += pagesPerStudent
     }
+
+    console.log('✅ 自動配對完成:', {
+      mappedStudents: result.length,
+      usedPages: pageIndex,
+      unusedPages: pages.length - pageIndex
+    })
 
     setMappings(result)
     setSelectedMappingIndex(0)
@@ -779,6 +798,29 @@ export default function AssignmentImport({
 
               {/* 確認匯入按鈕 */}
               <div className="mt-4 pt-4 border-t border-gray-200">
+                {/* 提示：缺少學生作業 */}
+                {!isConfirmDisabled && missingStudentCount > 0 && (
+                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-xs font-semibold text-blue-800 mb-1">ℹ️ 作業份數不足</p>
+                    <p className="text-xs text-blue-700">
+                      缺少 {missingStudentCount} 位學生的作業。點擊「確認匯入」後，系統會詢問缺交座號。
+                    </p>
+                  </div>
+                )}
+
+                {/* 除錯資訊：顯示為什麼按鈕被禁用 */}
+                {isConfirmDisabled && (
+                  <div className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-xs font-semibold text-yellow-800 mb-2">⚠️ 無法匯入，請先解決以下問題：</p>
+                    <ul className="text-xs text-yellow-700 space-y-1">
+                      {isSaving && <li>• 正在儲存中...</li>}
+                      {unusedPages.length > 0 && (
+                        <li>• 尚有 {unusedPages.length} 頁未分配給任何學生（請調整「每位學生頁數」或「起始座號」）</li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+
                 {unusedPages.length > 0 && absentSeatHint?.type === 'extra' && (
                   <p className="text-xs text-red-600 mb-2">
                     ⚠️ 尚有 {unusedPages.length} 頁未分配
@@ -938,8 +980,11 @@ export default function AssignmentImport({
                 <p className="text-sm text-gray-700 mb-2">
                   您已選擇 <span className="font-semibold text-indigo-600">{uploadedFiles.length}</span> 個 PDF 檔案。
                 </p>
-                <p className="text-sm text-gray-600">
-                  系統會按照以下順序合併成單一 PDF，然後進行分頁配對：
+                <p className="text-sm text-gray-600 mb-1">
+                  系統已自動按照<span className="font-semibold text-emerald-600">檔案名稱中的數字</span>排序，將按以下順序合併：
+                </p>
+                <p className="text-xs text-gray-500">
+                  （例如：1.pdf → 2.pdf → 10.pdf → 11.pdf）
                 </p>
               </div>
 
@@ -963,10 +1008,11 @@ export default function AssignmentImport({
                 ))}
               </div>
 
-              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-xs text-blue-700">
-                  <span className="font-semibold">提示：</span>
-                  合併後的 PDF 將按照上述順序排列。如需調整順序，請取消後重新選擇檔案。
+              <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <p className="text-xs text-emerald-700">
+                  <span className="font-semibold">✨ 智能排序：</span>
+                  系統已自動按照檔案名稱中的數字排序（支援 1.pdf、座號01.pdf、scan_003.pdf 等格式）。
+                  如果順序不正確，請確保檔案名稱包含正確的數字。
                 </p>
               </div>
             </div>

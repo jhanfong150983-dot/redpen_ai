@@ -169,6 +169,51 @@ export async function convertPdfToImages(
 }
 
 /**
+ * 從檔案名稱中提取數字（通常是座號）
+ * 例如：「1.pdf」→ 1, 「座號03.pdf」→ 3, 「scan_025.pdf」→ 25
+ */
+function extractNumberFromFilename(filename: string): number | null {
+  // 移除副檔名
+  const nameWithoutExt = filename.replace(/\.[^.]+$/, '')
+
+  // 嘗試匹配數字（支援前導零）
+  const match = nameWithoutExt.match(/\d+/)
+
+  if (match) {
+    return parseInt(match[0], 10)
+  }
+
+  return null
+}
+
+/**
+ * 智能排序檔案陣列
+ * 優先按照檔案名稱中的數字排序，如果沒有數字則按照檔名字串排序
+ */
+export function sortFilesByNumber(files: File[]): File[] {
+  return [...files].sort((a, b) => {
+    const numA = extractNumberFromFilename(a.name)
+    const numB = extractNumberFromFilename(b.name)
+
+    // 如果兩個都有數字，按數字排序
+    if (numA !== null && numB !== null) {
+      if (numA !== numB) {
+        return numA - numB
+      }
+      // 數字相同時，按照檔名字串排序
+      return a.name.localeCompare(b.name, 'zh-TW', { numeric: true })
+    }
+
+    // 如果只有一個有數字，有數字的排前面
+    if (numA !== null) return -1
+    if (numB !== null) return 1
+
+    // 都沒有數字，按照檔名字串排序
+    return a.name.localeCompare(b.name, 'zh-TW', { numeric: true })
+  })
+}
+
+/**
  * 簡單檢測檔案類型（圖片 / PDF / 其他）
  */
 export function getFileType(file: File): 'image' | 'pdf' | 'unknown' {
