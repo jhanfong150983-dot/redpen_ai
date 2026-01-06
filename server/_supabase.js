@@ -2,6 +2,8 @@ import '../api/_suppress-warnings.js'
 import { createClient } from '@supabase/supabase-js'
 
 let cachedClient = null
+let clientCreatedAt = null
+const CLIENT_MAX_AGE = 5 * 60 * 1000 // 5 分鐘後重新建立 client
 
 /**
  * 獲取 Supabase Admin Client
@@ -23,10 +25,20 @@ export function getSupabaseAdmin() {
     throw new Error('Supabase server credentials are missing')
   }
 
+  // 如果 client 太舊，重新建立
+  const now = Date.now()
+  if (cachedClient && clientCreatedAt && (now - clientCreatedAt > CLIENT_MAX_AGE)) {
+    console.log('🔄 Supabase client 已超過 5 分鐘，重新建立')
+    cachedClient = null
+    clientCreatedAt = null
+  }
+
   if (!cachedClient) {
+    console.log('🆕 建立新的 Supabase admin client')
     cachedClient = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
-        persistSession: false
+        persistSession: false,
+        autoRefreshToken: false
       },
       db: {
         schema: 'public'
@@ -37,9 +49,19 @@ export function getSupabaseAdmin() {
         }
       }
     })
+    clientCreatedAt = now
   }
 
   return cachedClient
+}
+
+/**
+ * 強制重新建立 Supabase client（當發生連線錯誤時使用）
+ */
+export function resetSupabaseClient() {
+  console.log('♻️ 強制重置 Supabase client')
+  cachedClient = null
+  clientCreatedAt = null
 }
 
 export function getSupabaseUrl() {
