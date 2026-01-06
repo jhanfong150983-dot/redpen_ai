@@ -140,26 +140,45 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
   }
 
   const loadPackages = async () => {
+    console.log('🔍 開始載入墨水方案...')
     setIsLoadingPackages(true)
     setPackageError(null)
     try {
       const response = await fetch('/api/ink/orders?action=packages', {
         credentials: 'include'
       })
+      console.log('📡 API 回應狀態:', response.status, response.statusText)
+
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
+        console.error('❌ API 回應錯誤:', { status: response.status, data })
         setPackageError(data?.error || '讀取方案失敗')
         setPackageOptions([])
         return
       }
+
       const data = await response.json()
+      console.log('📦 API 返回完整資料:', data)
+      console.log('📦 packages 欄位類型:', typeof data?.packages, Array.isArray(data?.packages))
+
       const list = Array.isArray(data?.packages) ? data.packages : []
+      console.log(`✅ 成功解析 ${list.length} 個方案:`, list)
+
       setPackageOptions(list as InkPackage[])
+
+      if (list.length === 0) {
+        console.warn('⚠️ 方案列表為空 - 請檢查:')
+        console.warn('  1. 資料庫中方案的 is_active 是否為 true')
+        console.warn('  2. 方案的 starts_at/ends_at 時間範圍是否正確')
+        console.warn('  3. API 過濾邏輯是否正確')
+      }
     } catch (err) {
+      console.error('❌ 載入方案發生例外:', err)
       setPackageError(err instanceof Error ? err.message : '讀取方案失敗')
       setPackageOptions([])
     } finally {
       setIsLoadingPackages(false)
+      console.log('🏁 載入方案完成')
     }
   }
 
