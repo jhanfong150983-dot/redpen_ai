@@ -35,7 +35,17 @@ async function checkProfiles() {
 
   console.log('✅ 找到', data.length, '個 profiles:')
   data.forEach(p => {
-    console.log(`  - ${p.email || 'no-email'} | ink_balance: ${p.ink_balance}`)
+    const hasWhitespace =
+      (p.name && p.name !== p.name?.trim()) ||
+      (p.role && p.role !== p.role?.trim()) ||
+      (p.permission_tier && p.permission_tier !== p.permission_tier?.trim())
+
+    console.log(`  - ${p.email || 'no-email'} | ink_balance: ${p.ink_balance}${hasWhitespace ? ' ⚠️ 有空白/換行' : ''}`)
+
+    if (hasWhitespace) {
+      console.log(`    role: "${p.role}" (length: ${p.role?.length})`)
+      console.log(`    permission_tier: "${p.permission_tier}" (length: ${p.permission_tier?.length})`)
+    }
   })
   console.log('')
 

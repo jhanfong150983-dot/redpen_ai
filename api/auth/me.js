@@ -8,11 +8,19 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { user } = await getAuthUser(req, res)
+    const { user, accessToken } = await getAuthUser(req, res)
     if (!user) {
       res.status(401).json({ error: 'Unauthorized' })
       return
     }
+
+    // 詳細記錄用戶資訊
+    console.log('👤 用戶認證資訊:', {
+      userId: user.id,
+      email: user.email,
+      hasAccessToken: !!accessToken,
+      userKeys: Object.keys(user)
+    })
 
     let profile = null
     let profileLoaded = false
@@ -31,11 +39,28 @@ export default async function handler(req, res) {
           console.log('🔍 查詢 profile:', user.id)
         }
 
+        // 詳細記錄查詢資訊
+        console.log('📊 查詢詳情:', {
+          userId: user.id,
+          userIdType: typeof user.id,
+          userIdLength: user.id?.length,
+          clientCreatedAt: supabaseDb?._createdAt || 'unknown'
+        })
+
         const { data, error } = await supabaseDb
           .from('profiles')
           .select('name, avatar_url, role, permission_tier, ink_balance')
           .eq('id', user.id)
           .maybeSingle()
+
+        // 詳細記錄查詢結果
+        console.log('📊 查詢結果:', {
+          hasData: !!data,
+          hasError: !!error,
+          dataKeys: data ? Object.keys(data) : [],
+          errorCode: error?.code,
+          errorMessage: error?.message
+        })
 
         if (error) {
           console.error('❌ Profile 查詢失敗:', {
@@ -63,7 +88,16 @@ export default async function handler(req, res) {
             hasRole: !!data.role,
             inkBalance: data.ink_balance
           })
-          profile = data
+
+          // 清理資料：移除換行符號和多餘空白
+          profile = {
+            name: data.name?.trim(),
+            avatar_url: data.avatar_url?.trim(),
+            role: data.role?.trim(),
+            permission_tier: data.permission_tier?.trim(),
+            ink_balance: data.ink_balance
+          }
+
           profileLoaded = true
           break // 成功，跳出重試迴圈
         } else {

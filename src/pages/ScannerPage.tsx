@@ -5,7 +5,7 @@ import { useSeatController } from '@/hooks/useSeatController'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
-import { compressImage, blobToBase64, validateBlobSize } from '@/lib/imageCompression'
+import { compressImage, blobToBase64 } from '@/lib/imageCompression'
 import { convertPdfToImage, getFileType } from '@/lib/pdfToImage'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
@@ -238,16 +238,22 @@ export default function ScannerPage({
         // format 會根據瀏覽器自動選擇（Safari 用 JPEG，其他用 WebP）
       })
 
-      console.log(`✅ 壓縮完成: ${(compressedBlob.size / 1024).toFixed(2)} KB`)
-
-      // 2.5. 驗證檔案大小
-      const validation = validateBlobSize(compressedBlob, 1.5)
-      if (!validation.valid) {
-        throw new Error(validation.message || '檔案過大')
+      // 估算原始大小（Base64 約為原始的 4/3 倍）
+      const estimatedOriginalSize = imageSrc.length * 3 / 4
+      
+      // 如果壓縮後反而變大，使用原始圖片
+      let finalBlob = compressedBlob
+      if (compressedBlob.size > estimatedOriginalSize) {
+        console.log(`⚠️ 壓縮後反而變大 (${(compressedBlob.size / 1024).toFixed(2)} KB > ${(estimatedOriginalSize / 1024).toFixed(2)} KB)，使用原始圖片`)
+        // 將原始 Base64 轉為 Blob
+        const response = await fetch(imageSrc)
+        finalBlob = await response.blob()
       }
 
+      console.log(`✅ 最終大小: ${(finalBlob.size / 1024).toFixed(2)} KB`)
+
       // 3. 暫存圖片
-      await storeImage(compressedBlob)
+      await storeImage(finalBlob)
 
     } catch (err) {
       console.error('拍照失敗:', err)
@@ -296,19 +302,21 @@ export default function ScannerPage({
         console.log('✅ 圖片讀取完成，開始壓縮...')
 
         // 壓縮圖片
-        imageBlob = await compressImage(dataUrl, {
+        const compressedImageBlob = await compressImage(dataUrl, {
           maxWidth: 1024,
           quality: 0.8
           // format 會根據瀏覽器自動選擇（Safari 用 JPEG，其他用 WebP）
         })
 
-        console.log(`✅ 圖片壓縮完成: ${(imageBlob.size / 1024).toFixed(2)} KB, type: ${imageBlob.type}`)
-
-        // 驗證檔案大小
-        const validation = validateBlobSize(imageBlob, 1.5)
-        if (!validation.valid) {
-          throw new Error(validation.message || '檔案過大')
+        // 如果壓縮後反而變大，使用原始檔案
+        if (compressedImageBlob.size > file.size) {
+          console.log(`⚠️ 壓縮後反而變大 (${(compressedImageBlob.size / 1024).toFixed(2)} KB > ${(file.size / 1024).toFixed(2)} KB)，使用原始檔案`)
+          imageBlob = file
+        } else {
+          imageBlob = compressedImageBlob
         }
+
+        console.log(`✅ 最終圖片大小: ${(imageBlob.size / 1024).toFixed(2)} KB, type: ${imageBlob.type}`)
 
       } else if (fileType === 'pdf') {
         // 處理 PDF 文件
@@ -322,12 +330,6 @@ export default function ScannerPage({
         })
 
         console.log(`✅ PDF 轉換完成: ${(imageBlob.size / 1024).toFixed(2)} KB, type: ${imageBlob.type}`)
-
-        // 驗證檔案大小
-        const validation = validateBlobSize(imageBlob, 1.5)
-        if (!validation.valid) {
-          throw new Error(validation.message || '檔案過大')
-        }
 
       } else {
         throw new Error('不支援的文件格式，請上傳圖片或 PDF 文件')

@@ -70,6 +70,10 @@ export async function compressImage(
         // 使用安全的 toBlob 包裝器（帶 fallback 和 timeout）
         const blob = await safeToBlobWithFallback(canvas, { format, quality })
         console.log(`✅ 图片压缩完成: ${(blob.size / 1024).toFixed(2)} KB, 類型: ${blob.type}`)
+        
+        // 附加原始大小資訊，供後續比較使用
+        // @ts-ignore
+        blob._originalDataUrlLength = dataUrl.length
         resolve(blob)
       } catch (error) {
         reject(error)
