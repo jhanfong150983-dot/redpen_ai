@@ -156,7 +156,7 @@ export default function AdminOrders({ onBack }: AdminOrdersProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/admin/ink-orders?action=ink-orders', {
+      const response = await fetch('/api/admin/ink-orders', {
         credentials: 'include'
       })
       if (!response.ok) {
@@ -189,7 +189,7 @@ export default function AdminOrders({ onBack }: AdminOrdersProps) {
     setIsPackageLoading(true)
     setPackageError(null)
     try {
-      const response = await fetch('/api/admin/ink-orders?action=packages', {
+      const response = await fetch('/api/admin/packages', {
         credentials: 'include'
       })
       if (!response.ok) {
@@ -271,7 +271,7 @@ export default function AdminOrders({ onBack }: AdminOrdersProps) {
     setPackageMessage(null)
     setIsPackageSaving(true)
     try {
-      const response = await fetch('/api/admin/ink-orders?action=packages', {
+      const response = await fetch('/api/admin/packages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -337,7 +337,7 @@ export default function AdminOrders({ onBack }: AdminOrdersProps) {
     setPackageMessage(null)
     setIsPackageSaving(true)
     try {
-      const response = await fetch('/api/admin/ink-orders?action=packages', {
+      const response = await fetch('/api/admin/packages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -378,7 +378,7 @@ export default function AdminOrders({ onBack }: AdminOrdersProps) {
     setIsPackageSaving(true)
     try {
       const response = await fetch(
-        `/api/admin/ink-orders?action=packages&id=${target.id}`,
+        `/api/admin/packages?id=${target.id}`,
         {
           method: 'DELETE',
           credentials: 'include'
