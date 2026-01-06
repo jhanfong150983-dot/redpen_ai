@@ -109,21 +109,13 @@ function App() {
         return
       }
 
-      setAuth((prev) => {
-        const previousBalance =
-          prev.status === 'authenticated' ? prev.user.inkBalance ?? 0 : 0
-        const nextBalance =
-          typeof data.user.inkBalance === 'number'
-            ? data.user.inkBalance
-            : previousBalance
-        return {
-          status: 'authenticated',
-          user: {
-            ...data.user,
-            role: data.user.role || 'user',
-            permissionTier: data.user.permissionTier || 'basic',
-            inkBalance: nextBalance
-          }
+      setAuth({
+        status: 'authenticated',
+        user: {
+          ...data.user,
+          role: data.user.role || 'user',
+          permissionTier: data.user.permissionTier || 'basic',
+          inkBalance: typeof data.user.inkBalance === 'number' ? data.user.inkBalance : 0
         }
       })
     } catch (error) {
