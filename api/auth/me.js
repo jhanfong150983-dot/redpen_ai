@@ -27,6 +27,14 @@ export default async function handler(req, res) {
         : accessToken
           ? getSupabaseUserClient(accessToken)
           : null
+
+      console.log('🔍 Auth check:', {
+        userId: user.id,
+        useAdmin,
+        hasAccessToken: !!accessToken,
+        accessTokenLength: accessToken?.length || 0
+      })
+
       if (supabaseDb) {
         const { data, error } = await supabaseDb
           .from('profiles')
@@ -44,6 +52,8 @@ export default async function handler(req, res) {
             useAdmin,
             hasAccessToken: !!accessToken
           })
+        } else {
+          console.log('✅ Profile query success')
         }
 
         profile = data || null
@@ -53,6 +63,8 @@ export default async function handler(req, res) {
         console.log('🔍 Profile data:', {
           userId: user.id,
           profileLoaded,
+          hasData: !!data,
+          hasError: !!error,
           profile,
           ink_balance: profile?.ink_balance,
           ink_balance_type: typeof profile?.ink_balance
