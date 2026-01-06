@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   FileImage,
   Loader,
+  RotateCw,
   Settings,
   Users,
   X
@@ -25,6 +26,7 @@ import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-stora
 interface AssignmentImportProps {
   assignmentId: string
   onBack?: () => void
+  onUploadComplete?: () => void
 }
 
 interface PagePreview {
@@ -39,6 +41,44 @@ interface MappingRow {
   seatNumber: number
   studentId: string
   name: string
+}
+
+/**
+ * 旋轉圖片 Blob
+ * @param blob 原始圖片 Blob
+ * @param degrees 旋轉角度 (0, 90, 180, 270)
+ * @returns 旋轉後的 Blob
+ */
+async function rotateImageBlob(blob: Blob, degrees: number): Promise<Blob> {
+  // 如果不需要旋轉，直接返回原始 Blob
+  if (degrees === 0 || degrees === 360) return blob
+
+  const bitmap = await createImageBitmap(blob)
+  const isRotated90or270 = degrees === 90 || degrees === 270
+
+  // 90° 或 270° 時寬高互換
+  const canvas = document.createElement('canvas')
+  canvas.width = isRotated90or270 ? bitmap.height : bitmap.width
+  canvas.height = isRotated90or270 ? bitmap.width : bitmap.height
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    bitmap.close()
+    throw new Error('無法建立畫布')
+  }
+
+  // 移動到畫布中心，旋轉，再繪製
+  ctx.translate(canvas.width / 2, canvas.height / 2)
+  ctx.rotate((degrees * Math.PI) / 180)
+  ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2)
+  bitmap.close()
+
+  const rotated = await safeToBlobWithFallback(canvas, {
+    format: 'image/webp',
+    quality: 0.85
+  })
+
+  return rotated
 }
 
 async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
@@ -76,7 +116,8 @@ async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
 
 export default function AssignmentImport({
   assignmentId,
-  onBack
+  onBack,
+  onUploadComplete
 }: AssignmentImportProps) {
   const [assignment, setAssignment] = useState<Assignment | null>(null)
   const [classroom, setClassroom] = useState<Classroom | null>(null)
@@ -102,6 +143,7 @@ export default function AssignmentImport({
   const [selectedMappingIndex, setSelectedMappingIndex] = useState(0)
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [rotation, setRotation] = useState(0) // 0, 90, 180, 270
 
   // 計算班級中缺少的座號（跳號）
   const missingSeatNumbers = useMemo(() => {
@@ -264,7 +306,9 @@ export default function AssignmentImport({
   }, [pages, mappings])
 
   // 只有在有未分配頁面時才禁用按鈕，缺少學生作業時應該可以點擊（會彈出對話框）
-  const isConfirmDisabled = isSaving || unusedPages.length > 0
+  // isSaving 單獨處理，不顯示「無法匯入」警告
+  const hasValidationErrors = unusedPages.length > 0
+  const isConfirmDisabled = isSaving || hasValidationErrors
 
   const handleFileChange = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -491,11 +535,19 @@ export default function AssignmentImport({
       let successCount = 0
 
       for (const mapping of mappings) {
-        const pageBlobs = pages
+        // 先取得原始 Blobs
+        let pageBlobs = pages
           .filter((p) => p.index >= mapping.fromIndex && p.index <= mapping.toIndex)
           .map((p) => p.blob)
 
         if (pageBlobs.length === 0) continue
+
+        // 如果有旋轉，先旋轉每個頁面
+        if (rotation !== 0) {
+          pageBlobs = await Promise.all(
+            pageBlobs.map((blob) => rotateImageBlob(blob, rotation))
+          )
+        }
 
         const imageBlob =
           pageBlobs.length === 1 ? pageBlobs[0] : await mergePageBlobs(pageBlobs)
@@ -547,6 +599,8 @@ export default function AssignmentImport({
       alert(`已成功建立 ${successCount} 份作業`)
       if (successCount > 0) {
         requestSync()
+        // 跳回首頁
+        onUploadComplete?.()
       }
     } catch (e) {
       console.error(e)
@@ -792,12 +846,11 @@ export default function AssignmentImport({
                   </div>
                 )}
 
-                {/* 除錯資訊：顯示為什麼按鈕被禁用 */}
-                {isConfirmDisabled && (
+                {/* 除錯資訊：顯示為什麼按鈕被禁用（不在儲存中時才顯示） */}
+                {hasValidationErrors && !isSaving && (
                   <div className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                     <p className="text-xs font-semibold text-yellow-800 mb-2">⚠️ 無法匯入，請先解決以下問題：</p>
                     <ul className="text-xs text-yellow-700 space-y-1">
-                      {isSaving && <li>• 正在儲存中...</li>}
                       {unusedPages.length > 0 && (
                         <li>• 尚有 {unusedPages.length} 頁未分配給任何學生（請調整「每位學生頁數」或「起始座號」）</li>
                       )}
@@ -831,7 +884,19 @@ export default function AssignmentImport({
             {/* 右側：頁面預覽 */}
           <div className="bg-white rounded-2xl shadow-md p-4 flex flex-col gap-3 min-h-[320px]">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-700">頁面預覽</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-gray-700">頁面預覽</h2>
+                {pages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setRotation((r) => (r + 90) % 360)}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+                    title="旋轉 90°"
+                  >
+                    <RotateCw className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
               {selectedMapping && (
                 <p className="text-xs text-gray-500">
                   顯示：第 {selectedMapping.fromIndex + 1}
@@ -854,12 +919,13 @@ export default function AssignmentImport({
                     <div className="bg-gray-50 px-3 py-2 text-sm text-gray-700 font-medium">
                       第 {p.index + 1} 頁
                     </div>
-                    <div className="aspect-[3/4] bg-white">
+                    <div className="aspect-[3/4] bg-white overflow-hidden">
                       {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
                       <img
                         src={p.url}
                         alt={`第 ${p.index + 1} 頁預覽`}
-                        className="w-full h-full object-contain"
+                        className="w-full h-full object-contain transition-transform"
+                        style={{ transform: `rotate(${rotation}deg)` }}
                       />
                     </div>
                   </div>
@@ -901,7 +967,17 @@ export default function AssignmentImport({
                   <h3 className="text-lg font-semibold text-gray-900">尚未選擇配對</h3>
                 )}
               </div>
-              <button
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRotation((r) => (r + 90) % 360)}
+                  className="p-2 rounded-full hover:bg-gray-100 text-gray-500 flex items-center gap-1"
+                  title="旋轉 90°"
+                >
+                  <RotateCw className="w-5 h-5" />
+                  <span className="text-xs">旋轉</span>
+                </button>
+                <button
                 type="button"
                 onClick={() => setIsPreviewModalOpen(false)}
                 className="p-2 rounded-full hover:bg-gray-100 text-gray-500"
@@ -925,11 +1001,12 @@ export default function AssignmentImport({
                           第 {p.index + 1} 頁 · 配對給 {selectedMapping.seatNumber} 號
                         </p>
                       </div>
-                      <div className="bg-white flex items-center justify-center p-4">
+                      <div className="bg-white flex items-center justify-center p-4 overflow-hidden">
                         <img
                           src={p.url}
                           alt={`第 ${p.index + 1} 頁預覽`}
-                          className="max-h-[75vh] w-full object-contain bg-white"
+                          className="max-h-[75vh] w-full object-contain bg-white transition-transform"
+                          style={{ transform: `rotate(${rotation}deg)` }}
                         />
                       </div>
                     </div>
