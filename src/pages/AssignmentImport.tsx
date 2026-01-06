@@ -18,7 +18,7 @@ import {
   mergePdfFiles,
   sortFilesByNumber
 } from '@/lib/pdfToImage'
-import { blobToBase64, validateBlobSize } from '@/lib/imageCompression'
+import { blobToBase64 } from '@/lib/imageCompression'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 
@@ -319,14 +319,6 @@ export default function AssignmentImport({
       quality: 0.8
     })
 
-    // 驗證每一頁的大小
-    for (let i = 0; i < blobs.length; i++) {
-      const validation = validateBlobSize(blobs[i], 1.5)
-      if (!validation.valid) {
-        throw new Error(`第 ${i + 1} 頁：${validation.message}`)
-      }
-    }
-
     const previews: PagePreview[] = blobs.map((blob, idx) => ({
       index: idx,
       blob,
@@ -359,14 +351,6 @@ export default function AssignmentImport({
       if (preConvertedBlobs && preConvertedBlobs.length > 0) {
         // 使用預先轉換的 Blobs
         console.log(`使用預先轉換的 ${preConvertedBlobs.length} 頁`)
-
-        // 驗證每一頁的大小
-        for (let i = 0; i < preConvertedBlobs.length; i++) {
-          const validation = validateBlobSize(preConvertedBlobs[i], 1.5)
-          if (!validation.valid) {
-            throw new Error(`第 ${i + 1} 頁：${validation.message}`)
-          }
-        }
 
         const previews: PagePreview[] = preConvertedBlobs.map((blob, idx) => ({
           index: idx,

@@ -30,7 +30,7 @@ import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { extractAnswerKeyFromImage, extractAnswerKeyFromImages, reanalyzeQuestions } from '@/lib/gemini'
 import { startInkSession, closeInkSession } from '@/lib/ink-session'
 import { convertPdfToImage, convertPdfToImages, getFileType, fileToBlob } from '@/lib/pdfToImage'
-import { compressImageFile, validateBlobSize } from '@/lib/imageCompression'
+import { compressImageFile } from '@/lib/imageCompression'
 import { checkFolderNameUnique } from '@/lib/utils'
 import {
   type SortOption,
@@ -687,14 +687,6 @@ export default function AssignmentSetup({
         console.log('✅ PDF 轉換完成', { blobSize: imageBlob.size, blobType: imageBlob.type })
       }
 
-      // 驗證檔案大小
-      const validation = validateBlobSize(imageBlob, 1.5)
-      if (!validation.valid) {
-        setErr(validation.message || '檔案過大')
-        setBusy(false)
-        return
-      }
-
       // Save image blob for re-analysis if callback provided
       if (onImageBlobReady) {
         console.log('💾 保存答案卷圖片 blob 用於重新分析', { blobSize: imageBlob.size })
@@ -899,37 +891,27 @@ export default function AssignmentSetup({
           for (let pageIndex = 0; pageIndex < pdfBlobs.length; pageIndex++) {
             let pageBlob = pdfBlobs[pageIndex]
 
-            // PDF 每頁也需要壓縮檢查
+            // PDF 每頁也需要壓縮檢查（壓縮後如果變大則保留原始）
             if (pageBlob.size > 2 * 1024 * 1024) {
               console.log(`⚠️ ${file.name} 第 ${pageIndex + 1} 頁過大，進行輕度壓縮...`, { originalSize: pageBlob.size })
-              pageBlob = await compressImageFile(pageBlob, {
+              const compressedPageBlob = await compressImageFile(pageBlob, {
                 maxWidth: 2000,
                 quality: 0.75,
                 format: 'image/webp'
               })
-              console.log('✅ 壓縮完成', { compressedSize: pageBlob.size })
-            }
-
-            // 驗證每頁大小
-            const validation = validateBlobSize(pageBlob, 1.5)
-            if (!validation.valid) {
-              setAnswerKeyError(`${file.name} 第 ${pageIndex + 1} 頁: ${validation.message}`)
-              setIsExtractingAnswerKey(false)
-              return
+              // 只有壓縮後變小才使用
+              if (compressedPageBlob.size < pageBlob.size) {
+                pageBlob = compressedPageBlob
+                console.log('✅ 壓縮完成', { compressedSize: pageBlob.size })
+              } else {
+                console.log('⚠️ 壓縮後反而變大，使用原始', { originalSize: pageBlob.size, compressedSize: compressedPageBlob.size })
+              }
             }
 
             imageBlobs.push(pageBlob)
           }
 
           continue // 跳過下方的單一 imageBlob 處理
-        }
-
-        // 驗證單檔大小 (僅用於圖片檔案)
-        const validation = validateBlobSize(imageBlob, 1.5)
-        if (!validation.valid) {
-          setAnswerKeyError(`${file.name}: ${validation.message}`)
-          setIsExtractingAnswerKey(false)
-          return
         }
 
         imageBlobs.push(imageBlob)
