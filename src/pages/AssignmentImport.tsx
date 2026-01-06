@@ -14,7 +14,8 @@ import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import {
   convertPdfToImages,
-  getFileType
+  getFileType,
+  mergePdfFiles
 } from '@/lib/pdfToImage'
 import { blobToBase64, validateBlobSize } from '@/lib/imageCompression'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
@@ -87,6 +88,11 @@ export default function AssignmentImport({
   const [fileName, setFileName] = useState<string>('')
   const [pages, setPages] = useState<PagePreview[]>([])
   const [isUploading, setIsUploading] = useState(false)
+
+  // 多 PDF 合併相關狀態
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+  const [showMergeConfirm, setShowMergeConfirm] = useState(false)
+  const [isMerging, setIsMerging] = useState(false)
 
   const [pagesPerStudent, setPagesPerStudent] = useState(1)
   const [startSeat, setStartSeat] = useState(1)
@@ -271,42 +277,118 @@ export default function AssignmentImport({
     setSelectedMappingIndex(0)
 
     try {
-      const first = files[0]
-      setFileName(first.name)
-
-      const type = getFileType(first)
-
-      if (type !== 'pdf') {
-        throw new Error('僅支援 PDF 檔案。請將圖片轉換為 PDF 後再上傳。')
-      }
-
-      const blobs = await convertPdfToImages(first, {
-        scale: 2,
-        format: 'image/webp',
-        quality: 0.8
-      })
-
-      // 驗證每一頁的大小
-      for (let i = 0; i < blobs.length; i++) {
-        const validation = validateBlobSize(blobs[i], 1.5)
-        if (!validation.valid) {
-          throw new Error(`第 ${i + 1} 頁：${validation.message}`)
+      // 轉換為陣列並驗證檔案類型
+      const fileArray = Array.from(files)
+      for (const file of fileArray) {
+        const type = getFileType(file)
+        if (type !== 'pdf') {
+          throw new Error(`檔案 "${file.name}" 不是 PDF 格式。僅支援 PDF 檔案。`)
         }
       }
 
-      const previews: PagePreview[] = blobs.map((blob, idx) => ({
-        index: idx,
-        blob,
-        url: URL.createObjectURL(blob)
-      }))
+      // 如果選擇多個 PDF,顯示合併確認介面
+      if (fileArray.length > 1) {
+        setUploadedFiles(fileArray)
+        setShowMergeConfirm(true)
+        setIsUploading(false)
+        return
+      }
 
-      setPages(previews)
+      // 單一 PDF 的情況,直接處理
+      const first = fileArray[0]
+      await processSinglePdf(first)
     } catch (e) {
       console.error(e)
       setError(e instanceof Error ? e.message : '處理檔案失敗')
-    } finally {
       setIsUploading(false)
     }
+  }
+
+  const processSinglePdf = async (file: File) => {
+    setFileName(file.name)
+
+    const blobs = await convertPdfToImages(file, {
+      scale: 2,
+      format: 'image/webp',
+      quality: 0.8
+    })
+
+    // 驗證每一頁的大小
+    for (let i = 0; i < blobs.length; i++) {
+      const validation = validateBlobSize(blobs[i], 1.5)
+      if (!validation.valid) {
+        throw new Error(`第 ${i + 1} 頁：${validation.message}`)
+      }
+    }
+
+    const previews: PagePreview[] = blobs.map((blob, idx) => ({
+      index: idx,
+      blob,
+      url: URL.createObjectURL(blob)
+    }))
+
+    setPages(previews)
+    setIsUploading(false)
+  }
+
+  const handleMergeConfirm = async () => {
+    if (uploadedFiles.length === 0) return
+
+    setIsMerging(true)
+    setShowMergeConfirm(false)
+    setError(null)
+
+    try {
+      console.log(`開始合併 ${uploadedFiles.length} 個 PDF 檔案`)
+
+      // 合併多個 PDF
+      const mergedFile = await mergePdfFiles(uploadedFiles, {
+        fileName: `merged_${uploadedFiles.length}_files.pdf`
+      })
+
+      // 檢查是否有預先轉換的 Blobs
+      // @ts-ignore
+      const preConvertedBlobs = mergedFile._mergedBlobs as Blob[] | undefined
+
+      if (preConvertedBlobs && preConvertedBlobs.length > 0) {
+        // 使用預先轉換的 Blobs
+        console.log(`使用預先轉換的 ${preConvertedBlobs.length} 頁`)
+
+        // 驗證每一頁的大小
+        for (let i = 0; i < preConvertedBlobs.length; i++) {
+          const validation = validateBlobSize(preConvertedBlobs[i], 1.5)
+          if (!validation.valid) {
+            throw new Error(`第 ${i + 1} 頁：${validation.message}`)
+          }
+        }
+
+        const previews: PagePreview[] = preConvertedBlobs.map((blob, idx) => ({
+          index: idx,
+          blob,
+          url: URL.createObjectURL(blob)
+        }))
+
+        setPages(previews)
+        setFileName(`已合併 ${uploadedFiles.length} 個 PDF (共 ${previews.length} 頁)`)
+      } else {
+        // Fallback: 重新轉換
+        await processSinglePdf(mergedFile)
+      }
+
+      setUploadedFiles([])
+    } catch (e) {
+      console.error(e)
+      setError(e instanceof Error ? e.message : '合併 PDF 失敗')
+      setShowMergeConfirm(true) // 返回合併確認介面
+    } finally {
+      setIsMerging(false)
+    }
+  }
+
+  const handleMergeCancel = () => {
+    setShowMergeConfirm(false)
+    setUploadedFiles([])
+    setIsUploading(false)
   }
 
   const handleAutoMap = () => {
@@ -539,8 +621,9 @@ export default function AssignmentImport({
               <input
                 type="file"
                 accept="application/pdf"
+                multiple
                 onChange={handleFileChange}
-                disabled={isUploading}
+                disabled={isUploading || isMerging}
                 className="block w-full text-xs text-gray-700
                   file:mr-2 file:px-3 file:py-2 file:border-0
                   file:text-xs file:font-semibold
@@ -548,7 +631,12 @@ export default function AssignmentImport({
                   hover:file:bg-indigo-100"
               />
               <p className="text-xs text-gray-500 mt-1">
-                檔案大小限制：單檔壓縮後需小於 1.5 MB
+                <span className="font-medium">可選擇單一或多個 PDF:</span><br />
+                • 單一 PDF: 自動分頁配對<br />
+                • 多個 PDF: 會先合併後分頁
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                檔案大小限制：每頁壓縮後需小於 1.5 MB
               </p>
               {isUploading && (
                 <div className="mt-2 flex items-center gap-2 text-xs text-indigo-600">
@@ -556,10 +644,16 @@ export default function AssignmentImport({
                   <span>處理 PDF 中，請稍候...</span>
                 </div>
               )}
-              {!isUploading && fileName && (
+              {isMerging && (
+                <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600">
+                  <Loader className="w-4 h-4 animate-spin" />
+                  <span>合併 PDF 中，請稍候...</span>
+                </div>
+              )}
+              {!isUploading && !isMerging && fileName && (
                 <p className="mt-1 text-xs text-gray-500">已選擇：{fileName}</p>
               )}
-              {!isUploading && pages.length > 0 && (
+              {!isUploading && !isMerging && pages.length > 0 && (
                 <p className="mt-1 text-xs text-gray-500">
                   已拆出 {pages.length} 頁影像
                 </p>
@@ -816,6 +910,82 @@ export default function AssignmentImport({
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 合併確認對話框 */}
+      {showMergeConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">
+                合併 PDF 檔案
+              </h2>
+              <button
+                type="button"
+                onClick={handleMergeCancel}
+                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                aria-label="關閉"
+              >
+                <X className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 overflow-y-auto max-h-[calc(85vh-140px)]">
+              <div className="mb-4">
+                <p className="text-sm text-gray-700 mb-2">
+                  您已選擇 <span className="font-semibold text-indigo-600">{uploadedFiles.length}</span> 個 PDF 檔案。
+                </p>
+                <p className="text-sm text-gray-600">
+                  系統會按照以下順序合併成單一 PDF，然後進行分頁配對：
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {uploadedFiles.map((file, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200"
+                  >
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-semibold text-sm">
+                      {index + 1}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </p>
+                    </div>
+                    <FileImage className="w-5 h-5 text-gray-400" />
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-xs text-blue-700">
+                  <span className="font-semibold">提示：</span>
+                  合併後的 PDF 將按照上述順序排列。如需調整順序，請取消後重新選擇檔案。
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                type="button"
+                onClick={handleMergeCancel}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleMergeConfirm}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                確認合併
+              </button>
             </div>
           </div>
         </div>
