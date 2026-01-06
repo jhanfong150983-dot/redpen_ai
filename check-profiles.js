@@ -42,7 +42,8 @@ async function checkProfiles() {
   // 檢查特定用戶
   const users = [
     { id: '8da06727-c25a-4dc8-a5dd-4a4d8cd36947', email: 'smart704@tmail.hc.edu.tw' },
-    { id: 'a0a64c04-0ca8-4c8d-a085-24184bf19c7d', email: 'jhanfong150983@gmail.com' }
+    { id: 'a0a64c04-0ca8-4c8d-a085-24184bf19c7d', email: 'jhanfong150983@gmail.com' },
+    { id: 'a9bed9d8-391b-4985-9af6-9eb7e123b8ff', email: 'kouyishan13@gmail.com' }
   ]
 
   for (const user of users) {

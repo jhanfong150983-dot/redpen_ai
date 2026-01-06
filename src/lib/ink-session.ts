@@ -31,7 +31,14 @@ export function setInkSessionId(sessionId: string | null) {
  */
 export async function refreshInkBalance(): Promise<number | null> {
   try {
-    const response = await fetch('/api/auth/me', { credentials: 'include' })
+    const response = await fetch('/api/auth/me', {
+      credentials: 'include',
+      cache: 'no-cache',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    })
     if (!response.ok) return null
     const data = await response.json()
     const balance = data?.user?.inkBalance

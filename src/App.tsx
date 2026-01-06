@@ -97,7 +97,15 @@ function App() {
 
   const fetchAuth = useCallback(async () => {
     try {
-      const response = await fetch('/api/auth/me', { credentials: 'include' })
+      const response = await fetch('/api/auth/me', {
+        credentials: 'include',
+        // 強制不使用快取，確保每次都取得最新資料
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
       if (!response.ok) {
         setAuth({ status: 'unauthenticated' })
         return
@@ -107,6 +115,15 @@ function App() {
       if (!data?.user?.id) {
         setAuth({ status: 'unauthenticated' })
         return
+      }
+
+      // 除錯：顯示資料來源
+      if (data._debug) {
+        console.log('📊 Auth 資料來源:', {
+          profileLoaded: data._debug.profileLoaded,
+          dataSource: data._debug.dataSource,
+          timestamp: data._debug.timestamp ? new Date(data._debug.timestamp).toLocaleTimeString() : 'unknown'
+        })
       }
 
       setAuth({

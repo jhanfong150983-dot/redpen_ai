@@ -184,7 +184,14 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
 
   const refreshBalance = async () => {
     try {
-      const response = await fetch('/api/auth/me', { credentials: 'include' })
+      const response = await fetch('/api/auth/me', {
+        credentials: 'include',
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
       if (!response.ok) return
       const data = await response.json()
       const balance = data?.user?.inkBalance

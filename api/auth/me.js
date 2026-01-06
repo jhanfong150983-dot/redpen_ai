@@ -106,6 +106,13 @@ export default async function handler(req, res) {
       )
     }
 
+    // 如果 profile 載入失敗，設定 Cache-Control 避免快取錯誤回應
+    if (!profileLoaded) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+      res.setHeader('Pragma', 'no-cache')
+      res.setHeader('Expires', '0')
+    }
+
     res.status(200).json({
       user: {
         id: user.id,
@@ -123,7 +130,8 @@ export default async function handler(req, res) {
       _debug: {
         profileLoaded,
         profileError,
-        dataSource: profileLoaded ? 'database' : 'oauth_metadata'
+        dataSource: profileLoaded ? 'database' : 'oauth_metadata',
+        timestamp: Date.now() // 加入時間戳，幫助除錯
       }
     })
   } catch (err) {
