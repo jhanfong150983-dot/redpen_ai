@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ArrowLeft, Users, Receipt, BarChart3, Tags } from 'lucide-react'
 import AdminUsers from './AdminUsers'
 import AdminOrders from './AdminOrders'
 import AdminAnalytics from './AdminAnalytics'
 import AdminTags from './AdminTags'
+import { clearAdminViewAs } from '@/lib/admin-view-as'
 
 type AdminPanelProps = {
   onBack: () => void
@@ -14,6 +15,13 @@ type TabType = 'users' | 'orders' | 'analytics' | 'tags'
 
 export default function AdminPanel({ onBack, initialTab = 'users' }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab)
+
+  // 當離開管理介面時,自動清除 viewAs 狀態
+  useEffect(() => {
+    return () => {
+      clearAdminViewAs()
+    }
+  }, [])
 
   const tabs = [
     { id: 'users' as TabType, label: '用戶管理', icon: Users, color: 'text-amber-600' },
