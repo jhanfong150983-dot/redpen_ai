@@ -19,7 +19,8 @@
       "Bash(npm outdated:*)",
       "Bash(npm update:*)",
       "Bash(git push:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(grep:*)"
     ]
   }
 }

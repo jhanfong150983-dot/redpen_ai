@@ -66,7 +66,7 @@ type AnalyticsData = {
 }
 
 type Props = {
-  onBack: () => void
+  onBack?: () => void
 }
 
 // SVG 趨勢線圖組件
@@ -194,10 +194,12 @@ export default function AdminAnalytics({ onBack }: Props) {
     return (
       <div className="admin-analytics">
         <header className="analytics-header">
-          <button onClick={onBack} className="back-btn">
-            <ArrowLeft size={20} />
-            返回
-          </button>
+          {onBack && (
+            <button onClick={onBack} className="back-btn">
+              <ArrowLeft size={20} />
+              返回
+            </button>
+          )}
           <h1>使用情形儀表板</h1>
         </header>
         <div className="loading-state">載入中...</div>
@@ -209,10 +211,12 @@ export default function AdminAnalytics({ onBack }: Props) {
     return (
       <div className="admin-analytics">
         <header className="analytics-header">
-          <button onClick={onBack} className="back-btn">
-            <ArrowLeft size={20} />
-            返回
-          </button>
+          {onBack && (
+            <button onClick={onBack} className="back-btn">
+              <ArrowLeft size={20} />
+              返回
+            </button>
+          )}
           <h1>使用情形儀表板</h1>
         </header>
         <div className="error-state">{error}</div>
@@ -225,10 +229,12 @@ export default function AdminAnalytics({ onBack }: Props) {
   return (
     <div className="admin-analytics">
       <header className="analytics-header">
-        <button onClick={onBack} className="back-btn">
-          <ArrowLeft size={20} />
-          返回
-        </button>
+        {onBack && (
+          <button onClick={onBack} className="back-btn">
+            <ArrowLeft size={20} />
+            返回
+          </button>
+        )}
         <h1>使用情形儀表板</h1>
         <button onClick={fetchAnalytics} className="refresh-btn">
           重新整理

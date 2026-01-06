@@ -7,10 +7,8 @@ import {
   ClipboardCheck,
   Shield,
   Droplet,
-  Receipt,
   Crown,
-  BarChart3,
-  Tags
+  BarChart3
 } from 'lucide-react'
 import ClassroomManagement from '@/pages/ClassroomManagement'
 import AssignmentSetup from '@/pages/AssignmentSetup'
@@ -22,11 +20,8 @@ import AssignmentScanImport from '@/pages/AssignmentScanImport'
 import CorrectionSelect from '@/pages/CorrectionSelect'
 import CorrectionManagement from '@/pages/CorrectionManagement'
 import Gradebook from '@/pages/Gradebook'
-import AdminUsers from '@/pages/AdminUsers'
+import AdminPanel from '@/pages/AdminPanel'
 import InkTopUp from '@/pages/InkTopUp'
-import AdminOrders from '@/pages/AdminOrders'
-import AdminAnalytics from '@/pages/AdminAnalytics'
-import AdminTags from '@/pages/AdminTags'
 import AiReport from '@/pages/AiReport'
 import LandingPage from '@/pages/LandingPage'
 import { SyncIndicator } from '@/components'
@@ -51,11 +46,8 @@ type Page =
   | 'correction-select'
   | 'correction'
   | 'ai-report'
-  | 'admin-users'
+  | 'admin-panel'
   | 'ink-topup'
-  | 'admin-orders'
-  | 'admin-analytics'
-  | 'admin-tags'
 
 type AuthState =
   | { status: 'loading' }
@@ -477,17 +469,12 @@ function App() {
       case 'ink-topup':
         nextPage = 'ink-topup'
         break
+      case 'admin-panel':
       case 'admin-orders':
-        nextPage = isAdmin ? 'admin-orders' : null
-        break
       case 'admin-users':
-        nextPage = isAdmin ? 'admin-users' : null
-        break
       case 'admin-analytics':
-        nextPage = isAdmin ? 'admin-analytics' : null
-        break
       case 'admin-tags':
-        nextPage = isAdmin ? 'admin-tags' : null
+        nextPage = isAdmin ? 'admin-panel' : null
         break
       case 'gradebook':
         nextPage = canAccessTracking ? 'gradebook' : null
@@ -639,8 +626,8 @@ function App() {
     return renderWithViewAs(<AiReport onBack={() => setCurrentPage('home')} />)
   }
 
-  // 管理者介面
-  if (currentPage === 'admin-users') {
+  // 管理者面板 (整合所有管理功能)
+  if (currentPage === 'admin-panel') {
     if (!isAdmin) {
       return renderWithViewAs(
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -661,84 +648,8 @@ function App() {
       )
     }
     return renderWithViewAs(
-      <AdminUsers onBack={() => setCurrentPage('home')} />
+      <AdminPanel onBack={() => setCurrentPage('home')} />
     )
-  }
-
-  // 訂單管理
-  if (currentPage === 'admin-orders') {
-    if (!isAdmin) {
-      return renderWithViewAs(
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
-            <p className="text-sm text-gray-600">
-              只有管理者可以進入此頁面。
-            </p>
-            <button
-              type="button"
-              onClick={() => setCurrentPage('home')}
-              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-            >
-              返回首頁
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return renderWithViewAs(
-      <AdminOrders onBack={() => setCurrentPage('home')} />
-    )
-  }
-
-  // 使用情形儀表板
-  if (currentPage === 'admin-analytics') {
-    if (!isAdmin) {
-      return renderWithViewAs(
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
-            <p className="text-sm text-gray-600">
-              只有管理者可以進入此頁面。
-            </p>
-            <button
-              type="button"
-              onClick={() => setCurrentPage('home')}
-              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-            >
-              返回首頁
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return renderWithViewAs(
-      <AdminAnalytics onBack={() => setCurrentPage('home')} />
-    )
-  }
-
-  // 標籤字典管理
-  if (currentPage === 'admin-tags') {
-    if (!isAdmin) {
-      return renderWithViewAs(
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
-            <p className="text-sm text-gray-600">
-              只有管理者可以進入此頁面。
-            </p>
-            <button
-              type="button"
-              onClick={() => setCurrentPage('home')}
-              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-            >
-              返回首頁
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return renderWithViewAs(<AdminTags onBack={() => setCurrentPage('home')} />)
   }
 
   // 補充墨水
@@ -897,41 +808,11 @@ function App() {
             {isAdmin && (
               <button
                 type="button"
-                onClick={() => setCurrentPage('admin-analytics')}
+                onClick={() => setCurrentPage('admin-panel')}
                 className="px-3 py-2 text-xs font-semibold rounded-lg border border-purple-200 text-purple-700 hover:border-purple-300 hover:text-purple-800 transition-colors inline-flex items-center gap-2"
-              >
-                <BarChart3 className="w-4 h-4" />
-                使用情形儀表板
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => setCurrentPage('admin-orders')}
-                className="px-3 py-2 text-xs font-semibold rounded-lg border border-sky-200 text-sky-700 hover:border-sky-300 hover:text-sky-800 transition-colors inline-flex items-center gap-2"
-              >
-                <Receipt className="w-4 h-4" />
-                訂單管理
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => setCurrentPage('admin-users')}
-                className="px-3 py-2 text-xs font-semibold rounded-lg border border-amber-200 text-amber-700 hover:border-amber-300 hover:text-amber-800 transition-colors inline-flex items-center gap-2"
               >
                 <Shield className="w-4 h-4" />
-                管理者介面
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => setCurrentPage('admin-tags')}
-                className="px-3 py-2 text-xs font-semibold rounded-lg border border-purple-200 text-purple-700 hover:border-purple-300 hover:text-purple-800 transition-colors inline-flex items-center gap-2"
-              >
-                <Tags className="w-4 h-4" />
-                標籤字典
+                管理者面板
               </button>
             )}
             <button
