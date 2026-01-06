@@ -20,7 +20,11 @@
       "Bash(npm update:*)",
       "Bash(git push:*)",
       "Bash(rm:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(lsof:*)",
+      "Bash(xargs kill -9)",
+      "Bash(netstat:*)",
+      "Bash(xargs:*)"
     ]
   }
 }

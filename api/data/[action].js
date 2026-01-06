@@ -1,9 +1,5 @@
 import { getAuthUser } from '../../server/_auth.js'
-import {
-  getSupabaseAdmin,
-  getSupabaseUserClient,
-  isServiceRoleKey
-} from '../../server/_supabase.js'
+import { getSupabaseAdmin } from '../../server/_supabase.js'
 
 const TAG_QUIET_MINUTES = 5
 
@@ -229,11 +225,8 @@ async function handleSync(req, res) {
   const isOwnerOverride =
     requestedOwnerId && requestedOwnerId !== user.id
 
-  const useAdmin = isServiceRoleKey()
-  if (!useAdmin && !accessToken && !isOwnerOverride) {
-    res.status(401).json({ error: 'Unauthorized' })
-    return
-  }
+  // 後端始終使用 service role key 繞過 RLS
+  const supabaseAdmin = getSupabaseAdmin()
 
   if (isOwnerOverride && req.method !== 'GET') {
     res.status(403).json({ error: 'Read-only view mode' })
@@ -241,19 +234,17 @@ async function handleSync(req, res) {
   }
 
   let ownerId = user.id
-  let supabaseDb = useAdmin
-    ? getSupabaseAdmin()
-    : getSupabaseUserClient(accessToken)
+  let supabaseDb = supabaseAdmin
 
   if (isOwnerOverride) {
     try {
-      const supabaseAdmin = await requireAdminOverride(user.id)
-      if (!supabaseAdmin) {
+      const adminOverride = await requireAdminOverride(user.id)
+      if (!adminOverride) {
         res.status(403).json({ error: 'Forbidden' })
         return
       }
       ownerId = requestedOwnerId
-      supabaseDb = supabaseAdmin
+      // supabaseDb 已經是 admin client，無需重新賦值
     } catch (err) {
       res.status(500).json({
         error: err instanceof Error ? err.message : '讀取使用者權限失敗'
@@ -716,11 +707,8 @@ async function handleSubmission(req, res) {
       return
     }
 
-    const useAdmin = isServiceRoleKey()
-    if (!useAdmin && !accessToken) {
-      res.status(401).json({ error: 'Unauthorized' })
-      return
-    }
+    // 後端始終使用 service role key 繞過 RLS
+    const supabaseDb = getSupabaseAdmin()
 
     let body = req.body
     if (typeof body === 'string') {
@@ -745,10 +733,6 @@ async function handleSubmission(req, res) {
       res.status(400).json({ error: 'Missing required fields' })
       return
     }
-
-    const supabaseDb = useAdmin
-      ? getSupabaseAdmin()
-      : getSupabaseUserClient(accessToken)
 
     const tombstoneCheck = await supabaseDb
       .from('deleted_records')
@@ -832,26 +816,21 @@ async function handleReport(req, res) {
   const isOwnerOverride =
     requestedOwnerId && requestedOwnerId !== user.id
 
-  const useAdmin = isServiceRoleKey()
-  if (!useAdmin && !accessToken && !isOwnerOverride) {
-    res.status(401).json({ error: 'Unauthorized' })
-    return
-  }
+  // 後端始終使用 service role key 繞過 RLS
+  const supabaseAdmin = getSupabaseAdmin()
 
   let ownerId = user.id
-  let supabaseDb = useAdmin
-    ? getSupabaseAdmin()
-    : getSupabaseUserClient(accessToken)
+  let supabaseDb = supabaseAdmin
 
   if (isOwnerOverride) {
     try {
-      const supabaseAdmin = await requireAdminOverride(user.id)
-      if (!supabaseAdmin) {
+      const adminOverride = await requireAdminOverride(user.id)
+      if (!adminOverride) {
         res.status(403).json({ error: 'Forbidden' })
         return
       }
       ownerId = requestedOwnerId
-      supabaseDb = supabaseAdmin
+      // supabaseDb 已經是 admin client，無需重新賦值
     } catch (err) {
       res.status(500).json({
         error: err instanceof Error ? err.message : '讀取使用者權限失敗'

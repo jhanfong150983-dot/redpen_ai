@@ -1,9 +1,5 @@
 import { getAuthUser } from '../../server/_auth.js'
-import {
-  getSupabaseAdmin,
-  getSupabaseUserClient,
-  isServiceRoleKey
-} from '../../server/_supabase.js'
+import { getSupabaseAdmin } from '../../server/_supabase.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -12,7 +8,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { user, accessToken } = await getAuthUser(req, res)
+    const { user } = await getAuthUser(req, res)
     if (!user) {
       res.status(401).json({ error: 'Unauthorized' })
       return
@@ -21,67 +17,23 @@ export default async function handler(req, res) {
     let profile = null
     let profileLoaded = false
     try {
-      const useAdmin = isServiceRoleKey()
-      const supabaseDb = useAdmin
-        ? getSupabaseAdmin()
-        : accessToken
-          ? getSupabaseUserClient(accessToken)
-          : null
+      // 後端始終使用 service role key 繞過 RLS
+      const supabaseDb = getSupabaseAdmin()
 
-      console.log('🔍 Auth check:', {
-        userId: user.id,
-        useAdmin,
-        hasAccessToken: !!accessToken,
-        accessTokenLength: accessToken?.length || 0
-      })
+      const { data, error } = await supabaseDb
+        .from('profiles')
+        .select('name, avatar_url, role, permission_tier, ink_balance')
+        .eq('id', user.id)
+        .maybeSingle()
 
-      if (supabaseDb) {
-        const { data, error } = await supabaseDb
-          .from('profiles')
-          .select('name, avatar_url, role, permission_tier, ink_balance')
-          .eq('id', user.id)
-          .maybeSingle()
-
-        if (error) {
-          console.error('❌ Profile query failed:', {
-            error: error.message,
-            code: error.code,
-            hint: error.hint,
-            details: error.details,
-            userId: user.id,
-            useAdmin,
-            hasAccessToken: !!accessToken
-          })
-        } else {
-          console.log('✅ Profile query success')
-        }
-
-        profile = data || null
-        profileLoaded = !!data
-
-        // Debug: 記錄 profile 資料
-        console.log('🔍 Profile data:', {
-          userId: user.id,
-          profileLoaded,
-          hasData: !!data,
-          hasError: !!error,
-          profile,
-          ink_balance: profile?.ink_balance,
-          ink_balance_type: typeof profile?.ink_balance
-        })
-      } else {
-        console.warn('⚠️ No Supabase client available', {
-          useAdmin,
-          hasAccessToken: !!accessToken,
-          userId: user.id
-        })
+      if (error) {
+        console.error('❌ Profile query failed:', error.message)
       }
+
+      profile = data || null
+      profileLoaded = !!data
     } catch (error) {
-      console.error('❌ Profile query exception:', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        userId: user.id
-      })
+      console.error('❌ Profile query exception:', error instanceof Error ? error.message : String(error))
       profile = null
       profileLoaded = false
     }

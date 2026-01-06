@@ -1,9 +1,5 @@
 import { getAuthUser } from '../../server/_auth.js'
-import {
-  getSupabaseAdmin,
-  getSupabaseUserClient,
-  isServiceRoleKey
-} from '../../server/_supabase.js'
+import { getSupabaseAdmin } from '../../server/_supabase.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -12,14 +8,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { user, accessToken } = await getAuthUser(req, res)
+    const { user } = await getAuthUser(req, res)
     if (!user) {
-      res.status(401).json({ error: 'Unauthorized' })
-      return
-    }
-
-    const useAdmin = isServiceRoleKey()
-    if (!useAdmin && !accessToken) {
       res.status(401).json({ error: 'Unauthorized' })
       return
     }
@@ -33,9 +23,8 @@ export default async function handler(req, res) {
       return
     }
 
-    const supabaseDb = useAdmin
-      ? getSupabaseAdmin()
-      : getSupabaseUserClient(accessToken)
+    // 後端始終使用 service role key 繞過 RLS
+    const supabaseDb = getSupabaseAdmin()
 
     const { data: submission, error: submissionError } = await supabaseDb
       .from('submissions')
