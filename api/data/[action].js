@@ -620,7 +620,7 @@ async function handleSync(req, res) {
           const createdAt = toIsoTimestamp(s.createdAt)
           const gradedAt = toNumber(s.gradedAt)
           const imageUrl =
-            s.imageUrl || s.image_url || `submissions/${s.id}.webp`
+            s.imageUrl || s.image_url || `submissions/${s.assignmentId}_${s.studentId}.webp`
 
           return compactObject({
             id: s.id,
@@ -752,7 +752,7 @@ async function handleSubmission(req, res) {
       return
     }
 
-    const filePath = `submissions/${submissionId}.webp`
+    const filePath = `submissions/${assignmentId}_${studentId}.webp`
     const buffer = Buffer.from(String(imageBase64), 'base64')
 
     const { error: uploadError } = await supabaseDb.storage
