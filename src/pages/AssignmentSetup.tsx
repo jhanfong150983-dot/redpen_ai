@@ -1488,6 +1488,10 @@ export default function AssignmentSetup({
   }
 
   const saveAnswerKey = async () => {
+    console.log(`🚀 [答案解析] saveAnswerKey 函數被呼叫`)
+    console.log(`📋 [答案解析] editingAnswerAssignment:`, editingAnswerAssignment)
+    console.log(`📋 [答案解析] editingAnswerKey:`, editingAnswerKey)
+    
     if (!editingAnswerAssignment || !editingAnswerKey) return
     if (!editingClassroomId) {
       setEditAnswerKeyError('請選擇班級')
