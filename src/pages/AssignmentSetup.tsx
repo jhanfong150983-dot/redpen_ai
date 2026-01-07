@@ -1500,12 +1500,20 @@ export default function AssignmentSetup({
     // Prior Weight 現在是選填，不再強制要求
     try {
       setIsSavingAnswerKey(true)
+      console.log(`💾 [答案解析] 嘗試更新作業: ${editingAnswerAssignment.id}`)
+      console.log(`📝 [答案解析] 答案內容:`, editingAnswerKey)
+      
+      const now = Date.now()
       await db.assignments.update(editingAnswerAssignment.id, {
         answerKey: editingAnswerKey,
         domain: editingDomain,
         classroomId: editingClassroomId,
-        priorWeightTypes: editingPriorWeightTypes
+        priorWeightTypes: editingPriorWeightTypes,
+        updatedAt: now  // 更新時間戳記，觸發 sync
       })
+      
+      console.log(`✅ [答案解析] 成功儲存答案到 IndexedDB，updatedAt: ${now}`)
+      
       setAssignments((prev) => {
         if (selectedClassroomId && editingClassroomId !== selectedClassroomId) {
           return prev.filter((a) => a.id !== editingAnswerAssignment.id)
@@ -1517,7 +1525,8 @@ export default function AssignmentSetup({
                 answerKey: editingAnswerKey,
                 domain: editingDomain,
                 classroomId: editingClassroomId,
-                priorWeightTypes: editingPriorWeightTypes.length > 0 ? editingPriorWeightTypes : undefined
+                priorWeightTypes: editingPriorWeightTypes.length > 0 ? editingPriorWeightTypes : undefined,
+                updatedAt: now
               }
             : a
         )
@@ -1527,8 +1536,10 @@ export default function AssignmentSetup({
         classroomId: editingClassroomId,
         domain: editingDomain,
         priorWeightTypes: editingPriorWeightTypes.length > 0 ? editingPriorWeightTypes : undefined,
-        answerKey: editingAnswerKey
+        answerKey: editingAnswerKey,
+        updatedAt: now
       })
+      console.log(`🔄 [答案解析] 觸發同步...`)
       requestSync()
       closeAnswerKeyModal()
     } catch (err) {
