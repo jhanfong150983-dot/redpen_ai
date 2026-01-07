@@ -580,9 +580,10 @@ export default function AssignmentImport({
         for (const oldSub of existingSubmissions) {
           console.log('🗑️ [PDF匯入] 刪除本地舊作業:', {
             id: oldSub.id,
-            hadGradingData: !!(oldSub.ai_correction || oldSub.teacher_correction),
-            aiCorrection: oldSub.ai_correction,
-            teacherCorrection: oldSub.teacher_correction
+            hadGradingData: !!(oldSub.score || oldSub.feedback || oldSub.gradingResult),
+            score: oldSub.score,
+            feedback: oldSub.feedback,
+            hasGradingResult: !!oldSub.gradingResult
           })
           await db.submissions.delete(oldSub.id)
         }

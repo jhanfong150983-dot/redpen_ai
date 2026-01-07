@@ -35,8 +35,9 @@
 🗑️ [PDF匯入] 刪除本地舊作業: {
   id: "old-submission-id",
   hadGradingData: true,  // 如果之前有批改過
-  aiCorrection: {...},   // 舊的 AI 批改資料
-  teacherCorrection: {...} // 舊的教師批改資料
+  score: 85,             // 舊的分數
+  feedback: "...",       // 舊的批改回饋
+  hasGradingResult: true // 是否有完整批改結果
 }
 
 ✅ [PDF匯入] 舊作業已清除，批改資料已清空
@@ -133,7 +134,7 @@ WHERE assignment_id = 'xxx' AND student_id = 'xxx'
 **✅ 驗證點 3.2**：`id` 是新的 ID（與日誌中的 `new-submission-id` 相同）
 **✅ 驗證點 3.3**：`image_url` 是 `submissions/new-submission-id.webp`
 **✅ 驗證點 3.4**：`status` 是 `synced`
-**✅ 驗證點 3.5**：沒有 `ai_correction` 和 `teacher_correction` 欄位資料（批改資料已清空）
+**✅ 驗證點 3.5**：沒有批改相關欄位資料（`score`、`feedback`、`grading_result` 皆為空）
 
 ---
 
