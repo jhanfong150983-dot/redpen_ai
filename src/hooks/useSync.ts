@@ -412,6 +412,11 @@ export function useSync(options: UseSyncOptions = {}) {
         readDeleteQueue()
       ])
 
+    console.log('🔄 [同步] 讀取刪除佇列:', {
+      count: deleteQueue.length,
+      items: deleteQueue.map(q => ({ tableName: q.tableName, recordId: q.recordId }))
+    })
+
     debugLog('📊 pushMetadata 讀取的 folders:', folders)
 
     const deleteQueueIds = deleteQueue
@@ -450,6 +455,12 @@ export function useSync(options: UseSyncOptions = {}) {
         bucket.push({ id: entry.recordId, deletedAt: entry.deletedAt })
       }
     }
+
+    console.log('📦 [同步] 準備發送刪除資料:', {
+      submissions: deletedPayload.submissions.length,
+      total: Object.values(deletedPayload).reduce((sum, arr) => sum + arr.length, 0),
+      deletedPayload
+    })
 
     const classroomPayload = classrooms
       .filter((c) => c?.id)

@@ -480,6 +480,21 @@ async function handleSync(req, res) {
     const deletedPayload =
       body.deleted && typeof body.deleted === 'object' ? body.deleted : {}
 
+    console.log('📥 [API] 收到同步請求:', {
+      classrooms: classrooms.length,
+      students: students.length,
+      assignments: assignments.length,
+      submissions: submissions.length,
+      folders: folders.length,
+      deleted: {
+        classrooms: deletedPayload.classrooms?.length || 0,
+        students: deletedPayload.students?.length || 0,
+        assignments: deletedPayload.assignments?.length || 0,
+        submissions: deletedPayload.submissions?.length || 0,
+        folders: deletedPayload.folders?.length || 0
+      }
+    })
+
     const nowIso = new Date().toISOString()
 
     try {
@@ -556,11 +571,13 @@ async function handleSync(req, res) {
         }
       }
 
+      console.log('🔄 [API] 開始處理刪除請求...')
       await applyDeletes('classrooms', deletedPayload.classrooms)
       await applyDeletes('students', deletedPayload.students)
       await applyDeletes('assignments', deletedPayload.assignments)
       await applyDeletes('submissions', deletedPayload.submissions)
       await applyDeletes('folders', deletedPayload.folders)
+      console.log('✅ [API] 所有刪除處理完成')
 
       const buildUpsertRows = async (tableName, items, mapper) => {
         const filtered = items.filter((item) => item?.id)
