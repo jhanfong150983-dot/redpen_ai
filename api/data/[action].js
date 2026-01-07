@@ -479,6 +479,8 @@ async function handleSync(req, res) {
     const folders = Array.isArray(body.folders) ? body.folders : []
     const deletedPayload =
       body.deleted && typeof body.deleted === 'object' ? body.deleted : {}
+    
+    console.log(`📥 [後端 Sync POST] 收到 ${assignments.length} 個作業:`, assignments.map(a => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
 
     const nowIso = new Date().toISOString()
 
@@ -539,11 +541,13 @@ async function handleSync(req, res) {
           if (hasExisting) {
             const incomingUpdatedAt = toMillis(item.updatedAt ?? item.updated_at)
             if (!incomingUpdatedAt || (existingUpdatedAt && incomingUpdatedAt <= existingUpdatedAt)) {
+              console.log(`⏭️ [buildUpsertRows ${tableName}] 跳過舊資料: ${item.id}, 本地 ${incomingUpdatedAt} <= 雲端 ${existingUpdatedAt}`)
               continue
             }
           }
           rows.push(mapper(item))
         }
+        console.log(`📝 [buildUpsertRows ${tableName}] 過濾後準備寫入 ${rows.length}/${filtered.length} 筆`)
         return rows
       }
 
@@ -607,10 +611,17 @@ async function handleSync(req, res) {
       )
 
       if (assignmentRows.length > 0) {
+        console.log(`💾 [後端 Sync] 準備寫入 ${assignmentRows.length} 個作業到 Supabase:`, assignmentRows.map(a => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answer_key })))
         const result = await supabaseDb
           .from('assignments')
           .upsert(assignmentRows, { onConflict: 'id' })
-        if (result.error) throw new Error(result.error.message)
+        if (result.error) {
+          console.error(`❌ [後端 Sync] 寫入失敗:`, result.error)
+          throw new Error(result.error.message)
+        }
+        console.log(`✅ [後端 Sync] 成功寫入 ${assignmentRows.length} 個作業`)
+      } else {
+        console.log(`⚠️ [後端 Sync] 沒有作業需要寫入`)
       }
 
       const submissionRows = await buildUpsertRows(

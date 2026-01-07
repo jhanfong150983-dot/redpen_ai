@@ -470,6 +470,8 @@ export function useSync(options: UseSyncOptions = {}) {
         answerKey: a.answerKey,
         updatedAt: a.updatedAt
       }))
+    
+    console.log(`📤 [Sync Push] 準備上傳 ${assignmentPayload.length} 個作業:`, assignmentPayload.map(a => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
 
     const submissionPayload = submissions
       .filter((sub) => sub.status !== 'scanned')
@@ -560,6 +562,8 @@ export function useSync(options: UseSyncOptions = {}) {
     const submissions = Array.isArray(data.submissions) ? data.submissions : []
     const folders = Array.isArray(data.folders) ? data.folders : []
     const deleted = data?.deleted && typeof data.deleted === 'object' ? data.deleted : {}
+    
+    console.log(`📥 [Sync Pull] 從雲端拉取 ${assignments.length} 個作業:`, assignments.map((a: any) => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
 
     const collectDeletedIds = (items: unknown) =>
       Array.isArray(items)
