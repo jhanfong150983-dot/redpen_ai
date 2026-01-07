@@ -961,6 +961,11 @@ export function useSync(options: UseSyncOptions = {}) {
         .equals('scanned')
         .toArray()
 
+      console.log('🔄 [同步] 準備上傳 submissions:', {
+        count: pendingSubmissions.length,
+        ids: pendingSubmissions.map(s => s.id)
+      })
+
       debugLog(`找到 ${pendingSubmissions.length} 條待同步紀錄`)
 
       let successCount = 0
