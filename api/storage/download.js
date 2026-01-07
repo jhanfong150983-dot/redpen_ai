@@ -51,7 +51,7 @@ export default async function handler(req, res) {
 
     const { data: submission, error: submissionError } = await supabaseDb
       .from('submissions')
-      .select('id, owner_id, assignment_id, student_id')
+      .select('id, owner_id')
       .eq('id', submissionId)
       .maybeSingle()
 
@@ -78,21 +78,10 @@ export default async function handler(req, res) {
       return
     }
 
-    // 優先使用新格式路徑
-    let filePath = `submissions/${submission.assignment_id}_${submission.student_id}.webp`
-    let { data, error } = await supabaseDb.storage
+    const filePath = `submissions/${submissionId}.webp`
+    const { data, error } = await supabaseDb.storage
       .from('homework-images')
       .download(filePath)
-
-    // 若找不到檔案，回退到舊格式（向後相容）
-    if (error && error.message && error.message.includes('not found')) {
-      filePath = `submissions/${submissionId}.webp`
-      const fallback = await supabaseDb.storage
-        .from('homework-images')
-        .download(filePath)
-      data = fallback.data
-      error = fallback.error
-    }
 
     if (error || !data) {
       res.status(404).json({ error: 'Image not found' })

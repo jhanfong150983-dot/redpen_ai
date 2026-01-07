@@ -487,6 +487,45 @@ async function handleSync(req, res) {
         const list = normalizeDeletedList(items)
         if (list.length === 0) return
 
+        // 步驟 1: 針對 submissions，先刪除雲端儲存檔案
+        if (tableName === 'submissions') {
+          const filePaths = list.map(item => `submissions/${item.id}.webp`)
+
+          try {
+            // 使用批次刪除 API (Supabase 支援一次刪除多個檔案)
+            const { error } = await supabaseDb.storage
+              .from('homework-images')
+              .remove(filePaths)
+
+            if (error) {
+              console.warn('批次刪除儲存檔案失敗，改用逐一刪除:', error.message)
+
+              // 降級方案：逐一刪除
+              const results = await Promise.allSettled(
+                filePaths.map(async (filePath) => {
+                  const { error: singleError } = await supabaseDb.storage
+                    .from('homework-images')
+                    .remove([filePath])
+
+                  if (singleError && !singleError.message.includes('not found')) {
+                    console.warn(`刪除檔案 ${filePath} 失敗:`, singleError.message)
+                  }
+                })
+              )
+
+              const succeeded = results.filter(r => r.status === 'fulfilled').length
+              const failed = results.filter(r => r.status === 'rejected').length
+              console.log(`✅ 雲端檔案刪除: ${succeeded} 成功, ${failed} 失敗 (共 ${list.length} 個)`)
+            } else {
+              console.log(`✅ 成功刪除 ${filePaths.length} 個雲端檔案`)
+            }
+          } catch (err) {
+            console.error('❌ 雲端檔案刪除異常:', err)
+            // 繼續執行資料庫刪除，不中斷流程
+          }
+        }
+
+        // 步驟 2: 建立 tombstone 記錄 (原有邏輯)
         const deleteRows = list.map((item) =>
           compactObject({
             owner_id: user.id,
@@ -505,6 +544,7 @@ async function handleSync(req, res) {
           throw new Error(tombstoneResult.error.message)
         }
 
+        // 步驟 3: 從資料庫刪除記錄 (原有邏輯)
         const ids = list.map((item) => item.id)
         const deleteResult = await supabaseDb
           .from(tableName)
@@ -620,7 +660,7 @@ async function handleSync(req, res) {
           const createdAt = toIsoTimestamp(s.createdAt)
           const gradedAt = toNumber(s.gradedAt)
           const imageUrl =
-            s.imageUrl || s.image_url || `submissions/${s.assignmentId}_${s.studentId}.webp`
+            s.imageUrl || s.image_url || `submissions/${s.id}.webp`
 
           return compactObject({
             id: s.id,
@@ -752,7 +792,7 @@ async function handleSubmission(req, res) {
       return
     }
 
-    const filePath = `submissions/${assignmentId}_${studentId}.webp`
+    const filePath = `submissions/${submissionId}.webp`
     const buffer = Buffer.from(String(imageBase64), 'base64')
 
     const { error: uploadError } = await supabaseDb.storage

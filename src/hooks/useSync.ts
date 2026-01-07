@@ -342,7 +342,7 @@ export function useSync(options: UseSyncOptions = {}) {
 
       await db.submissions.update(submission.id, {
         status: 'synced',
-        imageUrl: `submissions/${submission.assignmentId}_${submission.studentId}.webp`
+        imageUrl: `submissions/${submission.id}.webp`
         // 注意：不更新 imageBlob 和 imageBase64，保留原有數據
       })
 
