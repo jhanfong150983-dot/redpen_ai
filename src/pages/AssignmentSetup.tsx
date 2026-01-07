@@ -3333,7 +3333,17 @@ export default function AssignmentSetup({
               </button>
               <button
                 type="button"
-                onClick={saveAnswerKey}
+                onClick={() => {
+                  console.log(`🔘 [答案解析] 儲存按鈕被點擊`)
+                  console.log(`📊 [答案解析] 當前狀態:`, {
+                    editingAnswerAssignment,
+                    editingAnswerKey,
+                    editingDomain,
+                    editingClassroomId,
+                    isSavingAnswerKey
+                  })
+                  saveAnswerKey()
+                }}
                 disabled={isSavingAnswerKey}
                 className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
