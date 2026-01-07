@@ -7,20 +7,17 @@ import AdminTags from './AdminTags'
 
 type AdminPanelProps = {
   onBack: () => void
+  onNavigateToDetail?: (userId: string) => void
   initialTab?: 'users' | 'orders' | 'analytics' | 'tags'
 }
 
 type TabType = 'users' | 'orders' | 'analytics' | 'tags'
 
-export default function AdminPanel({ onBack, initialTab = 'users' }: AdminPanelProps) {
+export default function AdminPanel({ onBack, onNavigateToDetail, initialTab = 'users' }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab)
 
-  // 注意：不再在離開時自動清除 viewAs
-  // 因為用戶可能是點擊「切換檢視」回到主頁面查看其他用戶的資料
-  // viewAs 的清除由橫幅上的「退出檢視」按鈕負責
-
   const tabs = [
-    { id: 'users' as TabType, label: '用戶管理', icon: Users, color: 'text-amber-600' },
+    { id: 'users' as TabType, label: '使用者統計', icon: Users, color: 'text-amber-600' },
     { id: 'orders' as TabType, label: '訂單管理', icon: Receipt, color: 'text-sky-600' },
     { id: 'analytics' as TabType, label: '使用情形', icon: BarChart3, color: 'text-purple-600' },
     { id: 'tags' as TabType, label: '標籤字典', icon: Tags, color: 'text-indigo-600' }
@@ -29,8 +26,7 @@ export default function AdminPanel({ onBack, initialTab = 'users' }: AdminPanelP
   const renderContent = () => {
     switch (activeTab) {
       case 'users':
-        // 傳遞 onBack 讓切換檢視功能可以導航回主頁面
-        return <AdminUsers onBack={onBack} />
+        return <AdminUsers onNavigateToDetail={onNavigateToDetail} />
       case 'orders':
         return <AdminOrders />
       case 'analytics':

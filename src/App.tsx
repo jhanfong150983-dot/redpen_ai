@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Users,
   BookOpen,
@@ -31,8 +31,7 @@ import '@/lib/debug-sync'
 import { debugLog } from '@/lib/logger'
 import { LEGAL_MODAL_EVENT, type LegalModalDetail } from '@/lib/legal-events'
 import { TERMS_VERSION, PRIVACY_VERSION, REFUND_FEE_RATE } from '@/lib/legal'
-import { useAdminViewAs } from '@/lib/admin-view-as'
-import { closeInkSession } from '@/lib/ink-session'
+import AdminUserDetail from '@/pages/AdminUserDetail'
 
 type Page =
   | 'home'
@@ -48,6 +47,7 @@ type Page =
   | 'correction'
   | 'ai-report'
   | 'admin-panel'
+  | 'admin-user-detail'
   | 'ink-topup'
 
 type AuthState =
@@ -81,6 +81,7 @@ function App() {
   const [auth, setAuth] = useState<AuthState>({ status: 'loading' })
   const [currentPage, setCurrentPage] = useState<Page>('home')
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>('')
+  const [selectedUserId, setSelectedUserId] = useState<string>('')
   const [isAiDisclaimerOpen, setIsAiDisclaimerOpen] = useState(false)
   const [isIpDisclaimerOpen, setIsIpDisclaimerOpen] = useState(false)
   const [isTermsOpen, setIsTermsOpen] = useState(false)
@@ -92,24 +93,8 @@ function App() {
     totalDrops: 0,
     amountTwd: 0
   })
-  const { viewAs, clearViewAs } = useAdminViewAs()
   const inkBalance =
     auth.status === 'authenticated' ? auth.user.inkBalance ?? 0 : null
-
-  // 退出檢視模式：強制關閉 ink session、清除 localStorage、回到首頁
-  const handleExitViewAs = useCallback(async () => {
-    try {
-      // 嘗試關閉 ink session（如果有的話）
-      await closeInkSession()
-    } catch (error) {
-      console.warn('關閉 ink session 失敗:', error)
-    }
-    // 清除 viewAs localStorage
-    clearViewAs()
-    // 回到首頁
-    setCurrentPage('home')
-    setSelectedAssignmentId('')
-  }, [clearViewAs])
 
   const fetchAuth = useCallback(async () => {
     try {
@@ -428,11 +413,6 @@ function App() {
 
   const isAdmin =
     auth.status === 'authenticated' && auth.user.role === 'admin'
-  const isViewAsActive =
-    isAdmin && viewAs?.ownerId && viewAs.ownerId !== auth.user.id
-  const viewAsLabel = viewAs
-    ? viewAs.name || viewAs.email || viewAs.ownerId
-    : ''
   const isProTier =
     auth.status === 'authenticated' &&
     (auth.user.permissionTier === 'advanced' || hasPaidOrder)
@@ -453,34 +433,6 @@ function App() {
     }
     return true
   }, [auth, setCurrentPage])
-
-  const viewAsBanner = isViewAsActive ? (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-slate-900 text-white text-sm px-4 py-2 shadow-lg">
-      <div className="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-        <div>
-          目前為管理者檢視模式：
-          <span className="font-semibold"> {viewAsLabel}</span> · 僅可讀取資料
-        </div>
-        <button
-          type="button"
-          onClick={handleExitViewAs}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs"
-        >
-          退出檢視
-        </button>
-      </div>
-    </div>
-  ) : null
-
-  const renderWithViewAs = (content: ReactNode) =>
-    isViewAsActive ? (
-      <>
-        {viewAsBanner}
-        <div className="pt-12">{content}</div>
-      </>
-    ) : (
-      content
-    )
 
   useEffect(() => {
     if (urlPageHandled) return
@@ -530,7 +482,7 @@ function App() {
   }, [auth.status, canAccessTracking, isAdmin, urlPageHandled])
 
   if (auth.status === 'loading') {
-    return renderWithViewAs(
+    return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
         <div className="text-center">
           <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -546,14 +498,14 @@ function App() {
 
   // 班級管理
   if (currentPage === 'classroom-management') {
-    return renderWithViewAs(
+    return (
       <ClassroomManagement onBack={() => setCurrentPage('home')} />
     )
   }
 
   // 作業管理
   if (currentPage === 'assignment-setup') {
-    return renderWithViewAs(
+    return (
       <AssignmentSetup
         onBack={() => setCurrentPage('home')}
         inkBalance={auth.user.inkBalance ?? 0}
@@ -564,7 +516,7 @@ function App() {
 
   // 作業匯入：選擇作業並決定匯入方式
   if (currentPage === 'assignment-import-select') {
-    return renderWithViewAs(
+    return (
       <AssignmentImportSelect
         onBack={() => setCurrentPage('home')}
         onSelectScanImport={(assignmentId) => {
@@ -581,7 +533,7 @@ function App() {
 
   // 掃描匯入
   if (currentPage === 'assignment-scan' && selectedAssignmentId) {
-    return renderWithViewAs(
+    return (
       <AssignmentScanImport
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('assignment-import-select')}
@@ -592,7 +544,7 @@ function App() {
 
   // AI 批改：作業列表
   if (currentPage === 'grading-list') {
-    return renderWithViewAs(
+    return (
       <AssignmentList
         onBack={() => setCurrentPage('home')}
         onSelectAssignment={(assignmentId) => {
@@ -607,7 +559,7 @@ function App() {
   // 成績簿
   if (currentPage === 'gradebook') {
     if (!canAccessTracking) {
-      return renderWithViewAs(
+      return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -625,12 +577,12 @@ function App() {
         </div>
       )
     }
-    return renderWithViewAs(<Gradebook onBack={() => setCurrentPage('home')} />)
+    return (<Gradebook onBack={() => setCurrentPage('home')} />)
   }
 
   if (currentPage === 'ai-report') {
     if (!canAccessTracking) {
-      return renderWithViewAs(
+      return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -648,13 +600,13 @@ function App() {
         </div>
       )
     }
-    return renderWithViewAs(<AiReport onBack={() => setCurrentPage('home')} />)
+    return (<AiReport onBack={() => setCurrentPage('home')} />)
   }
 
   // 管理者面板 (整合所有管理功能)
   if (currentPage === 'admin-panel') {
     if (!isAdmin) {
-      return renderWithViewAs(
+      return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -672,14 +624,58 @@ function App() {
         </div>
       )
     }
-    return renderWithViewAs(
-      <AdminPanel onBack={() => setCurrentPage('home')} />
+    return (
+      <AdminPanel
+        onBack={() => setCurrentPage('home')}
+        onNavigateToDetail={(userId) => {
+          setSelectedUserId(userId)
+          setCurrentPage('admin-user-detail')
+        }}
+      />
+    )
+  }
+
+  // 管理者 - 使用者詳細資訊
+  if (currentPage === 'admin-user-detail') {
+    if (!isAdmin) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
+            <p className="text-sm text-gray-600">
+              只有管理者可以進入此頁面。
+            </p>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('home')}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            >
+              返回首頁
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    if (!selectedUserId) {
+      setCurrentPage('admin-panel')
+      return null
+    }
+
+    return (
+      <AdminUserDetail
+        userId={selectedUserId}
+        onBack={() => {
+          setCurrentPage('admin-panel')
+          setSelectedUserId('')
+        }}
+      />
     )
   }
 
   // 補充墨水
   if (currentPage === 'ink-topup') {
-    return renderWithViewAs(
+    return (
       <>
         <InkTopUp
           onBack={() => setCurrentPage('home')}
@@ -692,7 +688,7 @@ function App() {
 
   // AI 批改：單一作業批改介面
   if (currentPage === 'grading' && selectedAssignmentId) {
-    return renderWithViewAs(
+    return (
       <GradingPage
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('grading-list')}
@@ -703,7 +699,7 @@ function App() {
 
   // 批次匯入（PDF／檔案）
   if (currentPage === 'assignment-import' && selectedAssignmentId) {
-    return renderWithViewAs(
+    return (
       <AssignmentImport
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('assignment-import-select')}
@@ -715,7 +711,7 @@ function App() {
   // 訂正管理：選擇作業
   if (currentPage === 'correction-select') {
     if (!canAccessTracking) {
-      return renderWithViewAs(
+      return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -733,7 +729,7 @@ function App() {
         </div>
       )
     }
-    return renderWithViewAs(
+    return (
       <CorrectionSelect
         onBack={() => setCurrentPage('home')}
         onSelectAssignment={(id) => {
@@ -747,7 +743,7 @@ function App() {
   // 訂正管理：看板
   if (currentPage === 'correction' && selectedAssignmentId) {
     if (!canAccessTracking) {
-      return renderWithViewAs(
+      return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 text-center space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">權限不足</h2>
@@ -765,7 +761,7 @@ function App() {
         </div>
       )
     }
-    return renderWithViewAs(
+    return (
       <CorrectionManagement
         assignmentId={selectedAssignmentId}
         onBack={() => setCurrentPage('correction-select')}
@@ -773,7 +769,7 @@ function App() {
     )
   }
 
-  return renderWithViewAs(
+  return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="w-full max-w-5xl bg-white rounded-2xl shadow-xl p-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-4">

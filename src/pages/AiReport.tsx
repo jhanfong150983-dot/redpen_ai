@@ -28,7 +28,6 @@ import {
   writeTeacherSummaryCache,
   type TeacherSummaryResult
 } from './ai-report/teacher-summary'
-import { useAdminViewAs } from '@/lib/admin-view-as'
 import type {
   AssignmentTagReport,
   DomainDiagnosis,
@@ -566,7 +565,6 @@ type AiReportProps = {
 }
 
 export default function AiReport({ onBack }: AiReportProps) {
-  const { viewAs } = useAdminViewAs()
   const [syncData, setSyncData] = useState<SyncPayload | null>(null)
   const [reportData, setReportData] = useState<ReportPayload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -600,16 +598,9 @@ export default function AiReport({ onBack }: AiReportProps) {
       setLoading(true)
       setError(null)
       try {
-        const viewAsOwnerId = viewAs?.ownerId?.trim()
-        const syncUrl = viewAsOwnerId
-          ? `/api/data/sync?includeTags=1&ownerId=${encodeURIComponent(viewAsOwnerId)}`
-          : '/api/data/sync?includeTags=1'
-        const reportUrl = viewAsOwnerId
-          ? `/api/data/report?ownerId=${encodeURIComponent(viewAsOwnerId)}`
-          : '/api/data/report'
         const [syncResponse, reportResponse] = await Promise.all([
-          fetch(syncUrl, { credentials: 'include' }),
-          fetch(reportUrl, { credentials: 'include' })
+          fetch('/api/data/sync?includeTags=1', { credentials: 'include' }),
+          fetch('/api/data/report', { credentials: 'include' })
         ])
         if (!syncResponse.ok) {
           throw new Error('無法取得作業資料，請重新整理')
@@ -638,7 +629,7 @@ export default function AiReport({ onBack }: AiReportProps) {
     return () => {
       isActive = false
     }
-  }, [viewAs?.ownerId])
+  }, [])
 
   useEffect(() => {
     if (!import.meta.env.DEV) return
