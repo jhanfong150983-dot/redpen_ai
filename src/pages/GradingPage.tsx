@@ -12,7 +12,8 @@ import {
   RotateCcw,
   X,
   Pencil,
-  AlertTriangle
+  AlertTriangle,
+  Trash2
 } from 'lucide-react'
 import { db, type Assignment, type Student, type Submission, type Classroom } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
@@ -753,6 +754,43 @@ export default function GradingPage({
     }
   }
 
+  const handleDeleteSubmission = async (submission: Submission, student: Student) => {
+    const confirmMessage = `確定要刪除 ${student.seatNumber} 號 ${student.name} 的作業嗎？\n\n此操作無法復原。`
+
+    if (!window.confirm(confirmMessage)) {
+      return
+    }
+
+    try {
+      // 從數據庫中刪除
+      await db.submissions.delete(submission.id)
+
+      // 加入刪除隊列以同步到雲端
+      const { queueDelete } = await import('@/lib/sync-delete-queue')
+      await queueDelete('submissions', submission.id)
+
+      // 更新本地狀態
+      setSubmissions((prev) => {
+        const next = new Map(prev)
+        next.delete(student.id)
+        return next
+      })
+
+      // 如果刪除的是當前選中的作業，清除選中狀態
+      if (selectedSubmission?.submission.id === submission.id) {
+        setSelectedSubmission(null)
+      }
+
+      // 觸發同步
+      requestSync()
+
+      console.log(`✅ 已刪除 ${student.name} 的作業`)
+    } catch (error) {
+      console.error('刪除作業失敗:', error)
+      alert('刪除作業失敗，請稍後再試')
+    }
+  }
+
   const handleGradeAll = async () => {
     if (inkSessionError) {
       alert(inkSessionError)
@@ -1383,19 +1421,31 @@ export default function GradingPage({
 
                     {(status === 'graded' || status === 'synced' || status === 'scanned') &&
                       submission && (
-                        <button
+                        <>
+                          <button
                             onClick={(e) => {
                               e.stopPropagation()
                               void handleRegradeSingle(submission)
                             }}
-                          className="absolute top-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-50 hover:text-blue-600 z-10"
-                          title="重新使用 AI 批改此學生"
+                            className="absolute top-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-50 hover:text-blue-600 z-10"
+                            title="重新使用 AI 批改此學生"
                             disabled={isGrading || !inkSessionReady}
                           >
-                          <RotateCcw
-                            className={`w-4 h-4 ${activeRegradeId === submission.id ? 'animate-spin' : ''}`}
-                          />
-                        </button>
+                            <RotateCcw
+                              className={`w-4 h-4 ${activeRegradeId === submission.id ? 'animate-spin' : ''}`}
+                            />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleDeleteSubmission(submission, student)
+                            }}
+                            className="absolute bottom-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 z-10"
+                            title="刪除此學生的作業"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                   </div>
                 </div>
