@@ -826,7 +826,13 @@ async function handleSubmission(req, res) {
           image_url: filePath,
           status: 'synced',
           created_at: timestamp,
-          owner_id: user.id
+          owner_id: user.id,
+          // 清除舊的批改資料（當上傳新圖片時）
+          score: null,
+          feedback: null,
+          grading_result: null,
+          graded_at: null,
+          correction_count: null
         },
         {
           onConflict: 'assignment_id,student_id',
