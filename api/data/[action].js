@@ -816,29 +816,59 @@ async function handleSubmission(req, res) {
 
     const timestamp = new Date(createdTime).toISOString()
 
+    // 先檢查是否有相同作業+學生的舊 submission
+    const existingCheck = await supabaseDb
+      .from('submissions')
+      .select('id')
+      .eq('assignment_id', assignmentId)
+      .eq('student_id', studentId)
+      .eq('owner_id', user.id)
+      .limit(1)
+
+    // 如果存在且 ID 不同，先刪除舊的
+    if (existingCheck.data && existingCheck.data.length > 0) {
+      const oldId = existingCheck.data[0].id
+      if (oldId !== submissionId) {
+        // 建立 tombstone 記錄
+        await supabaseDb.from('deleted_records').upsert({
+          owner_id: user.id,
+          table_name: 'submissions',
+          record_id: oldId,
+          deleted_at: new Date().toISOString()
+        }, {
+          onConflict: 'owner_id,table_name,record_id'
+        })
+
+        // 刪除舊的 submission
+        await supabaseDb
+          .from('submissions')
+          .delete()
+          .eq('id', oldId)
+          .eq('owner_id', user.id)
+
+        // 刪除舊的雲端檔案
+        try {
+          await supabaseDb.storage
+            .from('homework-images')
+            .remove([`submissions/${oldId}.webp`])
+        } catch (err) {
+          console.warn('刪除舊檔案失敗:', err)
+        }
+      }
+    }
+
+    // 插入新的 submission（使用 insert 而非 upsert）
     const { error: dbError } = await supabaseDb
       .from('submissions')
-      .upsert(
-        {
-          id: submissionId,
-          assignment_id: assignmentId,
-          student_id: studentId,
-          image_url: filePath,
-          status: 'synced',
-          created_at: timestamp,
-          owner_id: user.id,
-          // 清除舊的批改資料（當上傳新圖片時）
-          score: null,
-          feedback: null,
-          grading_result: null,
-          graded_at: null,
-          correction_count: null
-        },
-        {
-          onConflict: 'assignment_id,student_id',
-          ignoreDuplicates: false
-        }
-      )
+      .insert({
+        id: submissionId,
+        assignment_id: assignmentId,
+        student_id: studentId,
+        image_url: filePath,
+        status: 'synced',
+        created_at: timestamp,
+        owner_id: user.id
+      })
 
     if (dbError) {
       res.status(500).json({ error: `資料庫寫入失敗: ${dbError.message}` })
