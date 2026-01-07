@@ -11,7 +11,7 @@ import {
 import { NumericInput } from '@/components/NumericInput'
 import { db, generateId, getCurrentTimestamp } from '@/lib/db'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
-import { requestSync } from '@/lib/sync-events'
+import { requestSync, waitForSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import {
   convertPdfToImages,
@@ -654,7 +654,6 @@ export default function AssignmentImport({
         successCount += 1
       }
 
-      alert(`已成功建立 ${successCount} 份作業`)
       if (successCount > 0) {
         // 觸發同步前再次檢查資料庫狀態
         const allSubmissions = await db.submissions.toArray()
@@ -665,15 +664,23 @@ export default function AssignmentImport({
           scannedIds: allSubmissions.filter(s => s.status === 'scanned').map(s => s.id)
         })
 
+        console.log('⏰ [PDF匯入] 觸發同步並等待完成...')
         requestSync()
 
-        // 延遲跳回首頁，讓同步有時間執行
-        // 避免 ViewAs 變更清空本地資料庫
-        console.log('⏰ [PDF匯入] 延遲 1 秒後跳回首頁，等待同步完成')
-        setTimeout(() => {
-          console.log('🏠 [PDF匯入] 跳回首頁')
-          onUploadComplete?.()
-        }, 1000)
+        try {
+          // 等待同步完成（最多 10 秒）
+          await waitForSync(10000)
+          console.log('✅ [PDF匯入] 同步已完成')
+          alert(`已成功建立 ${successCount} 份作業並同步到雲端`)
+        } catch (error) {
+          console.warn('⚠️ [PDF匯入] 同步超時或失敗:', error)
+          alert(`已建立 ${successCount} 份作業，但同步可能尚未完成`)
+        }
+
+        console.log('🏠 [PDF匯入] 跳回首頁')
+        onUploadComplete?.()
+      } else {
+        alert('沒有建立任何作業')
       }
     } catch (e) {
       console.error(e)

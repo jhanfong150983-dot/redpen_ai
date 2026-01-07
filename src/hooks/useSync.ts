@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
 import { useOnlineStatus } from './useOnlineStatus'
-import { SYNC_EVENT_NAME } from '@/lib/sync-events'
+import { SYNC_EVENT_NAME, notifySyncComplete } from '@/lib/sync-events'
 import { clearDeleteQueue, readDeleteQueue } from '@/lib/sync-delete-queue'
 import type { Assignment, Classroom, Student, Submission } from '@/lib/db'
 import { blobToBase64 as blobToDataUrl, compressImage } from '@/lib/imageCompression'
@@ -1037,6 +1037,9 @@ export function useSync(options: UseSyncOptions = {}) {
             ? `${failCount} 條記錄同步失敗`
             : null
       }))
+
+      // 通知同步完成
+      notifySyncComplete()
     } catch (error) {
       if (isRlsError(error)) {
         markSyncBlocked(error instanceof Error ? error.message : String(error))
