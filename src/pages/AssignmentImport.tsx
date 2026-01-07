@@ -615,6 +615,16 @@ export default function AssignmentImport({
         try {
           await db.submissions.add(submission)
           console.log('✅ [PDF匯入] 新作業已加入本地資料庫')
+
+          // 驗證插入成功
+          const verify = await db.submissions.get(submission.id)
+          console.log('🔍 [PDF匯入] 驗證插入結果:', {
+            found: !!verify,
+            id: verify?.id,
+            status: verify?.status,
+            hasBlob: !!verify?.imageBlob,
+            hasBase64: !!verify?.imageBase64
+          })
         } catch (error) {
           if (!avoidBlobStorage && isIndexedDbBlobError(error)) {
             console.warn('⚠️ [PDF匯入] Blob 儲存失敗，改用 Base64')
@@ -628,6 +638,15 @@ export default function AssignmentImport({
             }
             await db.submissions.add(submissionWithoutBlob)
             console.log('✅ [PDF匯入] 新作業已加入本地資料庫 (無 Blob)')
+
+            // 驗證插入成功
+            const verify = await db.submissions.get(submission.id)
+            console.log('🔍 [PDF匯入] 驗證插入結果 (無Blob):', {
+              found: !!verify,
+              id: verify?.id,
+              status: verify?.status,
+              hasBase64: !!verify?.imageBase64
+            })
           } else {
             throw error
           }
@@ -637,6 +656,15 @@ export default function AssignmentImport({
 
       alert(`已成功建立 ${successCount} 份作業`)
       if (successCount > 0) {
+        // 觸發同步前再次檢查資料庫狀態
+        const allSubmissions = await db.submissions.toArray()
+        const scannedCount = allSubmissions.filter(s => s.status === 'scanned').length
+        console.log('🔄 [PDF匯入] 觸發同步前檢查:', {
+          total: allSubmissions.length,
+          scanned: scannedCount,
+          scannedIds: allSubmissions.filter(s => s.status === 'scanned').map(s => s.id)
+        })
+
         requestSync()
         // 跳回首頁
         onUploadComplete?.()
