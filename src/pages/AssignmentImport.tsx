@@ -666,8 +666,14 @@ export default function AssignmentImport({
         })
 
         requestSync()
-        // 跳回首頁
-        onUploadComplete?.()
+
+        // 延遲跳回首頁，讓同步有時間執行
+        // 避免 ViewAs 變更清空本地資料庫
+        console.log('⏰ [PDF匯入] 延遲 1 秒後跳回首頁，等待同步完成')
+        setTimeout(() => {
+          console.log('🏠 [PDF匯入] 跳回首頁')
+          onUploadComplete?.()
+        }, 1000)
       }
     } catch (e) {
       console.error(e)
