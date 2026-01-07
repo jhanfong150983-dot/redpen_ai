@@ -340,9 +340,18 @@ export function useSync(options: UseSyncOptions = {}) {
         base64Length: beforeUpdate?.imageBase64?.length
       })
 
+      const newImageUrl = `submissions/${submission.id}.webp`
+      console.log('🔄 [同步] 更新本地 submission 狀態:', {
+        submissionId: submission.id,
+        oldImageUrl: beforeUpdate?.imageUrl,
+        newImageUrl,
+        oldStatus: beforeUpdate?.status,
+        newStatus: 'synced'
+      })
+
       await db.submissions.update(submission.id, {
         status: 'synced',
-        imageUrl: `submissions/${submission.id}.webp`
+        imageUrl: newImageUrl
         // 注意：不更新 imageBlob 和 imageBase64，保留原有數據
       })
 
@@ -355,6 +364,12 @@ export function useSync(options: UseSyncOptions = {}) {
         hasBase64: !!afterUpdate?.imageBase64,
         base64Length: afterUpdate?.imageBase64?.length,
         imageUrl: afterUpdate?.imageUrl
+      })
+
+      console.log('✅ [同步] 本地 submission 更新完成:', {
+        submissionId: submission.id,
+        imageUrl: afterUpdate?.imageUrl,
+        status: afterUpdate?.status
       })
 
       if (beforeUpdate?.imageBlob && !afterUpdate?.imageBlob) {

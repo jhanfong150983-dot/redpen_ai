@@ -795,6 +795,14 @@ async function handleSubmission(req, res) {
     const filePath = `submissions/${submissionId}.webp`
     const buffer = Buffer.from(String(imageBase64), 'base64')
 
+    console.log('📤 [上傳] 開始上傳檔案:', {
+      submissionId,
+      assignmentId,
+      studentId,
+      filePath,
+      fileSize: `${(buffer.length / 1024).toFixed(2)} KB`
+    })
+
     const { error: uploadError } = await supabaseDb.storage
       .from('homework-images')
       .upload(filePath, buffer, {
@@ -803,9 +811,12 @@ async function handleSubmission(req, res) {
       })
 
     if (uploadError) {
+      console.error('❌ [上傳] 檔案上傳失敗:', uploadError.message)
       res.status(500).json({ error: `圖片上傳失敗: ${uploadError.message}` })
       return
     }
+
+    console.log('✅ [上傳] 檔案上傳成功:', filePath)
 
     const createdTime =
       typeof createdAt === 'number' ? createdAt : Date.parse(createdAt)
@@ -829,6 +840,13 @@ async function handleSubmission(req, res) {
     if (existingCheck.data && existingCheck.data.length > 0) {
       const oldId = existingCheck.data[0].id
       if (oldId !== submissionId) {
+        console.log('🗑️ [覆蓋] 發現舊作業，準備刪除:', {
+          oldId,
+          newId: submissionId,
+          assignmentId,
+          studentId
+        })
+
         // 建立 tombstone 記錄
         await supabaseDb.from('deleted_records').upsert({
           owner_id: user.id,
@@ -846,18 +864,29 @@ async function handleSubmission(req, res) {
           .eq('id', oldId)
           .eq('owner_id', user.id)
 
+        console.log('✅ [覆蓋] 已刪除舊作業資料庫記錄:', oldId)
+
         // 刪除舊的雲端檔案
         try {
           await supabaseDb.storage
             .from('homework-images')
             .remove([`submissions/${oldId}.webp`])
+          console.log('✅ [覆蓋] 已刪除舊作業雲端檔案:', `submissions/${oldId}.webp`)
         } catch (err) {
-          console.warn('刪除舊檔案失敗:', err)
+          console.warn('⚠️ [覆蓋] 刪除舊檔案失敗:', err)
         }
       }
     }
 
     // 插入新的 submission（使用 insert 而非 upsert）
+    console.log('💾 [資料庫] 開始插入新 submission:', {
+      id: submissionId,
+      assignmentId,
+      studentId,
+      imageUrl: filePath,
+      status: 'synced'
+    })
+
     const { error: dbError } = await supabaseDb
       .from('submissions')
       .insert({
@@ -871,9 +900,17 @@ async function handleSubmission(req, res) {
       })
 
     if (dbError) {
+      console.error('❌ [資料庫] 寫入失敗:', dbError.message)
       res.status(500).json({ error: `資料庫寫入失敗: ${dbError.message}` })
       return
     }
+
+    console.log('✅ [資料庫] 新 submission 寫入成功')
+    console.log('🎉 [完成] PDF 上傳流程完成:', {
+      submissionId,
+      imageUrl: filePath,
+      status: 'synced'
+    })
 
     res.status(200).json({ success: true, imageUrl: filePath })
   } catch (err) {

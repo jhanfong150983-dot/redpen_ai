@@ -566,11 +566,29 @@ export default function AssignmentImport({
           .and((sub) => sub.studentId === mapping.studentId)
           .toArray()
 
+        if (existingSubmissions.length > 0) {
+          console.log('🗑️ [PDF匯入] 發現舊作業，準備刪除:', {
+            studentId: mapping.studentId,
+            count: existingSubmissions.length,
+            oldIds: existingSubmissions.map(s => s.id)
+          })
+        }
+
         const existingIds = existingSubmissions.map((sub) => sub.id)
         await queueDeleteMany('submissions', existingIds)
 
         for (const oldSub of existingSubmissions) {
+          console.log('🗑️ [PDF匯入] 刪除本地舊作業:', {
+            id: oldSub.id,
+            hadGradingData: !!(oldSub.ai_correction || oldSub.teacher_correction),
+            aiCorrection: oldSub.ai_correction,
+            teacherCorrection: oldSub.teacher_correction
+          })
           await db.submissions.delete(oldSub.id)
+        }
+
+        if (existingSubmissions.length > 0) {
+          console.log('✅ [PDF匯入] 舊作業已清除，批改資料已清空')
         }
 
         const imageBase64 = await blobToBase64(imageBlob)
@@ -584,10 +602,21 @@ export default function AssignmentImport({
           createdAt: getCurrentTimestamp()
         }
 
+        console.log('📝 [PDF匯入] 建立新作業:', {
+          id: submission.id,
+          assignmentId: assignment.id,
+          studentId: mapping.studentId,
+          status: 'scanned',
+          imageSize: `${(imageBase64.length / 1024).toFixed(2)} KB`,
+          hasBlob: !!submission.imageBlob
+        })
+
         try {
           await db.submissions.add(submission)
+          console.log('✅ [PDF匯入] 新作業已加入本地資料庫')
         } catch (error) {
           if (!avoidBlobStorage && isIndexedDbBlobError(error)) {
+            console.warn('⚠️ [PDF匯入] Blob 儲存失敗，改用 Base64')
             const submissionWithoutBlob: Submission = {
               id: submission.id,
               assignmentId: submission.assignmentId,
@@ -597,6 +626,7 @@ export default function AssignmentImport({
               createdAt: submission.createdAt
             }
             await db.submissions.add(submissionWithoutBlob)
+            console.log('✅ [PDF匯入] 新作業已加入本地資料庫 (無 Blob)')
           } else {
             throw error
           }
