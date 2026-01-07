@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { db } from '@/lib/db'
 import { useOnlineStatus } from './useOnlineStatus'
 import { SYNC_EVENT_NAME } from '@/lib/sync-events'
@@ -9,7 +9,6 @@ import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { fixCorruptedBase64 } from '@/lib/utils'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 import { debugLog, infoLog } from '@/lib/logger'
-import { useAdminViewAs } from '@/lib/admin-view-as'
 
 interface SyncStatus {
   isSyncing: boolean
@@ -20,7 +19,7 @@ interface SyncStatus {
 
 interface UseSyncOptions {
   autoSync?: boolean
-  syncInterval?: number // 靽??隞亦摰寡??澆
+  syncInterval?: number // 保留參數以相容舊呼叫
 }
 
 const normalizeBase64Payload = (
@@ -87,7 +86,7 @@ const shrinkBase64Payload = async (
 
       currentDataUrl = normalized.dataUrl
     } catch (error) {
-      console.warn('?? ?郊??憯葬憭望?嚗?典???, error)
+      console.warn('⚠️ 同步圖片壓縮失敗，改用原圖', error)
       return { ...normalized, updated: false }
     }
   }
@@ -106,9 +105,8 @@ const toMillis = (value: unknown): number | undefined => {
 
 export function useSync(options: UseSyncOptions = {}) {
   const { autoSync = true } = options
-  const { viewAs } = useAdminViewAs()
-  const viewAsOwnerId = viewAs?.ownerId?.trim() || null
-  const isReadOnly = Boolean(viewAsOwnerId)
+  const viewAsOwnerId: string | null = null
+  const isReadOnly = false
 
   const isOnline = useOnlineStatus()
   const [status, setStatus] = useState<SyncStatus>({
@@ -181,7 +179,8 @@ export function useSync(options: UseSyncOptions = {}) {
   }
 
   /**
-   * ?湔敺?甇交??   */
+   * 更新待同步數量
+   */
   const updatePendingCount = useCallback(async () => {
     const count = await db.submissions
       .where('status')
@@ -193,17 +192,19 @@ export function useSync(options: UseSyncOptions = {}) {
   }, [])
 
   /**
-   * ?郊?桀?鈭斤???   */
+   * 同步單個提交紀錄
+   */
   const syncSubmission = async (submission: any) => {
     try {
-      debugLog(`???郊?漱 ${submission.id}`)
+      debugLog(`開始同步提交 ${submission.id}`)
 
       let imageBase64: string
       let contentType: string | undefined
       let base64DataUrl: string | null = null
 
-      // ?芸?雿輻 imageBase64嚗??歇蝬?嚗?      if (submission.imageBase64) {
-        debugLog('??雿輻?暹???Base64 ?豢?')
+      // 優先使用 imageBase64（如果已經有）
+      if (submission.imageBase64) {
+        debugLog('✅ 使用現有的 Base64 數據')
         const normalized = normalizeBase64Payload(
           submission.imageBase64,
           submission.imageBlob?.type
@@ -212,8 +213,8 @@ export function useSync(options: UseSyncOptions = {}) {
         contentType = normalized.mimeType
         base64DataUrl = normalized.dataUrl
       } else if (submission.imageBlob) {
-        // 敺?Blob 頧?
-        debugLog('?? 敺?Blob 頧???Base64')
+        // 從 Blob 轉換
+        debugLog('🔄 從 Blob 轉換為 Base64')
         const dataUrl = await blobToDataUrl(submission.imageBlob)
         const normalized = normalizeBase64Payload(dataUrl, submission.imageBlob.type)
         imageBase64 = normalized.data
@@ -223,7 +224,7 @@ export function useSync(options: UseSyncOptions = {}) {
           await updateSubmissionImageCache(submission.id, submission.imageBlob, base64DataUrl)
         }
       } else {
-        console.warn('?? 蝻箏???鞈?嚗?閰血??脩垢銝?鋆?')
+        console.warn('⚠️ 缺少圖片資料，嘗試從雲端下載補回')
         try {
           const downloaded = await downloadImageFromSupabase(submission.id)
           const dataUrl = await blobToDataUrl(downloaded)
@@ -233,13 +234,13 @@ export function useSync(options: UseSyncOptions = {}) {
           base64DataUrl = normalized.dataUrl
           await updateSubmissionImageCache(submission.id, downloaded, base64DataUrl)
         } catch (downloadError) {
-          console.warn('?? ?脩垢銝?憭望?嚗?閮?芰像鈭支誑?踹??岫', downloadError)
+          console.warn('⚠️ 雲端下載失敗，標記為未繳交以避免重試', downloadError)
           await db.submissions.update(submission.id, { status: 'missing' })
           return true
         }
       }
 
-      // 蝣箏? content type
+      // 確定 content type
       if (!contentType) {
         contentType = submission.imageBlob?.type || 'image/webp'
       }
@@ -275,7 +276,7 @@ export function useSync(options: UseSyncOptions = {}) {
       let data = await response.json().catch(() => ({}))
       if (!response.ok) {
         if (response.status === 413 && base64DataUrl) {
-          console.warn('?? ?郊瑼??之嚗?閰行擃?蝮桀??岫')
+          console.warn('⚠️ 同步檔案過大，嘗試更高壓縮後重試')
           const adjusted = await shrinkBase64Payload(
             base64DataUrl,
             contentType,
@@ -304,18 +305,18 @@ export function useSync(options: UseSyncOptions = {}) {
 
           data = await retryResponse.json().catch(() => ({}))
           if (!retryResponse.ok) {
-            const message = data?.error || '?郊憭望?'
+            const message = data?.error || '同步失敗'
             if (isRlsError(message) || retryResponse.status === 401 || retryResponse.status === 403) {
-              console.warn('?? ?郊?剖甈?? (RLS)嚗??甇?', message)
+              console.warn('⚠️ 同步遭到權限限制 (RLS)，暫停同步:', message)
               markSyncBlocked(message)
               return false
             }
             throw new Error(message)
           }
         } else {
-          const message = data?.error || '?郊憭望?'
+          const message = data?.error || '同步失敗'
           if (isRlsError(message) || response.status === 401 || response.status === 403) {
-            console.warn('?? ?郊?剖甈?? (RLS)嚗??甇?', message)
+            console.warn('⚠️ 同步遭到權限限制 (RLS)，暫停同步:', message)
             markSyncBlocked(message)
             return false
           }
@@ -323,13 +324,14 @@ export function useSync(options: UseSyncOptions = {}) {
         }
       }
 
-      debugLog('??????甇交???)
+      debugLog('圖片與資料同步成功')
 
-      // ?郊??敺??湔???靽??砍???豢?
-      debugLog('?? ?湔?砍?? synced嚗??????..')
+      // 同步成功後，更新狀態但保留本地圖片數據
+      debugLog('📝 更新本地狀態為 synced，保留圖片數據...')
 
-      // ?炎?亦???      const beforeUpdate = await db.submissions.get(submission.id)
-      debugLog('?湔??', {
+      // 先檢查當前數據
+      const beforeUpdate = await db.submissions.get(submission.id)
+      debugLog('更新前:', {
         hasBlob: !!beforeUpdate?.imageBlob,
         blobSize: beforeUpdate?.imageBlob?.size,
         hasBase64: !!beforeUpdate?.imageBase64,
@@ -339,10 +341,12 @@ export function useSync(options: UseSyncOptions = {}) {
       await db.submissions.update(submission.id, {
         status: 'synced',
         imageUrl: `submissions/${submission.id}.webp`
-        // 瘜冽?嚗??湔 imageBlob ??imageBase64嚗??????      })
+        // 注意：不更新 imageBlob 和 imageBase64，保留原有數據
+      })
 
-      // 撽??湔敺??      const afterUpdate = await db.submissions.get(submission.id)
-      debugLog('?湔敺?', {
+      // 驗證更新後數據
+      const afterUpdate = await db.submissions.get(submission.id)
+      debugLog('更新後:', {
         status: afterUpdate?.status,
         hasBlob: !!afterUpdate?.imageBlob,
         blobSize: afterUpdate?.imageBlob?.size,
@@ -352,31 +356,35 @@ export function useSync(options: UseSyncOptions = {}) {
       })
 
       if (beforeUpdate?.imageBlob && !afterUpdate?.imageBlob) {
-        console.error('?? 霅血?嚗?啣? Blob 銝仃嚗?)
+        console.error('⚠️ 警告：更新後 Blob 丟失！')
       }
       if (beforeUpdate?.imageBase64 && !afterUpdate?.imageBase64) {
-        console.error('?? 霅血?嚗?啣? Base64 銝仃嚗?)
+        console.error('⚠️ 警告：更新後 Base64 丟失！')
       }
 
-      debugLog('???砍???唳???)
+      debugLog('✅ 本地狀態更新成功')
 
       return true
     } catch (error) {
       if (isRlsError(error)) {
-        console.warn('?? ?郊?剖甈?? (RLS)嚗??甇?', error)
+        console.warn('⚠️ 同步遭到權限限制 (RLS)，暫停同步:', error)
         markSyncBlocked(error instanceof Error ? error.message : String(error))
         return false
       }
-      console.error(`?郊憭望? ${submission.id}:`, error)
+      console.error(`同步失敗 ${submission.id}:`, error)
       throw error
     }
   }
 
   /**
-   * 銝?祆?鞈??圈蝡?   */
+   * 上傳本機資料到雲端
+   */
   const pushMetadata = useCallback(async () => {
-    // ViewAs disabled
-    debugLog('? pushMetadata ??')
+    if (isReadOnly) {
+      debugLog('?? 檢視模式：略過 pushMetadata')
+      return
+    }
+    debugLog('📤 pushMetadata 開始')
     const [classrooms, students, assignments, submissions, folders, deleteQueue] =
       await Promise.all([
         db.classrooms.toArray(),
@@ -387,7 +395,7 @@ export function useSync(options: UseSyncOptions = {}) {
         readDeleteQueue()
       ])
 
-    debugLog('?? pushMetadata 霈?? folders:', folders)
+    debugLog('📊 pushMetadata 讀取的 folders:', folders)
 
     const deleteQueueIds = deleteQueue
       .map((item) => item.id)
@@ -435,7 +443,7 @@ export function useSync(options: UseSyncOptions = {}) {
         updatedAt: c.updatedAt
       }))
 
-    debugLog('? pushMetadata - 皞??潮? classrooms:', classroomPayload)
+    debugLog('📤 pushMetadata - 準備發送的 classrooms:', classroomPayload)
 
     const studentPayload = students
       .filter((s) => s?.id && s?.classroomId)
@@ -461,7 +469,7 @@ export function useSync(options: UseSyncOptions = {}) {
         updatedAt: a.updatedAt
       }))
     
-    console.log(`? [Sync Push] 皞?銝 ${assignmentPayload.length} ??璆?`, assignmentPayload.map(a => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
+    console.log(`📤 [Sync Push] 準備上傳 ${assignmentPayload.length} 個作業:`, assignmentPayload.map(a => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
 
     const submissionPayload = submissions
       .filter((sub) => sub.status !== 'scanned')
@@ -505,20 +513,20 @@ export function useSync(options: UseSyncOptions = {}) {
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      const message = data?.error || '?郊憭望?'
+      const message = data?.error || '同步失敗'
       if (isRlsError(message) || response.status === 401 || response.status === 403) {
-        console.warn('?? pushMetadata ?剖甈?? (RLS)嚗??甇?', message)
+        console.warn('⚠️ pushMetadata 遭到權限限制 (RLS)，暫停同步:', message)
         markSyncBlocked(message)
         return
       }
       throw new Error(message)
     }
 
-    debugLog('??pushMetadata 摰?')
+    debugLog('✅ pushMetadata 完成')
 
-    // pushMetadata 敺?瑼Ｘ銝甈?folders
+    // pushMetadata 後再檢查一次 folders
     const afterPush = await db.folders.toArray()
-    debugLog('?? pushMetadata 敺??folders:', afterPush)
+    debugLog('📊 pushMetadata 後本地 folders:', afterPush)
 
     if (deleteQueueIds.length > 0) {
       await clearDeleteQueue(deleteQueueIds)
@@ -526,9 +534,10 @@ export function useSync(options: UseSyncOptions = {}) {
   }, [isReadOnly, buildSyncUrl])
 
   /**
-   * 敺蝡舀?????   */
+   * 從雲端拉回資料
+   */
   const pullMetadata = useCallback(async () => {
-    debugLog('? pullMetadata ??')
+    debugLog('📥 pullMetadata 開始')
     const response = await fetch(buildSyncUrl(), {
       method: 'GET',
       credentials: 'include'
@@ -536,9 +545,9 @@ export function useSync(options: UseSyncOptions = {}) {
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      const message = data?.error || '頛?脩垢鞈?憭望?'
+      const message = data?.error || '載入雲端資料失敗'
       if (isRlsError(message) || response.status === 401 || response.status === 403) {
-        console.warn('?? pullMetadata ?剖甈?? (RLS)嚗??甇?', message)
+        console.warn('⚠️ pullMetadata 遭到權限限制 (RLS)，暫停同步:', message)
         markSyncBlocked(message)
         return
       }
@@ -552,7 +561,7 @@ export function useSync(options: UseSyncOptions = {}) {
     const folders = Array.isArray(data.folders) ? data.folders : []
     const deleted = data?.deleted && typeof data.deleted === 'object' ? data.deleted : {}
     
-    console.log(`? [Sync Pull] 敺蝡舀???${assignments.length} ??璆?`, assignments.map((a: any) => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
+    console.log(`📥 [Sync Pull] 從雲端拉取 ${assignments.length} 個作業:`, assignments.map((a: any) => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
 
     const collectDeletedIds = (items: unknown) =>
       Array.isArray(items)
@@ -573,11 +582,11 @@ export function useSync(options: UseSyncOptions = {}) {
     const deletedSubmissionIds = collectDeletedIds(deleted.submissions)
     const deletedFolderIds = collectDeletedIds(deleted.folders)
 
-    debugLog('??儭?閬?斤? folders:', deletedFolderIds)
+    debugLog('🗑️ 要刪除的 folders:', deletedFolderIds)
 
-    // ??bulkDelete 銋?瑼Ｘ folders
+    // 在 bulkDelete 之前檢查 folders
     const beforeDelete = await db.folders.toArray()
-    debugLog('?? bulkDelete 銋???folders:', beforeDelete)
+    debugLog('📊 bulkDelete 之前的 folders:', beforeDelete)
 
     const deletedClassroomSet = new Set(deletedClassroomIds)
     const deletedStudentSet = new Set(deletedStudentIds)
@@ -587,10 +596,11 @@ export function useSync(options: UseSyncOptions = {}) {
 
     const existingSubmissions = await db.submissions.toArray()
 
-    debugLog(`? pullMetadata: 敺蝡舀???${submissions.length} 蝑?submissions`)
-    debugLog(`? pullMetadata: ?砍?暹? ${existingSubmissions.length} 蝑?submissions`)
+    debugLog(`📦 pullMetadata: 從雲端拉取 ${submissions.length} 筆 submissions`)
+    debugLog(`📦 pullMetadata: 本地現有 ${existingSubmissions.length} 筆 submissions`)
 
-    // 靽??砍???豢?嚗lob ??Base64嚗?    const imageDataMap = new Map(
+    // 保留本地圖片數據（Blob 和 Base64）
+    const imageDataMap = new Map(
       existingSubmissions.map((sub) => [
         sub.id,
         {
@@ -600,15 +610,16 @@ export function useSync(options: UseSyncOptions = {}) {
       ])
     )
 
-    debugLog(`? imageDataMap 撱箇?摰?嚗???${imageDataMap.size} 蝑???)
+    debugLog(`📦 imageDataMap 建立完成，包含 ${imageDataMap.size} 筆圖片數據`)
 
-    // 蝯梯???撠?啣????    let blobCount = 0
+    // 統計有多少本地圖片數據
+    let blobCount = 0
     let base64Count = 0
     imageDataMap.forEach((data) => {
       if (data.imageBlob) blobCount++
       if (data.imageBase64) base64Count++
     })
-    debugLog(`?? ?砍??蝯梯?: ${blobCount} ??Blob, ${base64Count} ??Base64`)
+    debugLog(`📊 本地圖片統計: ${blobCount} 個 Blob, ${base64Count} 個 Base64`)
 
     const mergedSubmissions: Submission[] = submissions
       .filter(
@@ -628,10 +639,11 @@ export function useSync(options: UseSyncOptions = {}) {
             ? sub.gradedAt
             : undefined
 
-        // 敺?唳敺拙????        const localImageData = imageDataMap.get(sub.id)
+        // 從本地恢復圖片數據
+        const localImageData = imageDataMap.get(sub.id)
 
         if (localImageData && (localImageData.imageBlob || localImageData.imageBase64)) {
-          debugLog(`?? ?Ｗ儔???豢?: ${sub.id}`, {
+          debugLog(`🔄 恢復圖片數據: ${sub.id}`, {
             hasBlob: !!localImageData.imageBlob,
             hasBase64: !!localImageData.imageBase64,
             base64Length: localImageData.imageBase64?.length
@@ -650,26 +662,27 @@ export function useSync(options: UseSyncOptions = {}) {
           gradedAt,
           correctionCount: sub.correctionCount,
           imageUrl: sub.imageUrl,
-          imageBlob: localImageData?.imageBlob,       // 靽??砍 Blob
-          imageBase64: localImageData?.imageBase64,   // 靽??砍 Base64
+          imageBlob: localImageData?.imageBlob,       // 保留本地 Blob
+          imageBase64: localImageData?.imageBase64,   // 保留本地 Base64
           updatedAt: toMillis(sub.updatedAt ?? (sub as { updated_at?: unknown }).updated_at)
         }
       })
 
-    debugLog(`???蔥摰?嚗??神??${mergedSubmissions.length} 蝑?submissions`)
+    debugLog(`✅ 合併完成，準備寫入 ${mergedSubmissions.length} 筆 submissions`)
 
-    // 蝯梯??蔥敺????豢?
+    // 統計合併後的圖片數據
     let mergedBlobCount = 0
     let mergedBase64Count = 0
     mergedSubmissions.forEach((sub) => {
       if (sub.imageBlob) mergedBlobCount++
       if (sub.imageBase64) mergedBase64Count++
     })
-    debugLog(`?? ?蔥敺??絞閮? ${mergedBlobCount} ??Blob, ${mergedBase64Count} ??Base64`)
+    debugLog(`📊 合併後圖片統計: ${mergedBlobCount} 個 Blob, ${mergedBase64Count} 個 Base64`)
 
-    debugLog('? pullMetadata - 敺蝡舀?啁??? classrooms:', classrooms)
+    debugLog('📥 pullMetadata - 從雲端收到的原始 classrooms:', classrooms)
 
-    // 靽??砍??folder 鞈?嚗??箏?蝡臬?賡?銝??folder 甈?嚗?    const existingClassrooms = await db.classrooms.toArray()
+    // 保留本地的 folder 資料（因為後端可能還不支援 folder 欄位）
+    const existingClassrooms = await db.classrooms.toArray()
     const localFolderMap = new Map(
       existingClassrooms.map((c) => [c.id, c.folder])
     )
@@ -680,7 +693,7 @@ export function useSync(options: UseSyncOptions = {}) {
         const cloudFolder = (c as Classroom & { folder?: string }).folder
         const localFolder = localFolderMap.get(c.id)
 
-        // 憒??脩垢??folder嚗蝙?券蝡舐?嚗????啁?
+        // 如果雲端有 folder，使用雲端的；否則保留本地的
         const finalFolder = cloudFolder !== undefined ? cloudFolder : localFolder
 
         return {
@@ -694,7 +707,7 @@ export function useSync(options: UseSyncOptions = {}) {
         }
       })
 
-    debugLog('? pullMetadata - 甇??????classrooms:', normalizedClassrooms)
+    debugLog('📥 pullMetadata - 正規化後的 classrooms:', normalizedClassrooms)
 
     const normalizedStudents: Student[] = students
       .filter((s: Student) => s?.id && s?.classroomId && !deletedStudentSet.has(s.id))
@@ -709,7 +722,8 @@ export function useSync(options: UseSyncOptions = {}) {
         )
       }))
 
-    // 靽??砍??assignment folder 鞈?嚗??箏?蝡臬?賡?銝??folder 甈?嚗?    const existingAssignments = await db.assignments.toArray()
+    // 保留本地的 assignment folder 資料（因為後端可能還不支援 folder 欄位）
+    const existingAssignments = await db.assignments.toArray()
     const localAssignmentFolderMap = new Map(
       existingAssignments.map((a) => [a.id, { folder: a.folder, priorWeightTypes: a.priorWeightTypes }])
     )
@@ -723,7 +737,8 @@ export function useSync(options: UseSyncOptions = {}) {
         const cloudPriorWeightTypes = (a as Assignment & { priorWeightTypes?: any }).priorWeightTypes
         const localData = localAssignmentFolderMap.get(a.id)
 
-        // 憒??脩垢????雿輻?脩垢???血?靽??砍??        const finalFolder = cloudFolder !== undefined ? cloudFolder : localData?.folder
+        // 如果雲端有資料，使用雲端的；否則保留本地的
+        const finalFolder = cloudFolder !== undefined ? cloudFolder : localData?.folder
         const finalPriorWeightTypes = cloudPriorWeightTypes !== undefined ? cloudPriorWeightTypes : localData?.priorWeightTypes
 
         return {
@@ -767,51 +782,55 @@ export function useSync(options: UseSyncOptions = {}) {
       await db.submissions.bulkDelete(deletedSubmissionIds)
     }
     if (deletedFolderIds.length > 0) {
-      debugLog('?? ?瑁??芷 folders:', deletedFolderIds)
+      debugLog('⚠️ 執行刪除 folders:', deletedFolderIds)
       await db.folders.bulkDelete(deletedFolderIds)
     }
 
-    // ?冽???bulkDelete 銋?瑼Ｘ folders
+    // 在所有 bulkDelete 之後檢查 folders
     const afterDelete = await db.folders.toArray()
-    debugLog('?? bulkDelete 銋???folders:', afterDelete)
+    debugLog('📊 bulkDelete 之後的 folders:', afterDelete)
 
-    // ?炎??folders ???    const beforePut = await db.folders.toArray()
-    debugLog('?? bulkPut 銋???folders:', beforePut)
+    // 先檢查 folders 狀態
+    const beforePut = await db.folders.toArray()
+    debugLog('📊 bulkPut 之前的 folders:', beforePut)
 
     await db.classrooms.bulkPut(normalizedClassrooms)
 
-    // 瑼Ｘ撖怠敺? classrooms
+    // 檢查寫入後的 classrooms
     const afterPutClassrooms = await db.classrooms.toArray()
-    debugLog('?? bulkPut classrooms 銋?????', afterPutClassrooms)
+    debugLog('📊 bulkPut classrooms 之後的資料:', afterPutClassrooms)
 
     await db.students.bulkPut(normalizedStudents)
     await db.assignments.bulkPut(normalizedAssignments)
     await db.submissions.bulkPut(mergedSubmissions)
 
-    // ?炎??folders ???    const afterPut = await db.folders.toArray()
-    debugLog('?? bulkPut 銋???folders:', afterPut)
+    // 再檢查 folders 狀態
+    const afterPut = await db.folders.toArray()
+    debugLog('📊 bulkPut 之後的 folders:', afterPut)
 
-    // ?芣??園蝡舀? folders 鞈????湔嚗????啗???
+    // 只有當雲端有 folders 資料時才更新（避免覆蓋本地資料）
     if (folders.length > 0) {
       await db.folders.bulkPut(normalizedFolders)
-      debugLog(`???郊鈭?${normalizedFolders.length} ???冗`)
+      debugLog(`✅ 同步了 ${normalizedFolders.length} 個資料夾`)
     } else {
-      debugLog('?? ?脩垢瘝? folders 鞈?嚗???啗??冗')
+      debugLog('⚠️ 雲端沒有 folders 資料，保留本地資料夾')
 
-      // 撽??砍鞈?憭暹?衣?????      const localFolders = await db.folders.toArray()
-      debugLog('?? pullMetadata 敺??folders:', localFolders)
+      // 驗證本地資料夾是否真的保留
+      const localFolders = await db.folders.toArray()
+      debugLog('🔍 pullMetadata 後本地 folders:', localFolders)
     }
   }, [buildSyncUrl])
 
-  // 雿輻 localStorage 餈質馱?砍鞈?撠???ownerId
+  // 使用 localStorage 追蹤本地資料對應的 ownerId
   const SYNC_OWNER_KEY = 'sync_current_owner_id'
 
   useEffect(() => {
-    // ???砍鞈??桀?撠???ownerId
+    // 取得本地資料目前對應的 ownerId
     const storedOwnerId = localStorage.getItem(SYNC_OWNER_KEY)
     const currentOwnerId = viewAsOwnerId ?? '__self__'
     
-    // 憒? ownerId 瘝?嚗歲??頛?    if (storedOwnerId === currentOwnerId && hasInitializedRef.current) {
+    // 如果 ownerId 沒變，跳過重載
+    if (storedOwnerId === currentOwnerId && hasInitializedRef.current) {
       viewAsRef.current = viewAsOwnerId
       return
     }
@@ -821,7 +840,7 @@ export function useSync(options: UseSyncOptions = {}) {
     syncBlockedReasonRef.current = null
 
     const resetLocal = async () => {
-      console.log('?? ViewAs 霈嚗??啗??亥???..', { from: storedOwnerId, to: currentOwnerId })
+      console.log('🔄 ViewAs 變更，重新載入資料...', { from: storedOwnerId, to: currentOwnerId })
       isSyncingRef.current = false
       syncQueuedRef.current = false
       await Promise.all([
@@ -834,7 +853,7 @@ export function useSync(options: UseSyncOptions = {}) {
         db.answerExtractionCorrections.clear()
       ])
       
-      // ?脣??嗅???ownerId
+      // 儲存當前的 ownerId
       localStorage.setItem(SYNC_OWNER_KEY, currentOwnerId)
       
       setStatus((prev) => ({
@@ -862,23 +881,23 @@ export function useSync(options: UseSyncOptions = {}) {
   }, [viewAsOwnerId, isOnline, pullMetadata, updatePendingCount])
 
   /**
-   * ?瑁??郊
+   * 執行同步
    */
   const performSync = useCallback(async () => {
     if (!isOnline) {
-      debugLog('?Ｙ????頝喲??郊')
+      debugLog('離線狀態，跳過同步')
       void updatePendingCount()
       return
     }
 
     if (isSyncingRef.current) {
-      debugLog('?桀?甇??郊銝哨?頝喲??祆活')
+      debugLog('目前正在同步中，跳過本次')
       syncQueuedRef.current = true
       return
     }
 
     if (syncBlockedReasonRef.current) {
-      console.warn('?? 撌脣皜砍 RLS 甈??嚗??甇?', syncBlockedReasonRef.current)
+      console.warn('⚠️ 已偵測到 RLS 權限限制，暫停同步:', syncBlockedReasonRef.current)
       setStatus((prev) => ({ ...prev, isSyncing: false, error: null }))
       return
     }
@@ -887,38 +906,38 @@ export function useSync(options: UseSyncOptions = {}) {
       isSyncingRef.current = true
       setStatus((prev) => ({ ...prev, isSyncing: true, error: null }))
 
-      // ViewAs disabled: if (isReadOnly) {
-      // debugLog('?? 瑼Ｚ?璅∪?嚗????脩垢鞈?')
-      // await pullMetadata()
-      // if (syncBlockedReasonRef.current) {
-      // setStatus((prev) => ({
-      // ...prev,
-      // isSyncing: false,
-      // error: null
-      // }))
-      // return
-      // }
-      // const remainingCount = await updatePendingCount()
-      // setStatus((prev) => ({
-      // ...prev,
-      // isSyncing: false,
-      // lastSyncTime: Date.now(),
-      // pendingCount: remainingCount,
-      // error: null
-      // }))
-      // return
+      if (isReadOnly) {
+        debugLog('?? 檢視模式：僅拉取雲端資料')
+        await pullMetadata()
+        if (syncBlockedReasonRef.current) {
+          setStatus((prev) => ({
+            ...prev,
+            isSyncing: false,
+            error: null
+          }))
+          return
+        }
+        const remainingCount = await updatePendingCount()
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          lastSyncTime: Date.now(),
+          pendingCount: remainingCount,
+          error: null
+        }))
+        return
       }
 
-      // 瑼Ｘ performSync ???? folders
+      // 檢查 performSync 開始時的 folders
       const performSyncStart = await db.folders.toArray()
-      debugLog('? performSync ???? folders:', performSyncStart)
+      debugLog('🔵 performSync 開始時的 folders:', performSyncStart)
 
       const pendingSubmissions = await db.submissions
         .where('status')
         .equals('scanned')
         .toArray()
 
-      debugLog(`?曉 ${pendingSubmissions.length} 璇??郊蝝?)
+      debugLog(`找到 ${pendingSubmissions.length} 條待同步紀錄`)
 
       let successCount = 0
       let failCount = 0
@@ -931,15 +950,15 @@ export function useSync(options: UseSyncOptions = {}) {
           }
         } catch (error) {
           failCount++
-          console.error('?郊憭望?:', error)
+          console.error('同步失敗:', error)
         }
       }
 
       if (pendingSubmissions.length > 0) {
-        infoLog(`?郊摰?嚗???${successCount} 蝑?憭望? ${failCount} 蝑)
+        infoLog(`同步完成：成功 ${successCount} 筆，失敗 ${failCount} 筆`)
       }
 
-      // 瑼Ｘ push ?? folders
+      // 檢查 push 前的 folders
       if (syncBlockedReasonRef.current) {
         setStatus((prev) => ({
           ...prev,
@@ -950,7 +969,7 @@ export function useSync(options: UseSyncOptions = {}) {
       }
 
       const beforePush = await db.folders.toArray()
-      debugLog('? pushMetadata ?? folders:', beforePush)
+      debugLog('🔵 pushMetadata 前的 folders:', beforePush)
 
       await pushMetadata()
       if (syncBlockedReasonRef.current) {
@@ -962,9 +981,9 @@ export function useSync(options: UseSyncOptions = {}) {
         return
       }
 
-      // 瑼Ｘ push 敺ull ?? folders
+      // 檢查 push 後、pull 前的 folders
       const afterPushBeforePull = await db.folders.toArray()
-      debugLog('? pushMetadata 敺ullMetadata ?? folders:', afterPushBeforePull)
+      debugLog('🔵 pushMetadata 後、pullMetadata 前的 folders:', afterPushBeforePull)
 
       await pullMetadata()
       if (syncBlockedReasonRef.current) {
@@ -986,7 +1005,7 @@ export function useSync(options: UseSyncOptions = {}) {
         error: syncBlockedReasonRef.current
           ? null
           : failCount > 0
-            ? `${failCount} 璇???甇亙仃?
+            ? `${failCount} 條記錄同步失敗`
             : null
       }))
     } catch (error) {
@@ -995,11 +1014,11 @@ export function useSync(options: UseSyncOptions = {}) {
         setStatus((prev) => ({ ...prev, isSyncing: false, error: null }))
         return
       }
-      console.error('?郊???潛??航炊:', error)
+      console.error('同步過程發生錯誤:', error)
       setStatus((prev) => ({
         ...prev,
         isSyncing: false,
-        error: error instanceof Error ? error.message : '?郊憭望?'
+        error: error instanceof Error ? error.message : '同步失敗'
       }))
     } finally {
       isSyncingRef.current = false
@@ -1013,9 +1032,10 @@ export function useSync(options: UseSyncOptions = {}) {
   }, [isOnline, isReadOnly, updatePendingCount, pushMetadata, pullMetadata])
 
   /**
-   * ??蝯血??冽??孛?澆?甇?   */
+   * 提供給外部手動觸發同步
+   */
   const triggerSync = useCallback(() => {
-    debugLog('??閫貊?郊')
+    debugLog('手動觸發同步')
     void performSync()
   }, [performSync])
 
@@ -1033,7 +1053,7 @@ export function useSync(options: UseSyncOptions = {}) {
     const wasOnline = prevOnlineRef.current
     prevOnlineRef.current = isOnline
     if (!wasOnline && isOnline) {
-      debugLog('蝬脰楝?Ｗ儔嚗孛?澆?甇?)
+      debugLog('網路恢復，觸發同步')
       void performSync()
     }
   }, [isOnline, autoSync, performSync])
@@ -1086,7 +1106,6 @@ export function useSync(options: UseSyncOptions = {}) {
     updatePendingCount
   }
 }
-
 
 
 
