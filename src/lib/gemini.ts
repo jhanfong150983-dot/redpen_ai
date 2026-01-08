@@ -1416,6 +1416,18 @@ function mergeGradingResults(results: GradingResult[], answerKey?: AnswerKey): G
     reviewReasons: uniqueReviewReasons.length > 0 ? uniqueReviewReasons : undefined
   }
   
+  // 🆕 如果 mistakes 為空但有錯誤題目，從 details 生成 mistakes
+  if (merged.mistakes.length === 0 && mergedDetails.length > 0) {
+    const wrongDetails = mergedDetails.filter(d => d.isCorrect === false && d.studentAnswer !== '未作答')
+    if (wrongDetails.length > 0) {
+      merged.mistakes = wrongDetails.map(d => ({
+        id: d.questionId ?? '',
+        question: `題目 ${d.questionId}`,
+        reason: d.reason || '答案錯誤'
+      }))
+    }
+  }
+  
   // 如果有 AnswerKey，檢查是否有遺漏的題目
   if (answerKey) {
     const answeredIds = new Set(mergedDetails.map(d => d.questionId))
@@ -2137,7 +2149,26 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
    - ✅ 若你想「修正錯字、補全、換詞、變通語序、抓重點」→ 一律只能寫在 reason
    - ❌ 不得改動 studentAnswer
 
+${isPartial ? `【分頁段落模式 - 精簡輸出】
+⚠️ 這是分頁批改中的一個段落，只需輸出最小必要資料：
+- ❌ 禁止輸出 totalScore、mistakes、weaknesses、suggestions、feedback
+- ✅ 只需輸出 details 陣列
+
 回傳純 JSON：
+{
+  "details": [
+    {
+      "questionId": 題號,
+      "studentAnswer": 學生答案,
+      "isCorrect": true/false,
+      "score": 得分,
+      "maxScore": 滿分,
+      "confidence": 0-100,
+      "reason": "簡短說明（錯誤題必填）"
+    }
+  ]
+}
+` : `回傳純 JSON：
 {
   "totalScore": 整數,
   "details": [
@@ -2158,7 +2189,7 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
   "weaknesses": [概念],
   "suggestions": [建議]
 }
-
+`}
 若為「再次批改模式」，details 只回傳被要求重新批改的題號。
 `.trim()
     )
@@ -2298,9 +2329,9 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
 
     // 步驟 2：後處理補漏（如果有 AnswerKey，且不是分頁批改的部分圖片）
     let missingQuestionIds: string[] = []
-    const isPartial = options?._isPartialImage === true
+    const isPartialForFill = options?._isPartialImage === true
     
-    if (answerKey && !options?.regrade?.mode && !isPartial) {
+    if (answerKey && !options?.regrade?.mode && !isPartialForFill) {
       const fillResult = fillMissingQuestions(parsed, answerKey)
       parsed = fillResult.result
       missingQuestionIds = fillResult.missingQuestionIds
@@ -2311,7 +2342,7 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
       missingQuestionIds.length > 0 &&
       !options?.skipMissingRetry &&
       !options?.regrade?.mode &&
-      !isPartial
+      !isPartialForFill
     ) {
       console.log(`🔄 自動重試批改缺失的 ${missingQuestionIds.length} 題...`)
 
