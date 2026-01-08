@@ -29,7 +29,7 @@ import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { extractAnswerKeyFromImage, extractAnswerKeyFromImages, reanalyzeQuestions } from '@/lib/gemini'
 import { startInkSession, closeInkSession } from '@/lib/ink-session'
-import { convertPdfToImage, convertPdfToImages, getFileType, fileToBlob } from '@/lib/pdfToImage'
+import { convertPdfToImage, convertPdfToImages, getFileType, fileToBlob, getDefaultImageFormat } from '@/lib/pdfToImage'
 import { compressImageFile } from '@/lib/imageCompression'
 import { checkFolderNameUnique } from '@/lib/utils'
 import {
@@ -799,26 +799,26 @@ export default function AssignmentSetup({
   const handleAnswerKeyFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
 
-    // 立即檢查原始檔案總大小（避免 Gemini API 413 錯誤）
-    const totalOriginalSize = files.reduce((sum, file) => sum + file.size, 0)
-    const totalOriginalSizeMB = totalOriginalSize / (1024 * 1024)
-
-    // 原始檔案限制 2.5MB（經測試，超過此大小容易導致 413 錯誤）
-    const maxOriginalSizeMB = 2.5
-
-    if (totalOriginalSizeMB > maxOriginalSizeMB) {
-      setAnswerKeyError(
-        `檔案總大小過大（${totalOriginalSizeMB.toFixed(1)} MB），超過限制 ${maxOriginalSizeMB} MB。\n建議分批上傳檔案。`
-      )
-      setAnswerKeyFile([])
-      // 清空 input 以便重新選擇
-      e.target.value = ''
-      return
+    // 只做類型檢查，不用原始檔大小擋掉（後續壓縮會處理）
+    for (const f of files) {
+      const t = getFileType(f)
+      if (t !== 'image' && t !== 'pdf') {
+        setAnswerKeyError(`不支援的檔案格式: ${f.name}，請改用圖片或 PDF`)
+        e.target.value = ''
+        return
+      }
     }
 
     setAnswerKeyFile(files)
     setAnswerKeyError(null)
-    setAnswerKeyNotice(null)
+
+    // ✅ 顯示提示，不阻擋（後續壓縮會處理大檔案）
+    const totalMB = files.reduce((s, f) => s + f.size, 0) / 1024 / 1024
+    if (totalMB > 2.5) {
+      setAnswerKeyNotice(`已選擇 ${totalMB.toFixed(1)}MB，系統會自動壓縮後再交給 AI（建議一次 1–2 個檔案以保留清晰度）`)
+    } else {
+      setAnswerKeyNotice(null)
+    }
   }
 
   const handleExtractAnswerKey = async () => {
@@ -856,6 +856,9 @@ export default function AssignmentSetup({
           let compressionAttempts = 0
           let targetSize = 2 * 1024 * 1024  // 2MB（保持高品質）
 
+          // Safari 用 JPEG，其他用 WebP
+          const outputFormat = getDefaultImageFormat()
+
           while (imageBlob.size > targetSize && compressionAttempts < 3) {
             console.log(`⚠️ ${file.name} 第 ${compressionAttempts + 1} 次壓縮...`, { currentSize: imageBlob.size })
 
@@ -865,7 +868,7 @@ export default function AssignmentSetup({
             imageBlob = await compressImageFile(imageBlob, {
               maxWidth,
               quality,
-              format: 'image/webp'
+              format: outputFormat
             })
 
             compressionAttempts++
@@ -878,10 +881,13 @@ export default function AssignmentSetup({
         } else {
           console.log('📄 處理 PDF 檔案', { name: file.name, size: file.size })
 
+          // Safari 用 JPEG，其他用 WebP
+          const pdfOutputFormat = getDefaultImageFormat()
+
           // 轉換 PDF 所有頁面
           const pdfBlobs = await convertPdfToImages(file, {
             scale: 1,
-            format: 'image/webp',
+            format: pdfOutputFormat,
             quality: 0.5
           })
 
@@ -897,7 +903,7 @@ export default function AssignmentSetup({
               const compressedPageBlob = await compressImageFile(pageBlob, {
                 maxWidth: 2000,
                 quality: 0.75,
-                format: 'image/webp'
+                format: pdfOutputFormat
               })
               // 只有壓縮後變小才使用
               if (compressedPageBlob.size < pageBlob.size) {
