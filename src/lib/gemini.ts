@@ -191,6 +191,32 @@ type GeminiInlineDataPart = {
 type GeminiRequestPart = string | GeminiInlineDataPart
 type GeminiPart = { text: string } | GeminiInlineDataPart
 
+// 🆕 AnswerKey 緩存引用（用於跨請求共享）
+let cachedAnswerKeyHash: string | null = null
+let cachedAnswerKeyJson: string | null = null
+
+/**
+ * 設置 AnswerKey 緩存（同一份作業的多次請求共享）
+ */
+export function setAnswerKeyCache(answerKey: AnswerKey | null): void {
+  if (answerKey) {
+    cachedAnswerKeyJson = JSON.stringify(answerKey)
+    cachedAnswerKeyHash = null // 等待 proxy 返回 hash
+  } else {
+    cachedAnswerKeyJson = null
+    cachedAnswerKeyHash = null
+  }
+}
+
+/**
+ * 清除 AnswerKey 緩存（作業切換時調用）
+ */
+export function clearAnswerKeyCache(): void {
+  cachedAnswerKeyJson = null
+  cachedAnswerKeyHash = null
+  console.log('🧹 [AnswerKey] 已清除緩存')
+}
+
 function normalizeParts(parts: GeminiRequestPart[]): GeminiPart[] {
   return parts.map((part) => (typeof part === 'string' ? { text: part } : part))
 }
@@ -218,12 +244,31 @@ class RecoverableError extends Error {
 
 /**
  * 執行單次 Gemini API 請求
+ * 
+ * @param options.useAnswerKeyCache - 是否使用 AnswerKey 緩存機制
  */
 async function executeGeminiRequest(
   modelName: string,
   parts: GeminiRequestPart[],
-  inkSessionId: string | null
+  inkSessionId: string | null,
+  options?: { useAnswerKeyCache?: boolean }
 ): Promise<{ text: string; data: any }> {
+  const useAnswerKeyCache = options?.useAnswerKeyCache ?? false
+  
+  // 🆕 AnswerKey 緩存邏輯
+  let answerKeyPayload: { answerKey?: string; answerKeyRef?: string } = {}
+  if (useAnswerKeyCache && cachedAnswerKeyJson) {
+    if (cachedAnswerKeyHash) {
+      // 有 hash → 只傳引用
+      answerKeyPayload = { answerKeyRef: cachedAnswerKeyHash }
+      console.log('📎 [AnswerKey] 使用緩存引用:', cachedAnswerKeyHash.substring(0, 8) + '...')
+    } else {
+      // 沒有 hash → 傳完整 AnswerKey
+      answerKeyPayload = { answerKey: cachedAnswerKeyJson }
+      console.log('📤 [AnswerKey] 發送完整資料 (' + Math.round(cachedAnswerKeyJson.length / 1024) + 'KB)')
+    }
+  }
+
   const response = await fetch(geminiProxyUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -231,7 +276,8 @@ async function executeGeminiRequest(
     body: JSON.stringify({
       model: modelName,
       contents: [{ role: 'user', parts: normalizeParts(parts) }],
-      ...(inkSessionId ? { inkSessionId } : {})
+      ...(inkSessionId ? { inkSessionId } : {}),
+      ...answerKeyPayload
     })
   })
 
@@ -243,6 +289,18 @@ async function executeGeminiRequest(
   }
 
   if (!response.ok) {
+    // 🆕 422：AnswerKey 緩存未命中（可恢復）
+    if (response.status === 422 && data?.code === 'ANSWER_KEY_CACHE_MISS') {
+      console.warn('⚠️ 422 AnswerKey 緩存未命中，將重新發送完整 AnswerKey...')
+      // 清除本地 hash，讓下次重試時發送完整 AnswerKey
+      cachedAnswerKeyHash = null
+      throw new RecoverableError(
+        'AnswerKey 緩存已過期，正在重試...',
+        422,
+        true
+      )
+    }
+
     // 409：Session 失效（可恢復）
     if (response.status === 409) {
       throw new RecoverableError(
@@ -303,6 +361,15 @@ async function executeGeminiRequest(
     throw new Error(message)
   }
 
+  // 🆕 緩存 proxy 返回的 answerKeyHash
+  if (useAnswerKeyCache && data?.answerKeyHash && cachedAnswerKeyJson) {
+    const newHash = data.answerKeyHash
+    if (newHash !== cachedAnswerKeyHash) {
+      cachedAnswerKeyHash = newHash
+      console.log('📥 [AnswerKey] 已緩存 hash:', newHash.substring(0, 8) + '...')
+    }
+  }
+
   // 更新墨水餘額
   const updatedBalance = Number(data?.ink?.balanceAfter)
   if (Number.isFinite(updatedBalance)) {
@@ -325,14 +392,18 @@ async function executeGeminiRequest(
 /**
  * 帶重試邏輯的 Gemini 文本生成
  * - 409 (Session 失效)：自動建立新 session 並重試
- * - 504/503/429：指數退避重試（最多 2 次）
+ * - 504/503/429/422：指數退避重試（最多 2 次）
+ * 
+ * @param options.useAnswerKeyCache - 是否使用 AnswerKey 緩存機制
  */
 async function generateGeminiText(
   modelName: string,
-  parts: GeminiRequestPart[]
+  parts: GeminiRequestPart[],
+  options?: { useAnswerKeyCache?: boolean }
 ): Promise<string> {
   const MAX_RETRIES = 2
   let lastError: Error | null = null
+  const useAnswerKeyCache = options?.useAnswerKeyCache ?? false
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -342,7 +413,7 @@ async function generateGeminiText(
       // 如果沒有 session，嘗試建立（但不強制，因為用戶可能在非批改流程）
       // ensureInkSessionFresh 會在批改流程中被呼叫
       
-      const result = await executeGeminiRequest(modelName, parts, inkSessionId)
+      const result = await executeGeminiRequest(modelName, parts, inkSessionId, { useAnswerKeyCache })
       return result.text
       
     } catch (error) {
@@ -360,6 +431,12 @@ async function generateGeminiText(
             console.error('❌ 建立新 session 失敗:', sessionError)
             throw new Error('批改會話已過期，請重新進入批改頁面')
           }
+        }
+        
+        // 422：AnswerKey 緩存未命中 → 已清除本地 hash，立即重試
+        if (error.status === 422) {
+          console.log(`🔄 [重試 ${attempt + 1}/${MAX_RETRIES + 1}] 422 AnswerKey 緩存未命中，重新發送...`)
+          continue // 立即重試
         }
         
         // 504/503/429：指數退避重試
@@ -426,6 +503,11 @@ export interface GradeSubmissionOptions {
   _skipPagedGrading?: boolean
   /** @internal 內部使用：標記這是分頁批改中的部分圖片 */
   _isPartialImage?: boolean
+  /** @internal 內部使用：預處理好的圖片資料（跳過壓縮和 base64 步驟） */
+  _preparedImage?: {
+    base64: string
+    mimeType: string
+  }
   regrade?: {
     questionIds: string[]
     previousDetails?: Array<{
@@ -1387,6 +1469,14 @@ async function gradeSubmissionPaged(
   const totalStartTime = performance.now()
   console.log(`📄 [分頁批改] 開始分頁批改流程...`)
   
+  // 🆕 設置 AnswerKey 緩存（多個段落共用同一份 AnswerKey）
+  // 只有當緩存尚未設置時才設置（避免覆蓋批量批改已設置的緩存）
+  const shouldSetCache = !cachedAnswerKeyHash && !cachedAnswerKeyJson
+  if (shouldSetCache) {
+    setAnswerKeyCache(answerKey)
+    console.log('📦 [AnswerKey] 已設置分頁批改緩存')
+  }
+  
   // Step 1: 拆分圖片
   const splitStartTime = performance.now()
   const segments = await splitImageIntoSegments(submissionImage)
@@ -1400,22 +1490,84 @@ async function gradeSubmissionPaged(
       _skipPagedGrading: true
     })
   }
+
+  // 🆕 Step 2: 預取機制 - 預先準備圖片（壓縮 + base64）
+  // 使用 Map 緩存 Promise，避免重複準備
+  const preparedSegments = new Map<number, Promise<{ blob: Blob; base64: string; mimeType: string }>>()
   
-  // Step 2: 並行批改（限制同時執行數，避免 429）
-  console.log(`📄 [分頁批改] 並行批改 ${segments.length} 段 (concurrency=${PAGED_GRADING_CONCURRENCY})...`)
+  const prepareSegment = async (index: number) => {
+    const segmentBlob = segments[index]
+    const prepStartTime = performance.now()
+    
+    // 壓縮
+    const prepared = await compressForGemini(segmentBlob, GEMINI_SINGLE_IMAGE_TARGET_BYTES, `段落${index + 1}`)
+    // Base64 編碼
+    const base64 = await blobToBase64(prepared)
+    const mimeType = prepared.type || 'image/jpeg'
+    
+    const prepTime = performance.now() - prepStartTime
+    console.log(`      🔧 段落 ${index + 1} 預處理完成 (${prepTime.toFixed(0)}ms, ${(prepared.size / 1024).toFixed(0)}KB)`)
+    
+    return { blob: prepared, base64, mimeType }
+  }
+  
+  // 獲取預處理的段落（如果沒有則啟動）
+  const getPreparedSegment = (index: number) => {
+    if (!preparedSegments.has(index)) {
+      preparedSegments.set(index, prepareSegment(index))
+    }
+    return preparedSegments.get(index)!
+  }
+  
+  // 預取函數：預熱後續 N 個段落
+  const prefetchAhead = (currentIndex: number, count: number = 2) => {
+    for (let i = 1; i <= count; i++) {
+      const nextIndex = currentIndex + i
+      if (nextIndex < segments.length && !preparedSegments.has(nextIndex)) {
+        console.log(`      📦 預取段落 ${nextIndex + 1}...`)
+        preparedSegments.set(nextIndex, prepareSegment(nextIndex))
+      }
+    }
+  }
+  
+  // Step 3: 並行批改（使用預取機制）
+  console.log(`📄 [分頁批改] 並行批改 ${segments.length} 段 (concurrency=${PAGED_GRADING_CONCURRENCY}, 預取模式)...`)
   const gradeStartTime = performance.now()
   
-  const results = await mapLimit(segments, PAGED_GRADING_CONCURRENCY, async (segmentBlob, i) => {
+  // 立即預取前 PAGED_GRADING_CONCURRENCY + 1 個段落
+  for (let i = 0; i < Math.min(segments.length, PAGED_GRADING_CONCURRENCY + 1); i++) {
+    getPreparedSegment(i)
+  }
+  
+  const results = await mapLimit(segments, PAGED_GRADING_CONCURRENCY, async (_, i) => {
     const segmentStartTime = performance.now()
     console.log(`   📄 段落 ${i + 1}/${segments.length} 開始批改...`)
     
+    // 🆕 觸發預取下一批段落（在 API 調用期間準備）
+    prefetchAhead(i, PAGED_GRADING_CONCURRENCY)
+    
     try {
-      // 直接用完整的 AnswerKey，但加入提示讓 AI 只批看到的題目
-      const result = await gradeSubmissionCore(segmentBlob, null, answerKey, {
-        ...options,
-        _skipPagedGrading: true,
-        _isPartialImage: true  // 標記這是部分圖片
-      })
+      // 🆕 等待預處理完成（通常已經完成了）
+      const waitStartTime = performance.now()
+      const { blob: preparedBlob, base64, mimeType } = await getPreparedSegment(i)
+      const waitTime = performance.now() - waitStartTime
+      if (waitTime > 10) {
+        console.log(`      ⏳ 等待預處理: ${waitTime.toFixed(0)}ms`)
+      }
+      
+      // 直接用預處理好的圖片進行批改
+      const result = await gradeSubmissionCoreWithPreparedImage(
+        preparedBlob,
+        base64,
+        mimeType,
+        null,
+        answerKey,
+        {
+          ...options,
+          _skipPagedGrading: true,
+          _isPartialImage: true
+        }
+      )
       
       const segmentTime = performance.now() - segmentStartTime
       const answeredCount = result.details?.filter(d => 
@@ -1442,7 +1594,7 @@ async function gradeSubmissionPaged(
   const gradeTime = performance.now() - gradeStartTime
   console.log(`   ⏱️ 全部段落批改耗時: ${gradeTime.toFixed(0)}ms`)
   
-  // Step 3: 合併結果
+  // Step 4: 合併結果
   const mergeStartTime = performance.now()
   const merged = mergeGradingResults(results, answerKey)
   const mergeTime = performance.now() - mergeStartTime
@@ -1451,7 +1603,34 @@ async function gradeSubmissionPaged(
   console.log(`📄 [分頁批改] 完成！總分: ${merged.totalScore}，共 ${merged.details?.length ?? 0} 題`)
   console.log(`   ⏱️ 總耗時: ${totalTime.toFixed(0)}ms (拆分=${splitTime.toFixed(0)}ms, 批改=${gradeTime.toFixed(0)}ms, 合併=${mergeTime.toFixed(0)}ms)`)
   
+  // 🆕 如果是我們設置的緩存，則清除
+  if (shouldSetCache) {
+    clearAnswerKeyCache()
+  }
+  
   return merged
+}
+
+/**
+ * 🆕 使用已預處理圖片的批改核心（跳過壓縮和 base64 步驟）
+ * 直接調用 gradeSubmissionCore，但傳入預處理選項
+ */
+async function gradeSubmissionCoreWithPreparedImage(
+  preparedImage: Blob,
+  imageBase64: string,
+  imageMimeType: string,
+  answerKeyImage: Blob | null,
+  answerKey?: AnswerKey,
+  options?: GradeSubmissionOptions
+): Promise<GradingResult> {
+  // 直接調用核心邏輯，但傳入預處理好的資料
+  return await gradeSubmissionCore(preparedImage, answerKeyImage, answerKey, {
+    ...options,
+    _preparedImage: {
+      base64: imageBase64,
+      mimeType: imageMimeType
+    }
+  })
 }
 
 /**
@@ -1502,24 +1681,37 @@ async function gradeSubmissionCore(
   try {
     console.log(`${logPrefix}🧠 使用模型 ${currentModelName} 進行批改...`)
 
-    // Profiling: 圖片壓縮
-    const compressStartTime = performance.now()
-    const hasAnswerKeyImage = Boolean(answerKeyImage)
-    const submissionTarget = hasAnswerKeyImage
-      ? GEMINI_DUAL_IMAGE_TARGET_BYTES
-      : GEMINI_SINGLE_IMAGE_TARGET_BYTES
-    const preparedSubmissionImage = await compressForGemini(
-      submissionImage,
-      submissionTarget,
-      '作業'
-    )
-    const compressTime = performance.now() - compressStartTime
+    // 🆕 檢查是否有預處理好的圖片
+    let submissionBase64: string
+    let submissionMimeType: string
+    let compressTime = 0
+    let base64Time = 0
 
-    // Profiling: Base64 編碼
-    const base64StartTime = performance.now()
-    const submissionBase64 = await blobToBase64(preparedSubmissionImage)
-    const base64Time = performance.now() - base64StartTime
-    const submissionMimeType = preparedSubmissionImage.type || 'image/jpeg'
+    if (options?._preparedImage) {
+      // 使用預處理好的圖片（跳過壓縮和 base64 步驟）
+      console.log(`${logPrefix}   ✨ 使用預處理圖片`)
+      submissionBase64 = options._preparedImage.base64
+      submissionMimeType = options._preparedImage.mimeType
+    } else {
+      // 標準流程：壓縮和 base64 編碼
+      const compressStartTime = performance.now()
+      const hasAnswerKeyImage = Boolean(answerKeyImage)
+      const submissionTarget = hasAnswerKeyImage
+        ? GEMINI_DUAL_IMAGE_TARGET_BYTES
+        : GEMINI_SINGLE_IMAGE_TARGET_BYTES
+      const preparedSubmissionImage = await compressForGemini(
+        submissionImage,
+        submissionTarget,
+        '作業'
+      )
+      compressTime = performance.now() - compressStartTime
+
+      const base64StartTime = performance.now()
+      submissionBase64 = await blobToBase64(preparedSubmissionImage)
+      base64Time = performance.now() - base64StartTime
+      submissionMimeType = preparedSubmissionImage.type || 'image/jpeg'
+    }
+
     const requestParts: GeminiRequestPart[] = []
     const promptSections: string[] = []
 
@@ -1979,7 +2171,9 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
 
     // Profiling: API 請求
     const apiStartTime = performance.now()
-    const text = (await generateGeminiText(currentModelName, requestParts))
+    // 🆕 使用 AnswerKey 緩存（只在有 answerKey 且已設置緩存時啟用）
+    const useAnswerKeyCache = Boolean(answerKey) && Boolean(cachedAnswerKeyJson)
+    const text = (await generateGeminiText(currentModelName, requestParts, { useAnswerKeyCache }))
       .replace(/```json|```/g, '')
       .trim()
     const apiTime = performance.now() - apiStartTime
@@ -2203,18 +2397,81 @@ export async function gradeMultipleSubmissions(
   answerKeyBlob: Blob | null,
   onProgress: (current: number, total: number) => void,
   answerKey?: AnswerKey,
-  options?: GradeSubmissionOptions
+  options?: GradeSubmissionOptions & {
+    /** 每批改完一份作業時的回調（可用於即時更新 UI） */
+    onSubmissionComplete?: (updatedSubmission: Submission, result: GradingResult) => void
+    /** 檢查是否應該停止批改（用於用戶取消） */
+    shouldStop?: () => boolean
+  }
 ) {
   console.log(`📝 開始批量批改 ${submissions.length} 份作業`)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
+  
+  // 🆕 設置 AnswerKey 緩存（整個批量批改共用同一份 AnswerKey）
+  if (answerKey) {
+    setAnswerKeyCache(answerKey)
+    console.log('📦 [AnswerKey] 已設置批量批改緩存')
+  }
+  const { onSubmissionComplete, shouldStop, ...gradeOptions } = options ?? {}
 
   let successCount = 0
   let failCount = 0
+  let stopped = false
+
+  // 🆕 跨作業預取機制：預先壓縮下一份作業的圖片
+  const preparedSubmissions = new Map<string, Promise<{ blob: Blob; base64: string; mimeType: string } | null>>()
+  
+  const prepareSubmissionImage = async (sub: Submission): Promise<{ blob: Blob; base64: string; mimeType: string } | null> => {
+    if (!sub.imageBlob) return null
+    
+    try {
+      const prepStartTime = performance.now()
+      const prepared = await compressForGemini(sub.imageBlob, GEMINI_SINGLE_IMAGE_TARGET_BYTES, '作業')
+      const base64 = await blobToBase64(prepared)
+      const mimeType = prepared.type || 'image/jpeg'
+      const prepTime = performance.now() - prepStartTime
+      console.log(`   📦 預處理作業 ${sub.id} 完成 (${prepTime.toFixed(0)}ms, ${(prepared.size / 1024).toFixed(0)}KB)`)
+      return { blob: prepared, base64, mimeType }
+    } catch (error) {
+      console.warn(`   ⚠️ 預處理作業 ${sub.id} 失敗:`, error)
+      return null
+    }
+  }
+  
+  // 預取下一份作業
+  const prefetchNextSubmission = (currentIndex: number) => {
+    const nextIndex = currentIndex + 1
+    if (nextIndex < submissions.length) {
+      const nextSub = submissions[nextIndex]
+      if (!preparedSubmissions.has(nextSub.id!) && nextSub.imageBlob) {
+        console.log(`   🔮 預取下一份作業 ${nextSub.id}...`)
+        preparedSubmissions.set(nextSub.id!, prepareSubmissionImage(nextSub))
+      }
+    }
+  }
+  
+  // 預取前 2 份作業
+  for (let i = 0; i < Math.min(2, submissions.length); i++) {
+    const sub = submissions[i]
+    if (sub.imageBlob && !preparedSubmissions.has(sub.id!)) {
+      preparedSubmissions.set(sub.id!, prepareSubmissionImage(sub))
+    }
+  }
 
   for (let i = 0; i < submissions.length; i++) {
+    // 🛑 檢查是否應該停止
+    if (shouldStop?.()) {
+      console.log(`🛑 用戶請求停止批改，已完成 ${successCount} 份`)
+      stopped = true
+      break
+    }
+
     const sub = submissions[i]
     console.log(`\n📄 批改第 ${i + 1}/${submissions.length} 份作業: ${sub.id}`)
     onProgress(i + 1, submissions.length)
+    
+    // 🆕 預取下一份作業（在當前作業批改期間並行準備）
+    prefetchNextSubmission(i)
 
     try {
       if (!sub.imageBlob) {
@@ -2224,7 +2481,33 @@ export async function gradeMultipleSubmissions(
       }
 
       console.log(`🔍 開始批改作業 ${sub.id}...`)
-      const result = await gradeSubmission(sub.imageBlob, answerKeyBlob, answerKey, options)
+      
+      // 🆕 檢查是否有預處理好的圖片
+      let result: GradingResult
+      const preparedPromise = preparedSubmissions.get(sub.id!)
+      
+      if (preparedPromise) {
+        const prepared = await preparedPromise
+        if (prepared) {
+          // 使用預處理好的圖片（跳過壓縮步驟）
+          console.log(`   ✨ 使用預處理圖片批改`)
+          result = await gradeSubmissionWithPreparedImage(
+            prepared.blob,
+            prepared.base64,
+            prepared.mimeType,
+            answerKeyBlob,
+            answerKey,
+            gradeOptions
+          )
+        } else {
+          // 預處理失敗，回退到標準流程
+          result = await gradeSubmission(sub.imageBlob, answerKeyBlob, answerKey, gradeOptions)
+        }
+      } else {
+        // 沒有預處理，使用標準流程
+        result = await gradeSubmission(sub.imageBlob, answerKeyBlob, answerKey, gradeOptions)
+      }
+      
       console.log(`📊 批改結果: 得分 ${result.totalScore}`)
 
       console.log(`💾 儲存批改結果到資料庫...`)
@@ -2268,6 +2551,19 @@ export async function gradeMultipleSubmissions(
       console.log(
         `✅ 批改成功 (${i + 1}/${submissions.length}): ${sub.id}, 得分: ${result.totalScore}, 累計成功: ${successCount}`
       )
+
+      // 🆕 通知 UI 此份作業已完成，即時更新
+      if (onSubmissionComplete) {
+        const updatedSubmission: Submission = {
+          ...sub,
+          status: 'graded',
+          score: result.totalScore,
+          gradingResult: result,
+          gradedAt: Date.now(),
+          imageBase64: imageBase64 ?? sub.imageBase64
+        }
+        onSubmissionComplete(updatedSubmission, result)
+      }
     } catch (e) {
       failCount++
       console.error(`❌ 批改作業失敗 (${i + 1}/${submissions.length}): ${sub.id}`, e)
@@ -2280,10 +2576,50 @@ export async function gradeMultipleSubmissions(
     }
   }
 
-  console.log(`\n🏁 批改完成！總計: ${submissions.length}, 成功: ${successCount}, 失敗: ${failCount}`)
-  console.log(`📤 返回結果: { successCount: ${successCount}, failCount: ${failCount} }`)
+  console.log(`\n🏁 批改${stopped ? '已停止' : '完成'}！總計: ${submissions.length}, 成功: ${successCount}, 失敗: ${failCount}`)
+  console.log(`📤 返回結果: { successCount: ${successCount}, failCount: ${failCount}, stopped: ${stopped} }`)
 
-  return { successCount, failCount }
+  // 🆕 清除 AnswerKey 緩存
+  if (answerKey) {
+    clearAnswerKeyCache()
+  }
+
+  return { successCount, failCount, stopped }
+}
+
+/**
+ * 🆕 使用已預處理圖片的批改入口（跳過壓縮步驟，但仍走完整流程判斷分頁）
+ */
+async function gradeSubmissionWithPreparedImage(
+  preparedImage: Blob,
+  imageBase64: string,
+  imageMimeType: string,
+  answerKeyBlob: Blob | null,
+  answerKey?: AnswerKey,
+  options?: GradeSubmissionOptions
+): Promise<GradingResult> {
+  if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
+
+  // 判斷是否應該使用分頁批改
+  if (ENABLE_PAGED_GRADING && !options?._skipPagedGrading) {
+    const imageInfo = await isMultiPageImage(preparedImage)
+    
+    if (imageInfo.isMultiPage && answerKey && !answerKeyBlob) {
+      console.log(`📄 [分頁批改] 偵測到多頁圖片，啟用分頁批改（預處理模式）`)
+      // 分頁批改需要原始圖片來切割，所以還是用原始 blob
+      return await gradeSubmissionPaged(preparedImage, answerKeyBlob, answerKey, options)
+    }
+  }
+  
+  // 使用預處理圖片進行標準批改
+  return await gradeSubmissionCoreWithPreparedImage(
+    preparedImage,
+    imageBase64,
+    imageMimeType,
+    answerKeyBlob,
+    answerKey,
+    options
+  )
 }
 
 /**

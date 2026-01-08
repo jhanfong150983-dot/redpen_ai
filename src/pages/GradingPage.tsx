@@ -13,7 +13,12 @@ import {
   X,
   Pencil,
   AlertTriangle,
-  Trash2
+  Trash2,
+  Square,
+  CheckCircle2,
+  Eye,
+  ChevronRight,
+  ChevronLeft
 } from 'lucide-react'
 import { db, type Assignment, type Student, type Submission, type Classroom } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
@@ -119,6 +124,20 @@ export default function GradingPage({
   } | null>(null)
   const reviewTimeoutRef = useRef<number | null>(null)
 
+  // 🆕 停止批改相關
+  const [stopRequested, setStopRequested] = useState(false)
+  const stopRequestedRef = useRef(false)
+
+  // 🆕 確認對話框
+  const [showGradeConfirm, setShowGradeConfirm] = useState(false)
+  const [gradeCandidates, setGradeCandidates] = useState<Submission[]>([])
+  const [isRegrade, setIsRegrade] = useState(false)
+
+  // 🆕 進度詳情
+  const [currentGradingStudent, setCurrentGradingStudent] = useState<string>('')
+  const [gradingStartTime, setGradingStartTime] = useState<number>(0)
+  const [completedReviewCount, setCompletedReviewCount] = useState(0)
+
   // 題目詳情（可編輯）
   const [editableDetails, setEditableDetails] = useState<any[]>([])
   const [editingReasonIndex, setEditingReasonIndex] = useState<number | null>(null)
@@ -130,6 +149,64 @@ export default function GradingPage({
   )
   const [activeRegradeId, setActiveRegradeId] = useState<string | null>(null)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
+  
+  // 🆕 計算待複核數量
+  const needsReviewCount = useMemo(() => {
+    return Array.from(submissions.values()).filter(s => s.gradingResult?.needsReview).length
+  }, [submissions])
+
+  // 🆕 獲取所有待複核的學生（按座號排序）
+  const needsReviewStudents = useMemo(() => {
+    return students
+      .filter(student => {
+        const sub = submissions.get(student.id)
+        return sub?.gradingResult?.needsReview
+      })
+      .sort((a, b) => a.seatNumber - b.seatNumber)
+  }, [students, submissions])
+
+  // 🆕 跳轉到下一個待複核
+  const jumpToNextReview = useCallback(() => {
+    if (needsReviewStudents.length === 0) return
+    
+    const currentStudentId = selectedSubmission?.student.id
+    let nextIndex = 0
+    
+    if (currentStudentId) {
+      const currentIdx = needsReviewStudents.findIndex(s => s.id === currentStudentId)
+      if (currentIdx >= 0 && currentIdx < needsReviewStudents.length - 1) {
+        nextIndex = currentIdx + 1
+      }
+    }
+    
+    const nextStudent = needsReviewStudents[nextIndex]
+    const sub = submissions.get(nextStudent.id)
+    if (sub) {
+      setSelectedSubmission({ submission: sub, student: nextStudent })
+    }
+  }, [needsReviewStudents, selectedSubmission, submissions])
+
+  // 🆕 跳轉到上一個待複核
+  const jumpToPrevReview = useCallback(() => {
+    if (needsReviewStudents.length === 0) return
+    
+    const currentStudentId = selectedSubmission?.student.id
+    let prevIndex = needsReviewStudents.length - 1
+    
+    if (currentStudentId) {
+      const currentIdx = needsReviewStudents.findIndex(s => s.id === currentStudentId)
+      if (currentIdx > 0) {
+        prevIndex = currentIdx - 1
+      }
+    }
+    
+    const prevStudent = needsReviewStudents[prevIndex]
+    const sub = submissions.get(prevStudent.id)
+    if (sub) {
+      setSelectedSubmission({ submission: sub, student: prevStudent })
+    }
+  }, [needsReviewStudents, selectedSubmission, submissions])
+
   const handleInkTopUp = useCallback(() => {
     if (onRequireInkTopUp) {
       onRequireInkTopUp()
@@ -839,6 +916,7 @@ export default function GradingPage({
 
     const allSubs = Array.from(submissions.values())
     let candidates = allSubs.filter((s) => s.status === 'scanned' || s.status === 'synced')
+    let regrade = false
 
     if (candidates.length === 0) {
       const graded = allSubs.filter((s) => s.status === 'graded')
@@ -846,14 +924,27 @@ export default function GradingPage({
         alert('沒有可批改的作業')
         return
       }
-      if (!window.confirm(`偵測到 ${graded.length} 份已批改作業，確定要全部重評嗎？`)) return
       candidates = graded
-    } else {
-      if (!window.confirm(`將批改 ${candidates.length} 份新作業，確定要開始嗎？`)) return
+      regrade = true
     }
+
+    // 🆕 顯示確認對話框
+    setGradeCandidates(candidates)
+    setIsRegrade(regrade)
+    setShowGradeConfirm(true)
+  }
+
+  // 🆕 確認後執行批改
+  const executeGrading = async () => {
+    setShowGradeConfirm(false)
+    const candidates = gradeCandidates
 
     setIsGrading(true)
     setError(null)
+    setStopRequested(false)
+    stopRequestedRef.current = false
+    setGradingStartTime(Date.now())
+    setCompletedReviewCount(0)
 
     try {
       // 處理需要準備圖片的作業（沒有 Blob 但可能有 Base64 或需要下載）
@@ -866,14 +957,24 @@ export default function GradingPage({
 
       if (needRebuild.length > 0 || needPrepare.length > 0) {
         setIsDownloading(true)
+        setCurrentGradingStudent('準備圖片中...')
 
         const totalTasks = needRebuild.length + needPrepare.length
         let currentTask = 0
 
         // 先重建所有有 Base64 的 Blob（修復損壞）
         for (const sub of needRebuild) {
+          // 🆕 檢查停止請求
+          if (stopRequestedRef.current) {
+            console.log('🛑 用戶在下載階段請求停止')
+            break
+          }
+
           currentTask++
           setDownloadProgress({ current: currentTask, total: totalTasks })
+          
+          const student = students.find(s => s.id === sub.studentId)
+          setCurrentGradingStudent(student ? `${student.seatNumber}號 ${student.name}` : '')
 
           try {
             console.log(`🔧 從 Base64 重建 Blob: ${sub.id}`)
@@ -881,7 +982,6 @@ export default function GradingPage({
             console.log(`✅ 從 Base64 重建成功: size=${sub.imageBlob.size}`)
           } catch (err) {
             console.error('重建 Blob 失敗', err)
-            const student = students.find(s => s.id === sub.studentId)
             const studentInfo = student ? `${student.seatNumber}號 ${student.name}` : `ID: ${sub.studentId}`
             prepareErrors.push(studentInfo)
           }
@@ -889,8 +989,17 @@ export default function GradingPage({
 
         // 再下載沒有 Base64 也沒有 Blob 的作業
         for (const sub of needPrepare) {
+          // 🆕 檢查停止請求
+          if (stopRequestedRef.current) {
+            console.log('🛑 用戶在下載階段請求停止')
+            break
+          }
+
           currentTask++
           setDownloadProgress({ current: currentTask, total: totalTasks })
+
+          const student = students.find(s => s.id === sub.studentId)
+          setCurrentGradingStudent(student ? `${student.seatNumber}號 ${student.name}` : '')
 
           try {
             if (sub.status === 'synced' || sub.status === 'graded') {
@@ -906,13 +1015,21 @@ export default function GradingPage({
             }
           } catch (err) {
             console.error('準備圖片失敗', err)
-            const student = students.find(s => s.id === sub.studentId)
             const studentInfo = student ? `${student.seatNumber}號 ${student.name}` : `ID: ${sub.studentId}`
             prepareErrors.push(studentInfo)
           }
         }
 
         setIsDownloading(false)
+
+        // 🆕 如果用戶停止，直接結束
+        if (stopRequestedRef.current) {
+          setIsGrading(false)
+          setStopRequested(false)
+          setCurrentGradingStudent('')
+          alert('已停止批改')
+          return
+        }
 
         // 如果有準備失敗，詢問是否繼續
         if (prepareErrors.length > 0) {
@@ -943,24 +1060,56 @@ export default function GradingPage({
       const results = await gradeMultipleSubmissions(
         toGrade,
         null,
-        (current, total) => setGradingProgress({ current, total }),
-        assignment?.answerKey, { domain: assignment?.domain })
+        (current, total) => {
+          setGradingProgress({ current, total })
+          // 🆕 更新當前批改學生
+          const currentSub = toGrade[current - 1]
+          if (currentSub) {
+            const student = students.find(s => s.id === currentSub.studentId)
+            setCurrentGradingStudent(student ? `${student.seatNumber}號 ${student.name}` : '')
+          }
+        },
+        assignment?.answerKey,
+        {
+          domain: assignment?.domain,
+          // 🆕 每批改完一份作業就即時更新 UI
+          onSubmissionComplete: (updatedSubmission, result) => {
+            console.log(`🔄 即時更新 UI: ${updatedSubmission.id}, 得分: ${updatedSubmission.score}`)
+            setSubmissions((prev) => {
+              const next = new Map(prev)
+              next.set(updatedSubmission.studentId, updatedSubmission)
+              return next
+            })
+            // 🆕 統計需複核數量
+            if (result.needsReview) {
+              setCompletedReviewCount(prev => prev + 1)
+            }
+          },
+          // 🆕 停止檢查回調
+          shouldStop: () => stopRequestedRef.current
+        }
+      )
 
       console.log(`📥 gradeMultipleSubmissions 返回:`, results)
-      console.log(`   類型: ${typeof results}`)
-      console.log(`   是否為物件: ${typeof results === 'object'}`)
-      console.log(`   有 successCount: ${'successCount' in (results || {})}`)
-
       const successCount =
         results && typeof results === 'object' && 'successCount' in results
           ? (results as any).successCount
           : toGrade.length
+      const stopped = results && typeof results === 'object' && 'stopped' in results
+        ? (results as any).stopped
+        : false
 
-      console.log(`✅ 最終 successCount: ${successCount}`)
+      console.log(`✅ 最終 successCount: ${successCount}, stopped: ${stopped}`)
 
-      await loadData()
+      // loadData() 不再需要，因為已即時更新
       requestSync()
-      alert(`批改完成！成功批改 ${successCount} 份`)
+      
+      // 🆕 根據是否停止顯示不同訊息
+      if (stopped) {
+        alert(`已停止批改！成功批改 ${successCount} 份`)
+      } else {
+        alert(`批改完成！成功批改 ${successCount} 份`)
+      }
     } catch (err) {
       console.error('批改失敗', err)
       setError(err instanceof Error ? err.message : '批改失敗')
@@ -969,7 +1118,17 @@ export default function GradingPage({
       setIsDownloading(false)
       setGradingProgress({ current: 0, total: 0 })
       setDownloadProgress({ current: 0, total: 0 })
+      setStopRequested(false)
+      stopRequestedRef.current = false
+      setCurrentGradingStudent('')
     }
+  }
+
+  // 🆕 停止批改
+  const handleStopGrading = () => {
+    console.log('🛑 用戶請求停止批改')
+    setStopRequested(true)
+    stopRequestedRef.current = true
   }
 
   // 單題得分即時更新（自動重算總分並儲存）
@@ -1267,6 +1426,139 @@ export default function GradingPage({
           </div>
         </div>
       )}
+
+      {/* 🆕 批改進度 Overlay（改進版） */}
+      {(isGrading || isDownloading) && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full mx-4">
+            <div className="flex flex-col items-center gap-4">
+              {isDownloading ? (
+                <Download className="w-12 h-12 text-blue-500 animate-bounce" />
+              ) : (
+                <Sparkles className="w-12 h-12 text-purple-500 animate-pulse" />
+              )}
+              
+              <div className="text-center">
+                <p className="text-xl font-bold text-gray-800">
+                  {isDownloading ? '準備圖片中...' : 'AI 批改中...'}
+                </p>
+                {currentGradingStudent && (
+                  <p className="text-sm text-gray-600 mt-1">
+                    正在處理：{currentGradingStudent}
+                  </p>
+                )}
+              </div>
+
+              {/* 進度條 */}
+              <div className="w-full">
+                <div className="flex justify-between text-sm text-gray-600 mb-2">
+                  <span>
+                    {isDownloading 
+                      ? `下載 ${downloadProgress.current}/${downloadProgress.total}`
+                      : `批改 ${gradingProgress.current}/${gradingProgress.total}`
+                    }
+                  </span>
+                  <span>
+                    {isDownloading
+                      ? `${Math.round((downloadProgress.current / downloadProgress.total) * 100 || 0)}%`
+                      : `${Math.round((gradingProgress.current / gradingProgress.total) * 100 || 0)}%`
+                    }
+                  </span>
+                </div>
+                <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full transition-all duration-300 ${isDownloading ? 'bg-blue-500' : 'bg-purple-500'}`}
+                    style={{ 
+                      width: `${isDownloading 
+                        ? (downloadProgress.current / downloadProgress.total) * 100 
+                        : (gradingProgress.current / gradingProgress.total) * 100}%` 
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* 預估時間和複核統計 */}
+              {!isDownloading && gradingProgress.current > 0 && (
+                <div className="flex items-center gap-4 text-sm text-gray-500">
+                  {gradingStartTime > 0 && (
+                    <span>
+                      已用時 {Math.round((Date.now() - gradingStartTime) / 1000)}秒
+                    </span>
+                  )}
+                  {completedReviewCount > 0 && (
+                    <span className="text-amber-600">
+                      {completedReviewCount} 份需複核
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* 停止按鈕 */}
+              <button
+                onClick={handleStopGrading}
+                disabled={stopRequested}
+                className={`mt-2 flex items-center gap-2 px-6 py-2 rounded-xl transition-all ${
+                  stopRequested
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-red-100 text-red-600 hover:bg-red-200'
+                }`}
+              >
+                <Square className="w-4 h-4" />
+                {stopRequested ? '正在停止...' : '停止批改'}
+              </button>
+
+              <p className="text-xs text-gray-400 text-center">
+                {stopRequested 
+                  ? '將在完成當前作業後停止'
+                  : '已完成的批改結果會保留'
+                }
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🆕 確認對話框 */}
+      {showGradeConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">
+              {isRegrade ? '確認重新批改' : '確認開始批改'}
+            </h3>
+            
+            <div className="space-y-3 mb-6">
+              <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                <span className="text-gray-600">作業數量</span>
+                <span className="font-semibold text-gray-900">{gradeCandidates.length} 份</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                <span className="text-gray-600">預估扣點</span>
+                <span className="font-semibold text-purple-600">約 {gradeCandidates.length} 點</span>
+              </div>
+              {isRegrade && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+                  ⚠️ 這些作業已批改過，重新批改會覆蓋原有結果
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowGradeConfirm(false)}
+                className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors font-medium"
+              >
+                取消
+              </button>
+              <button
+                onClick={executeGrading}
+                className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all font-medium"
+              >
+                開始批改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="max-w-7xl mx-auto pt-8">
         {onBack && (
           <button
@@ -1288,6 +1580,16 @@ export default function GradingPage({
               </p>
             </div>
             <div className="flex items-center gap-3">
+              {/* 🆕 待複核按鈕 */}
+              {needsReviewCount > 0 && (
+                <button
+                  onClick={jumpToNextReview}
+                  className="flex items-center gap-2 px-4 py-3 bg-amber-100 text-amber-700 rounded-xl hover:bg-amber-200 transition-all font-medium border border-amber-200"
+                >
+                  <Eye className="w-5 h-5" />
+                  待複核 {needsReviewCount}
+                </button>
+              )}
               <button
                 onClick={handleRefresh}
                 disabled={isRefreshing}
@@ -1305,22 +1607,8 @@ export default function GradingPage({
                 }
                 className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl font-medium"
               >
-                {isDownloading ? (
-                  <>
-                    <Download className="w-5 h-5 animate-bounce" />
-                    下載中 {downloadProgress.current}/{downloadProgress.total}
-                  </>
-                ) : isGrading ? (
-                  <>
-                    <Sparkles className="w-5 h-5 animate-spin" />
-                    AI 批改中 {gradingProgress.current}/{gradingProgress.total}
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-5 h-5" />
-                    AI 批改全部
-                  </>
-                )}
+                <Sparkles className="w-5 h-5" />
+                AI 批改全部
               </button>
             </div>
           </div>
@@ -1436,6 +1724,12 @@ export default function GradingPage({
                             }`}
                           >
                             信心 {confidenceAverage}%
+                          </div>
+                        )}
+                        {/* 🆕 需複核標記 */}
+                        {gradingResult.needsReview && (
+                          <div className="px-2 py-0.5 rounded-full text-[10px] font-semibold shadow bg-amber-100 text-amber-700 border border-amber-200">
+                            需複核
                           </div>
                         )}
                       </div>
@@ -1586,13 +1880,37 @@ export default function GradingPage({
 
             <div className="w-full max-w-md border-l border-gray-200 flex flex-col bg-white">
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50">
-                <div>
-                  <h2 className="text-base font-semibold text-gray-900">
-                    {selectedSubmission.student.seatNumber} 號 · {selectedSubmission.student.name}
-                  </h2>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {classroom?.name} · {assignment?.title}
-                  </p>
+                <div className="flex items-center gap-2">
+                  {/* 🆕 複核導航按鈕 */}
+                  {needsReviewCount > 0 && (
+                    <div className="flex items-center gap-1 mr-2">
+                      <button
+                        onClick={jumpToPrevReview}
+                        className="p-1.5 rounded-full hover:bg-gray-200 text-gray-500"
+                        title="上一個待複核"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <span className="text-xs text-amber-600 font-medium px-1">
+                        {needsReviewStudents.findIndex(s => s.id === selectedSubmission.student.id) + 1}/{needsReviewCount}
+                      </span>
+                      <button
+                        onClick={jumpToNextReview}
+                        className="p-1.5 rounded-full hover:bg-gray-200 text-gray-500"
+                        title="下一個待複核"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                  <div>
+                    <h2 className="text-base font-semibold text-gray-900">
+                      {selectedSubmission.student.seatNumber} 號 · {selectedSubmission.student.name}
+                    </h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {classroom?.name} · {assignment?.title}
+                    </p>
+                  </div>
                 </div>
                 <button
                   onClick={handleCloseModal}
@@ -1603,6 +1921,47 @@ export default function GradingPage({
               </div>
 
               <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+                {/* 🆕 需複核警示 */}
+                {selectedSubmission.submission.gradingResult?.needsReview && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-5 h-5 text-amber-500" />
+                      <div>
+                        <p className="text-sm font-medium text-amber-700">需要複核</p>
+                        <p className="text-xs text-amber-600">
+                          {selectedSubmission.submission.gradingResult.reviewReasons?.join('、') || 'AI 建議人工檢查'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        const id = selectedSubmission.submission.id
+                        const submission = await db.submissions.get(id)
+                        if (!submission?.gradingResult) return
+                        
+                        const newGradingResult = { 
+                          ...submission.gradingResult, 
+                          needsReview: false, 
+                          reviewReasons: [] 
+                        }
+                        await db.submissions.update(id, { gradingResult: newGradingResult })
+                        requestSync()
+                        
+                        const updated = await db.submissions.get(id)
+                        if (updated) {
+                          setSubmissions((prev) => new Map(prev).set(updated.studentId, updated))
+                          const student = students.find((s) => s.id === updated.studentId)
+                          if (student) setSelectedSubmission({ submission: updated, student })
+                        }
+                      }}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 transition-colors text-xs font-medium"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      標記已複核
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-baseline gap-2">

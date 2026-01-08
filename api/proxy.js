@@ -9,6 +9,118 @@ export const config = {
 
 import { getAuthUser } from '../server/_auth.js'
 import { getSupabaseAdmin } from '../server/_supabase.js'
+import crypto from 'crypto'
+
+// 🆕 AnswerKey 緩存（按 user + hash 存儲）
+// 使用 Map 作為簡單的內存緩存，每個 Vercel 實例獨立
+// 實際生產環境可考慮使用 Redis/Upstash
+const answerKeyCache = new Map()
+const ANSWER_KEY_CACHE_TTL = 30 * 60 * 1000 // 30 分鐘過期
+
+/**
+ * 計算 AnswerKey 的 hash（用作緩存 key）
+ */
+function computeAnswerKeyHash(answerKey) {
+  const json = JSON.stringify(answerKey)
+  return crypto.createHash('md5').update(json).digest('hex').slice(0, 16)
+}
+
+/**
+ * 緩存 AnswerKey
+ */
+function cacheAnswerKey(userId, hash, answerKey) {
+  const cacheKey = `${userId}:${hash}`
+  answerKeyCache.set(cacheKey, {
+    answerKey,
+    expiresAt: Date.now() + ANSWER_KEY_CACHE_TTL
+  })
+  console.log(`📦 [AnswerKey Cache] 已緩存 ${cacheKey}`)
+}
+
+/**
+ * 從緩存獲取 AnswerKey
+ */
+function getCachedAnswerKey(userId, hash) {
+  const cacheKey = `${userId}:${hash}`
+  const cached = answerKeyCache.get(cacheKey)
+  
+  if (!cached) {
+    console.log(`❌ [AnswerKey Cache] 未找到 ${cacheKey}`)
+    return null
+  }
+  
+  if (Date.now() > cached.expiresAt) {
+    console.log(`⏰ [AnswerKey Cache] 已過期 ${cacheKey}`)
+    answerKeyCache.delete(cacheKey)
+    return null
+  }
+  
+  console.log(`✅ [AnswerKey Cache] 命中 ${cacheKey}`)
+  return cached.answerKey
+}
+
+/**
+ * 清理過期的緩存項目（定期執行）
+ */
+function cleanupExpiredCache() {
+  const now = Date.now()
+  let cleaned = 0
+  for (const [key, value] of answerKeyCache.entries()) {
+    if (now > value.expiresAt) {
+      answerKeyCache.delete(key)
+      cleaned++
+    }
+  }
+  if (cleaned > 0) {
+    console.log(`🧹 [AnswerKey Cache] 清理了 ${cleaned} 個過期項目`)
+  }
+}
+
+// 每 5 分鐘清理一次過期緩存
+setInterval(cleanupExpiredCache, 5 * 60 * 1000)
+
+/**
+ * 🆕 將 AnswerKey 注入到 contents 的第一個 text part 中
+ * 這樣對 Gemini 模型來說，效果和前端直接傳是一樣的
+ */
+function injectAnswerKeyToContents(contents, answerKey) {
+  // 深拷貝避免修改原始物件
+  const newContents = JSON.parse(JSON.stringify(contents))
+  
+  // 找到第一個 user role 的 message
+  for (const content of newContents) {
+    if (content.role === 'user' && Array.isArray(content.parts)) {
+      // 找到第一個 text part
+      for (let i = 0; i < content.parts.length; i++) {
+        const part = content.parts[i]
+        if (part.text && typeof part.text === 'string') {
+          // 在 prompt 開頭注入 AnswerKey JSON
+          // 找到適當的注入點（在「標準答案與配分」說明之前）
+          const answerKeyJson = JSON.stringify(answerKey)
+          const answerKeySection = `
+下面是本次作業的標準答案與配分（JSON 格式）：
+${answerKeyJson}
+`
+          // 檢查是否已經有 AnswerKey（避免重複注入）
+          if (!part.text.includes('標準答案與配分（JSON 格式）')) {
+            // 找到適當的位置插入（在批改流程說明之前）
+            const insertMarker = '【批改流程】'
+            const insertIndex = part.text.indexOf(insertMarker)
+            if (insertIndex > 0) {
+              part.text = part.text.slice(0, insertIndex) + answerKeySection + '\n' + part.text.slice(insertIndex)
+            } else {
+              // 如果找不到標記，在開頭插入
+              part.text = answerKeySection + '\n' + part.text
+            }
+          }
+          return newContents
+        }
+      }
+    }
+  }
+  
+  return newContents
+}
 
 const INK_EXCHANGE_RATE = 33
 const INPUT_USD_PER_MILLION = 0.5
@@ -128,10 +240,42 @@ export default async function handler(req, res) {
     }
   }
 
-  const { model, contents, inkSessionId, ...payload } = body || {}
+  const { model, contents, inkSessionId, answerKey, answerKeyRef, ...payload } = body || {}
   if (!model || !Array.isArray(contents)) {
     res.status(400).json({ error: 'Missing model or contents' })
     return
+  }
+
+  // 🆕 處理 AnswerKey 緩存邏輯
+  let resolvedAnswerKey = null
+  let answerKeyHash = null
+  
+  if (answerKey) {
+    // 前端傳來完整 AnswerKey：緩存並返回 hash
+    answerKeyHash = computeAnswerKeyHash(answerKey)
+    cacheAnswerKey(user.id, answerKeyHash, answerKey)
+    resolvedAnswerKey = answerKey
+    console.log(`📥 [AnswerKey] 收到完整 AnswerKey，hash=${answerKeyHash}`)
+  } else if (answerKeyRef) {
+    // 前端傳來 hash 引用：從緩存獲取
+    resolvedAnswerKey = getCachedAnswerKey(user.id, answerKeyRef)
+    if (!resolvedAnswerKey) {
+      console.warn(`⚠️ [AnswerKey] 緩存未命中 ref=${answerKeyRef}，請求前端重傳`)
+      res.status(422).json({ 
+        error: 'AnswerKey cache miss', 
+        code: 'ANSWER_KEY_CACHE_MISS',
+        answerKeyRef 
+      })
+      return
+    }
+    answerKeyHash = answerKeyRef
+    console.log(`📤 [AnswerKey] 使用緩存 AnswerKey，ref=${answerKeyRef}`)
+  }
+
+  // 🆕 如果有 AnswerKey，注入到 prompt 中
+  let processedContents = contents
+  if (resolvedAnswerKey) {
+    processedContents = injectAnswerKeyToContents(contents, resolvedAnswerKey)
   }
 
   const modelPath = String(model).startsWith('models/')
@@ -201,7 +345,7 @@ export default async function handler(req, res) {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents, ...payload })
+      body: JSON.stringify({ contents: processedContents, ...payload })
     })
 
     const text = await response.text()
@@ -210,6 +354,11 @@ export default async function handler(req, res) {
       data = JSON.parse(text)
     } catch {
       data = { raw: text }
+    }
+
+    // 🆕 返回 answerKeyHash 給前端（用於後續請求）
+    if (response.ok && answerKeyHash && data && typeof data === 'object') {
+      data.answerKeyHash = answerKeyHash
     }
 
     if (response.ok && data?.usageMetadata) {
