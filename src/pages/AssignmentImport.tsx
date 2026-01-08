@@ -15,13 +15,16 @@ import { requestSync, waitForSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import {
   convertPdfToImages,
+  getDefaultImageFormat,
   getFileType,
-  mergePdfFiles,
   sortFilesByNumber
 } from '@/lib/pdfToImage'
 import { blobToBase64 } from '@/lib/imageCompression'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
+
+// 目標檔案大小上限（1.5MB）
+const TARGET_MAX_BYTES = 1.5 * 1024 * 1024
 
 interface AssignmentImportProps {
   assignmentId: string
@@ -73,8 +76,10 @@ async function rotateImageBlob(blob: Blob, degrees: number): Promise<Blob> {
   ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2)
   bitmap.close()
 
+  // 使用統一的輸出格式（Safari 用 JPEG，其他用 WebP）
+  const outputFormat = getDefaultImageFormat()
   const rotated = await safeToBlobWithFallback(canvas, {
-    format: 'image/webp',
+    format: outputFormat,
     quality: 0.85
   })
 
@@ -87,6 +92,13 @@ async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
   const bitmaps = await Promise.all(pageBlobs.map((blob) => createImageBitmap(blob)))
   const width = Math.max(...bitmaps.map((bmp) => bmp.width))
   const height = bitmaps.reduce((sum, bmp) => sum + bmp.height, 0)
+
+  // Canvas 尺寸保護：避免超過瀏覽器上限
+  const MAX_CANVAS_SIDE = 16384
+  if (width > MAX_CANVAS_SIDE || height > MAX_CANVAS_SIDE) {
+    bitmaps.forEach((bmp) => bmp.close())
+    throw new Error(`合併後圖片尺寸過大（${width}x${height}），請改為每位學生 1 頁或降低解析度`)
+  }
 
   const canvas = document.createElement('canvas')
   canvas.width = width
@@ -105,13 +117,71 @@ async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
     bmp.close()
   })
 
-  // 使用安全的 toBlob 包裝器（帶自動 fallback 和 timeout 保護）
+  // 使用統一的輸出格式（Safari 用 JPEG，其他用 WebP）
+  const outputFormat = getDefaultImageFormat()
   const merged = await safeToBlobWithFallback(canvas, {
-    format: 'image/webp', // 平板不支持時會自動 fallback 到 JPEG
+    format: outputFormat,
     quality: 0.85
   })
 
   return merged
+}
+
+/**
+ * 壓縮圖片到目標大小（先縮尺寸、再降 quality）
+ * 用於確保合併後的長圖不超過 1.5MB
+ */
+async function compressToTargetBytes(
+  blob: Blob,
+  targetBytes: number,
+  opts: { maxWidth?: number; format?: 'image/jpeg' | 'image/webp'; qualities?: number[] } = {}
+): Promise<Blob> {
+  if (blob.size <= targetBytes) return blob
+
+  // 合併長圖用較小的寬度上限
+  const maxWidth = opts.maxWidth ?? 1600
+  const format = opts.format ?? getDefaultImageFormat()
+  const qualities = opts.qualities ?? [0.82, 0.75, 0.68, 0.6]
+
+  const bmp = await createImageBitmap(blob)
+
+  // 先縮放到 maxWidth（維持比例）
+  const scale = Math.min(1, maxWidth / bmp.width)
+  const w = Math.max(1, Math.round(bmp.width * scale))
+  const h = Math.max(1, Math.round(bmp.height * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    bmp.close()
+    console.warn('[compressToTargetBytes] 無法建立 Canvas，放棄壓縮')
+    return blob
+  }
+  ctx.drawImage(bmp, 0, 0, w, h)
+  bmp.close()
+
+  console.log(`[compressToTargetBytes] 原始 ${(blob.size / 1024).toFixed(0)}KB, 縮放到 ${w}x${h}`)
+
+  // 再用多個 quality 嘗試壓到 targetBytes
+  for (const q of qualities) {
+    // eslint-disable-next-line no-await-in-loop
+    const out = await safeToBlobWithFallback(canvas, { format, quality: q })
+    console.log(`[compressToTargetBytes] quality=${q} -> ${(out.size / 1024).toFixed(0)}KB`)
+    if (out.size <= targetBytes) {
+      canvas.width = 0
+      canvas.height = 0
+      return out
+    }
+  }
+
+  // 仍超過就回傳最後一次（至少已降很多）
+  const out = await safeToBlobWithFallback(canvas, { format, quality: qualities[qualities.length - 1] })
+  canvas.width = 0
+  canvas.height = 0
+  console.warn(`[compressToTargetBytes] 仍超過目標: ${(out.size / 1024).toFixed(0)}KB > ${(targetBytes / 1024).toFixed(0)}KB`)
+  return out
 }
 
 export default function AssignmentImport({
@@ -163,6 +233,13 @@ export default function AssignmentImport({
   }, [students])
 
   const missingSeatSet = useMemo(() => new Set(missingSeatNumbers), [missingSeatNumbers])
+
+  // 清理 URL 物件，防止 memory leak
+  useEffect(() => {
+    return () => {
+      pages.forEach(p => URL.revokeObjectURL(p.url))
+    }
+  }, [pages])
 
   // 載入作業與班級、學生資料
   useEffect(() => {
@@ -357,11 +434,8 @@ export default function AssignmentImport({
   const processSinglePdf = async (file: File) => {
     setFileName(file.name)
 
-    const blobs = await convertPdfToImages(file, {
-      scale: 2,
-      format: 'image/webp',
-      quality: 0.8
-    })
+    // 讓 pdfToImage 的護欄統一控制 scale/format/quality
+    const blobs = await convertPdfToImages(file)
 
     const previews: PagePreview[] = blobs.map((blob, idx) => ({
       index: idx,
@@ -381,38 +455,31 @@ export default function AssignmentImport({
     setError(null)
 
     try {
-      console.log(`開始合併 ${uploadedFiles.length} 個 PDF 檔案`)
+      console.log(`開始串接 ${uploadedFiles.length} 個 PDF 檔案`)
 
-      // 合併多個 PDF
-      const mergedFile = await mergePdfFiles(uploadedFiles, {
-        fileName: `merged_${uploadedFiles.length}_files.pdf`
-      })
-
-      // 檢查是否有預先轉換的 Blobs
-      // @ts-ignore
-      const preConvertedBlobs = mergedFile._mergedBlobs as Blob[] | undefined
-
-      if (preConvertedBlobs && preConvertedBlobs.length > 0) {
-        // 使用預先轉換的 Blobs
-        console.log(`使用預先轉換的 ${preConvertedBlobs.length} 頁`)
-
-        const previews: PagePreview[] = preConvertedBlobs.map((blob, idx) => ({
-          index: idx,
-          blob,
-          url: URL.createObjectURL(blob)
-        }))
-
-        setPages(previews)
-        setFileName(`已合併 ${uploadedFiles.length} 個 PDF (共 ${previews.length} 頁)`)
-      } else {
-        // Fallback: 重新轉換
-        await processSinglePdf(mergedFile)
+      // 直接串接所有 PDF 的頁面，不做真正的 merge
+      const allBlobs: Blob[] = []
+      for (const f of uploadedFiles) {
+        console.log(`處理: ${f.name}`)
+        // eslint-disable-next-line no-await-in-loop
+        const blobs = await convertPdfToImages(f) // 用 pdfToImage 的預設護欄
+        allBlobs.push(...blobs)
       }
 
+      const previews: PagePreview[] = allBlobs.map((blob, idx) => ({
+        index: idx,
+        blob,
+        url: URL.createObjectURL(blob)
+      }))
+
+      setPages(previews)
+      setFileName(`已串接 ${uploadedFiles.length} 個 PDF（共 ${previews.length} 頁）`)
       setUploadedFiles([])
+
+      console.log(`串接完成，共 ${previews.length} 頁`)
     } catch (e) {
       console.error(e)
-      setError(e instanceof Error ? e.message : '合併 PDF 失敗')
+      setError(e instanceof Error ? e.message : '處理 PDF 失敗')
       setShowMergeConfirm(true) // 返回合併確認介面
     } finally {
       setIsMerging(false)
@@ -557,8 +624,14 @@ export default function AssignmentImport({
           )
         }
 
-        const imageBlob =
+        let imageBlob =
           pageBlobs.length === 1 ? pageBlobs[0] : await mergePageBlobs(pageBlobs)
+
+        // 壓縮到目標大小（1.5MB）：先縮尺寸、再降 quality
+        // 單頁保留較高解析度（1900）以維持 AI 辨識準確度
+        // 合併長圖用較低寬度（1600）以控制檔案大小
+        const compressMaxWidth = pageBlobs.length === 1 ? 1900 : 1600
+        imageBlob = await compressToTargetBytes(imageBlob, TARGET_MAX_BYTES, { maxWidth: compressMaxWidth })
 
         const existingSubmissions = await db.submissions
           .where('assignmentId')
@@ -787,7 +860,7 @@ export default function AssignmentImport({
               {isMerging && (
                 <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600">
                   <Loader className="w-4 h-4 animate-spin" />
-                  <span>合併 PDF 中，請稍候...</span>
+                  <span>處理多個 PDF 中，請稍候...</span>
                 </div>
               )}
               {!isUploading && !isMerging && fileName && (
