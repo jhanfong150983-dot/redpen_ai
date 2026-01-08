@@ -1,4 +1,3 @@
-import { useRef, useEffect } from 'react'
 import {
   Camera,
   Sparkles,
@@ -17,32 +16,10 @@ import {
 } from 'lucide-react'
 import { SUPPORT_EMAIL, SUPPORT_PHONE } from '../lib/legal'
 
-// 本地影片檔名 - 放到 public 資料夾
-const LOCAL_VIDEO_FILE = 'intro-video.mp4'
-
 // 登入連結
 const LOGIN_URL = '/api/auth/google'
 
 export default function LandingPage() {
-  const videoRef = useRef<HTMLVideoElement>(null)
-
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video) return
-
-    // 設定封面為第2秒
-    video.currentTime = 2
-
-    // 播放時從頭開始
-    const handlePlay = () => {
-      if (video.currentTime >= 1.9 && video.currentTime <= 2.1) {
-        video.currentTime = 0
-      }
-    }
-
-    video.addEventListener('play', handlePlay)
-    return () => video.removeEventListener('play', handlePlay)
-  }, [])
 
   return (
     <div className="min-h-screen bg-white">
@@ -123,16 +100,16 @@ export default function LandingPage() {
               每天批改作業到深夜？ RedPen AI 幫你解決繁重的批改工作，讓你有更多時間專注教學。
             </p>
           </div>
-          <div className="relative aspect-video rounded-2xl overflow-hidden shadow-2xl bg-gray-100 animate-fade-in-up animation-delay-200">
-            <video
-              ref={videoRef}
-              src={`/${LOCAL_VIDEO_FILE}`}
-              controls
-              preload="metadata"
-              className="absolute inset-0 w-full h-full object-cover"
-            >
-              您的瀏覽器不支援影片播放
-            </video>
+          {/* PWA 優化: 使用 YouTube 嵌入式播放器替代本地 26MB 影片 */}
+          <div className="relative aspect-video rounded-2xl overflow-hidden shadow-2xl bg-gray-900 animate-fade-in-up animation-delay-200">
+            <iframe
+              className="absolute inset-0 w-full h-full"
+              src="https://www.youtube.com/embed/gbTN5zb67To"
+              title="RedPen AI 介紹影片"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              loading="lazy"
+            />
           </div>
         </div>
       </section>
