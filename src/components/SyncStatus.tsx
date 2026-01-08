@@ -9,7 +9,7 @@ interface SyncStatusProps {
 
 export default function SyncStatus({ autoSync = true, syncInterval = 30000 }: SyncStatusProps) {
   const isOnline = useOnlineStatus()
-  const { isSyncing, lastSyncTime, pendingCount, error, triggerSync, readOnly } = useSync({
+  const { isSyncing, lastSyncTime, pendingCount, error, triggerSync } = useSync({
     autoSync,
     syncInterval
   })
@@ -46,11 +46,6 @@ export default function SyncStatus({ autoSync = true, syncInterval = 30000 }: Sy
         </div>
 
         <div className="flex items-center gap-2">
-          {readOnly && (
-            <span className="px-2 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
-              唯讀
-            </span>
-          )}
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
             isOnline
               ? 'bg-green-100 text-green-800'
@@ -111,7 +106,7 @@ export default function SyncStatus({ autoSync = true, syncInterval = 30000 }: Sy
         className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm font-medium"
       >
         <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-        {isSyncing ? '同步中...' : readOnly ? '重新讀取' : '手動同步'}
+        {isSyncing ? '同步中...' : '手動同步'}
       </button>
 
       {/* 離線提示 */}

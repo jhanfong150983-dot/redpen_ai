@@ -105,8 +105,6 @@ const toMillis = (value: unknown): number | undefined => {
 
 export function useSync(options: UseSyncOptions = {}) {
   const { autoSync = true } = options
-  const viewAsOwnerId: string | null = null
-  const isReadOnly = false
 
   const isOnline = useOnlineStatus()
   const [status, setStatus] = useState<SyncStatus>({
@@ -121,7 +119,6 @@ export function useSync(options: UseSyncOptions = {}) {
   const lastFocusSyncRef = useRef(0)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
   const syncBlockedReasonRef = useRef<string | null>(null)
-  const viewAsRef = useRef<string | null>(viewAsOwnerId)
   // hasInitializedRef 已廢棄：改用 localStorage 來判斷是否已初始化，避免頁面刷新時重置
   // const hasInitializedRef = useRef(false)
 
@@ -396,10 +393,6 @@ export function useSync(options: UseSyncOptions = {}) {
    * 上傳本機資料到雲端
    */
   const pushMetadata = useCallback(async () => {
-    if (isReadOnly) {
-      debugLog('?? 檢視模式：略過 pushMetadata')
-      return
-    }
     debugLog('📤 pushMetadata 開始')
     const [classrooms, students, assignments, submissions, folders, deleteQueue] =
       await Promise.all([
@@ -558,7 +551,7 @@ export function useSync(options: UseSyncOptions = {}) {
     if (deleteQueueIds.length > 0) {
       await clearDeleteQueue(deleteQueueIds)
     }
-  }, [isReadOnly, buildSyncUrl])
+  }, [buildSyncUrl])
 
   /**
    * 從雲端拉回資料
@@ -932,48 +925,32 @@ export function useSync(options: UseSyncOptions = {}) {
    */
   const performSync = useCallback(async () => {
     if (!isOnline) {
+      console.log('📡 [同步] 跳過同步：離線狀態')
       debugLog('離線狀態，跳過同步')
       void updatePendingCount()
+      notifySyncComplete() // 通知等待者同步已結束（即使跳過）
       return
     }
 
     if (isSyncingRef.current) {
+      console.log('🔄 [同步] 跳過同步：目前正在同步中，已加入佇列')
       debugLog('目前正在同步中，跳過本次')
       syncQueuedRef.current = true
+      // 不觸發 notifySyncComplete，因為進行中的同步會觸發
       return
     }
 
     if (syncBlockedReasonRef.current) {
+      console.log('🚫 [同步] 跳過同步：RLS 權限限制 -', syncBlockedReasonRef.current)
       console.warn('⚠️ 已偵測到 RLS 權限限制，暫停同步:', syncBlockedReasonRef.current)
       setStatus((prev) => ({ ...prev, isSyncing: false, error: null }))
+      notifySyncComplete() // 通知等待者同步已結束（即使被阻擋）
       return
     }
 
     try {
       isSyncingRef.current = true
       setStatus((prev) => ({ ...prev, isSyncing: true, error: null }))
-
-      if (isReadOnly) {
-        debugLog('?? 檢視模式：僅拉取雲端資料')
-        await pullMetadata()
-        if (syncBlockedReasonRef.current) {
-          setStatus((prev) => ({
-            ...prev,
-            isSyncing: false,
-            error: null
-          }))
-          return
-        }
-        const remainingCount = await updatePendingCount()
-        setStatus((prev) => ({
-          ...prev,
-          isSyncing: false,
-          lastSyncTime: Date.now(),
-          pendingCount: remainingCount,
-          error: null
-        }))
-        return
-      }
 
       // 檢查 performSync 開始時的 folders
       const performSyncStart = await db.folders.toArray()
@@ -1155,8 +1132,6 @@ export function useSync(options: UseSyncOptions = {}) {
 
   return {
     ...status,
-    readOnly: isReadOnly,
-    viewAsOwnerId: viewAsOwnerId ?? undefined,
     triggerSync,
     updatePendingCount
   }

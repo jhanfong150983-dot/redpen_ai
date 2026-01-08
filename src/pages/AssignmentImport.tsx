@@ -739,12 +739,13 @@ export default function AssignmentImport({
 
         console.log('⏰ [PDF匯入] 觸發同步並等待完成...')
 
-        // 先設置監聽器，再觸發同步，避免錯過事件
-        const syncPromise = waitForSync(0) // 不設超時，無限等待
+        // 先設置監聯器，再觸發同步，避免錯過事件
+        // 設定 30 秒超時，避免無限等待（離線或同步失敗時）
+        const syncPromise = waitForSync(30000)
         requestSync()
 
         try {
-          // 等待同步完成（無超時限制）
+          // 等待同步完成（30 秒超時）
           await syncPromise
           console.log('✅ [PDF匯入] 同步已完成')
           alert(`已成功建立 ${successCount} 份作業並同步到雲端`)
