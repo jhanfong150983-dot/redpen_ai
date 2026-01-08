@@ -1477,9 +1477,9 @@ async function gradeSubmissionPaged(
     console.log('📦 [AnswerKey] 已設置分頁批改緩存')
   }
   
-  // Step 1: 拆分圖片（最多 2 段，測試效能）
+  // Step 1: 拆分圖片
   const splitStartTime = performance.now()
-  const segments = await splitImageIntoSegments(submissionImage, 2)
+  const segments = await splitImageIntoSegments(submissionImage)
   const splitTime = performance.now() - splitStartTime
   console.log(`   ⏱️ 圖片拆分耗時: ${splitTime.toFixed(0)}ms`)
   
