@@ -1835,6 +1835,43 @@ ${isPartialImage
       promptSections.push(`【${options.domain} 批改要點】\n${domainHint}`.trim())
     }
 
+    // 🆕 分頁批改模式：使用精簡版規則
+    const isPartialForRules = options?._isPartialImage === true
+
+    if (isPartialForRules) {
+      // ============================================
+      // 分頁批改精簡版規則（大幅減少 token 數）
+      // ============================================
+      promptSections.push(
+        `
+【分頁批改精簡規則】
+⚠️ 核心規則（必須遵守）：
+1. studentAnswer 只抄寫圖片中看得到的學生筆跡，禁止腦補或修正
+2. 填寫區域無筆跡 → 輸出「未作答」
+3. 只輸出本段圖片中看得到的題號（看不到的題目不輸出）
+4. reason 簡短說明即可（錯誤題必填：概念誤解/計算錯誤/未作答 等）
+
+回傳純 JSON（只需 details）：
+{
+  "details": [
+    {
+      "questionId": "題號",
+      "studentAnswer": "學生答案（原樣抄寫）",
+      "isCorrect": true/false,
+      "score": 得分,
+      "maxScore": 滿分,
+      "confidence": 0-100,
+      "reason": "簡短說明"
+    }
+  ]
+}
+`.trim()
+      )
+    } else {
+      // ============================================
+      // 完整版規則（非分頁模式）
+      // ============================================
+
     if (options?.regrade?.questionIds?.length) {
       const questionIds = options.regrade.questionIds
       const previousDetails = options.regrade.previousDetails ?? []
@@ -2149,26 +2186,7 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
    - ✅ 若你想「修正錯字、補全、換詞、變通語序、抓重點」→ 一律只能寫在 reason
    - ❌ 不得改動 studentAnswer
 
-${isPartial ? `【分頁段落模式 - 精簡輸出】
-⚠️ 這是分頁批改中的一個段落，只需輸出最小必要資料：
-- ❌ 禁止輸出 totalScore、mistakes、weaknesses、suggestions、feedback
-- ✅ 只需輸出 details 陣列
-
 回傳純 JSON：
-{
-  "details": [
-    {
-      "questionId": 題號,
-      "studentAnswer": 學生答案,
-      "isCorrect": true/false,
-      "score": 得分,
-      "maxScore": 滿分,
-      "confidence": 0-100,
-      "reason": "簡短說明（錯誤題必填）"
-    }
-  ]
-}
-` : `回傳純 JSON：
 {
   "totalScore": 整數,
   "details": [
@@ -2189,10 +2207,11 @@ ${isPartial ? `【分頁段落模式 - 精簡輸出】
   "weaknesses": [概念],
   "suggestions": [建議]
 }
-`}
+
 若為「再次批改模式」，details 只回傳被要求重新批改的題號。
 `.trim()
     )
+    } // 結束 else（完整版規則）
 
     const prompt = promptSections.join('\n\n')
     requestParts.push(prompt)

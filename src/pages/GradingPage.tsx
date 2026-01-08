@@ -33,6 +33,25 @@ import { getSubmissionImageUrl, fixCorruptedBase64 } from '@/lib/utils'
 import { blobToBase64 } from '@/lib/imageCompression'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 
+// 🆕 AI 批改中的有趣話語（給老師看的）
+const GRADING_MESSAGES = [
+  '今天喝咖啡了嗎？交給我改就好 ☕',
+  '你先去休息，我來改就好 😊',
+  '你看我做什麼？趕快去休息 👀',
+  '改作業的事，就交給專業的來 💪',
+  '老師辛苦了，喝杯水休息一下 💧',
+  '批改中... 你可以先滑個手機 📱',
+  '放心，我會認真改的 ✨',
+  '這點小事，包在我身上 🎯',
+  '老師去倒杯茶，馬上就好 🍵',
+  '正在努力辨識中，請稍候 🔍',
+]
+
+// 隨機選取批改訊息
+function getRandomGradingMessage(): string {
+  return GRADING_MESSAGES[Math.floor(Math.random() * GRADING_MESSAGES.length)]
+}
+
 interface GradingPageProps {
   assignmentId: string
   onBack?: () => void
@@ -137,6 +156,7 @@ export default function GradingPage({
   const [currentGradingStudent, setCurrentGradingStudent] = useState<string>('')
   const [gradingStartTime, setGradingStartTime] = useState<number>(0)
   const [completedReviewCount, setCompletedReviewCount] = useState(0)
+  const [gradingMessage, setGradingMessage] = useState<string>('AI 批改中...')
 
   // 題目詳情（可編輯）
   const [editableDetails, setEditableDetails] = useState<any[]>([])
@@ -638,6 +658,7 @@ export default function GradingPage({
 
     setActiveRegradeId(submission.id)
     setIsGrading(true)
+    setGradingMessage(getRandomGradingMessage())
     try {
       if (!submission.imageBlob) {
         // 優先從 Base64 重建 Blob
@@ -747,6 +768,7 @@ export default function GradingPage({
     }
 
     setIsGrading(true)
+    setGradingMessage(getRandomGradingMessage())
     try {
       const existingDetails = submission.gradingResult?.details ?? []
       const forcedUnrecognizableQuestionIds = flaggedIds.filter((questionId) =>
@@ -940,6 +962,7 @@ export default function GradingPage({
     const candidates = gradeCandidates
 
     setIsGrading(true)
+    setGradingMessage(getRandomGradingMessage())
     setError(null)
     setStopRequested(false)
     stopRequestedRef.current = false
@@ -1440,7 +1463,7 @@ export default function GradingPage({
               
               <div className="text-center">
                 <p className="text-xl font-bold text-gray-800">
-                  {isDownloading ? '準備圖片中...' : 'AI 批改中...'}
+                  {isDownloading ? '準備圖片中...' : gradingMessage}
                 </p>
                 {currentGradingStudent && (
                   <p className="text-sm text-gray-600 mt-1">
