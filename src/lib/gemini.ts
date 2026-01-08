@@ -8,7 +8,7 @@ import {
 import { blobToBase64 as blobToDataUrl, compressImageFile } from './imageCompression'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from './blob-storage'
 import { dispatchInkBalance } from './ink-events'
-import { getInkSessionId, startInkSession, closeInkSession } from './ink-session'
+import { getInkSessionId, startInkSession } from './ink-session'
 
 const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
 
@@ -31,7 +31,11 @@ const ENABLE_PAGED_GRADING = true
 const PAGED_GRADING_ASPECT_RATIO_THRESHOLD = 2.2  // height/width > 2.2 才視為多頁
 
 // 分頁切割時的重疊區域（像素），避免題目被切斷
-const PAGED_GRADING_OVERLAP_PX = 100
+// 60px 在大多數情況下足夠，且能減少每段圖片大小
+const PAGED_GRADING_OVERLAP_PX = 60
+
+// 分頁批改並行數（不要太高，容易觸發 429）
+const PAGED_GRADING_CONCURRENCY = 2
 
 // Gemini 圖片壓縮的解析度底線
 const GEMINI_MIN_WIDTH = 1200      // 一般字 + 手寫仍清楚
@@ -345,20 +349,11 @@ async function generateGeminiText(
       lastError = error as Error
       
       if (error instanceof RecoverableError) {
-        // 409：Session 失效 → 關閉舊 session，建立新 session 並立即重試
+        // 409：Session 失效 → 直接建立新 session 並立即重試
+        // → 不在內層 close，讓「頁面離開」統一 close
         if (error.status === 409) {
-          console.log(`🔄 [重試 ${attempt + 1}/${MAX_RETRIES + 1}] Session 失效 (${error.message})，重建 session...`)
+          console.log(`🔄 [重試 ${attempt + 1}/${MAX_RETRIES + 1}] 409 Session 失效，直接重建 session...`)
           try {
-            // 檢查錯誤訊息是否暗示舊 session 需要關閉
-            const needsClose = /衝突|conflict|已關閉|closed|expired/i.test(error.message)
-            if (needsClose) {
-              console.log('   → 偵測到 session 衝突，先關閉舊 session...')
-              try {
-                await closeInkSession()
-              } catch (closeError) {
-                console.warn('   ⚠️ 關閉舊 session 失敗（忽略）:', closeError)
-              }
-            }
             await startInkSession()
             continue // 立即重試，不需要等待
           } catch (sessionError) {
@@ -1359,7 +1354,29 @@ function mergeGradingResults(results: GradingResult[], answerKey?: AnswerKey): G
 }
 
 /**
- * 分頁批改：將大圖片拆分後逐段批改（不問題號，直接批全題）
+ * 並行處理工具：限制同時執行數量
+ */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let currentIndex = 0
+  
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (currentIndex < items.length) {
+      const index = currentIndex++
+      results[index] = await fn(items[index], index)
+    }
+  })
+  
+  await Promise.all(workers)
+  return results
+}
+
+/**
+ * 分頁批改：將大圖片拆分後並行批改（不問題號，直接批全題）
  */
 async function gradeSubmissionPaged(
   submissionImage: Blob,
@@ -1367,10 +1384,14 @@ async function gradeSubmissionPaged(
   answerKey: AnswerKey,
   options?: GradeSubmissionOptions
 ): Promise<GradingResult> {
+  const totalStartTime = performance.now()
   console.log(`📄 [分頁批改] 開始分頁批改流程...`)
   
   // Step 1: 拆分圖片
+  const splitStartTime = performance.now()
   const segments = await splitImageIntoSegments(submissionImage)
+  const splitTime = performance.now() - splitStartTime
+  console.log(`   ⏱️ 圖片拆分耗時: ${splitTime.toFixed(0)}ms`)
   
   if (segments.length === 1) {
     console.log(`📄 [分頁批改] 無需拆分，使用標準批改流程`)
@@ -1380,13 +1401,13 @@ async function gradeSubmissionPaged(
     })
   }
   
-  // Step 2: 逐段批改（每段都批全題號，讓 AI 自己判斷看到哪些）
-  const results: GradingResult[] = []
+  // Step 2: 並行批改（限制同時執行數，避免 429）
+  console.log(`📄 [分頁批改] 並行批改 ${segments.length} 段 (concurrency=${PAGED_GRADING_CONCURRENCY})...`)
+  const gradeStartTime = performance.now()
   
-  for (let i = 0; i < segments.length; i++) {
-    const segmentBlob = segments[i]
-    
-    console.log(`📄 [分頁批改] 批改段落 ${i + 1}/${segments.length}...`)
+  const results = await mapLimit(segments, PAGED_GRADING_CONCURRENCY, async (segmentBlob, i) => {
+    const segmentStartTime = performance.now()
+    console.log(`   📄 段落 ${i + 1}/${segments.length} 開始批改...`)
     
     try {
       // 直接用完整的 AnswerKey，但加入提示讓 AI 只批看到的題目
@@ -1395,15 +1416,18 @@ async function gradeSubmissionPaged(
         _skipPagedGrading: true,
         _isPartialImage: true  // 標記這是部分圖片
       })
-      results.push(result)
       
+      const segmentTime = performance.now() - segmentStartTime
       const answeredCount = result.details?.filter(d => 
         d.studentAnswer && d.studentAnswer !== '未作答' && d.studentAnswer !== '無法辨識'
       ).length ?? 0
-      console.log(`   ✅ 段落 ${i + 1} 批改完成，識別到 ${answeredCount} 題有作答`)
+      console.log(`   ✅ 段落 ${i + 1} 完成，識別 ${answeredCount} 題，耗時 ${segmentTime.toFixed(0)}ms`)
+      
+      return result
     } catch (error) {
-      console.error(`   ❌ 段落 ${i + 1} 批改失敗:`, error)
-      results.push({
+      const segmentTime = performance.now() - segmentStartTime
+      console.error(`   ❌ 段落 ${i + 1} 失敗 (耗時 ${segmentTime.toFixed(0)}ms):`, error)
+      return {
         totalScore: 0,
         mistakes: [],
         weaknesses: [],
@@ -1411,19 +1435,30 @@ async function gradeSubmissionPaged(
         feedback: [`段落 ${i + 1} 批改失敗: ${(error as Error).message}`],
         needsReview: true,
         reviewReasons: [`段落 ${i + 1} 批改失敗`]
-      })
+      } as GradingResult
     }
-  }
+  })
+  
+  const gradeTime = performance.now() - gradeStartTime
+  console.log(`   ⏱️ 全部段落批改耗時: ${gradeTime.toFixed(0)}ms`)
   
   // Step 3: 合併結果
+  const mergeStartTime = performance.now()
   const merged = mergeGradingResults(results, answerKey)
-  console.log(`📄 [分頁批改] 完成！總分: ${merged.totalScore}，共批改 ${merged.details?.length ?? 0} 題`)
+  const mergeTime = performance.now() - mergeStartTime
+  
+  const totalTime = performance.now() - totalStartTime
+  console.log(`📄 [分頁批改] 完成！總分: ${merged.totalScore}，共 ${merged.details?.length ?? 0} 題`)
+  console.log(`   ⏱️ 總耗時: ${totalTime.toFixed(0)}ms (拆分=${splitTime.toFixed(0)}ms, 批改=${gradeTime.toFixed(0)}ms, 合併=${mergeTime.toFixed(0)}ms)`)
   
   return merged
 }
 
 /**
  * 單份作業批改入口（自動判斷是否使用分頁批改）
+ * 
+ * ❗ 注意：Ink session 由「批改頁面」統一管理（mount 時 start，unmount 時 close）
+ *    這裡不負責 start/close，只確保有 session 時會自動帶入 sessionId
  */
 export async function gradeSubmission(
   submissionImage: Blob,
@@ -1433,35 +1468,23 @@ export async function gradeSubmission(
 ): Promise<GradingResult> {
   if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
 
-  // 確保整個批改流程在同一個 ink session 內
-  try {
-    await startInkSession()
+  // 判斷是否應該使用分頁批改（使用高寬比而非檔案大小）
+  if (ENABLE_PAGED_GRADING && !options?._skipPagedGrading) {
+    const imageInfo = await isMultiPageImage(submissionImage)
     
-    // 判斷是否應該使用分頁批改（使用高寬比而非檔案大小）
-    if (ENABLE_PAGED_GRADING && !options?._skipPagedGrading) {
-      const imageInfo = await isMultiPageImage(submissionImage)
-      
-      if (imageInfo.isMultiPage) {
-        // 有 AnswerKey JSON 才能分頁（圖片模式不支援）
-        if (answerKey && !answerKeyImage) {
-          console.log(`📄 [分頁批改] 偵測到多頁圖片 (${imageInfo.width}x${imageInfo.height}px, 高寬比=${imageInfo.aspectRatio.toFixed(2)})，啟用分頁批改`)
-          return await gradeSubmissionPaged(submissionImage, answerKeyImage, answerKey, options)
-        } else if (answerKeyImage) {
-          // answerKeyImage 模式不支援分頁，發出警告但繼續標準批改
-          console.warn(`⚠️ [分頁批改] 偵測到多頁圖片，但使用「答案卷圖片」模式無法分頁批改。建議：改用 AnswerKey JSON 模式以獲得更好的批改效果。`)
-        }
+    if (imageInfo.isMultiPage) {
+      // 有 AnswerKey JSON 才能分頁（圖片模式不支援）
+      if (answerKey && !answerKeyImage) {
+        console.log(`📄 [分頁批改] 偵測到多頁圖片 (${imageInfo.width}x${imageInfo.height}px, 高寬比=${imageInfo.aspectRatio.toFixed(2)})，啟用分頁批改`)
+        return await gradeSubmissionPaged(submissionImage, answerKeyImage, answerKey, options)
+      } else if (answerKeyImage) {
+        // answerKeyImage 模式不支援分頁，發出警告但繼續標準批改
+        console.warn(`⚠️ [分頁批改] 偵測到多頁圖片，但使用「答案卷圖片」模式無法分頁批改。建議：改用 AnswerKey JSON 模式以獲得更好的批改效果。`)
       }
     }
-    
-    return await gradeSubmissionCore(submissionImage, answerKeyImage, answerKey, options)
-  } finally {
-    // 整份作業批改完成後關閉 session
-    try {
-      await closeInkSession()
-    } catch (closeError) {
-      console.warn('⚠️ 關閉 ink session 失敗（忽略）:', closeError)
-    }
   }
+  
+  return await gradeSubmissionCore(submissionImage, answerKeyImage, answerKey, options)
 }
 
 /**
@@ -1473,9 +1496,14 @@ async function gradeSubmissionCore(
   answerKey?: AnswerKey,
   options?: GradeSubmissionOptions
 ): Promise<GradingResult> {
+  const isPartial = options?._isPartialImage === true
+  const logPrefix = isPartial ? '      ' : ''  // 分頁段落縮排
+  
   try {
-    console.log(`🧠 使用模型 ${currentModelName} 進行批改...`)
+    console.log(`${logPrefix}🧠 使用模型 ${currentModelName} 進行批改...`)
 
+    // Profiling: 圖片壓縮
+    const compressStartTime = performance.now()
     const hasAnswerKeyImage = Boolean(answerKeyImage)
     const submissionTarget = hasAnswerKeyImage
       ? GEMINI_DUAL_IMAGE_TARGET_BYTES
@@ -1485,8 +1513,12 @@ async function gradeSubmissionCore(
       submissionTarget,
       '作業'
     )
+    const compressTime = performance.now() - compressStartTime
 
+    // Profiling: Base64 編碼
+    const base64StartTime = performance.now()
     const submissionBase64 = await blobToBase64(preparedSubmissionImage)
+    const base64Time = performance.now() - base64StartTime
     const submissionMimeType = preparedSubmissionImage.type || 'image/jpeg'
     const requestParts: GeminiRequestPart[] = []
     const promptSections: string[] = []
@@ -1945,11 +1977,20 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
       inlineData: { mimeType: submissionMimeType, data: submissionBase64 }
     })
 
+    // Profiling: API 請求
+    const apiStartTime = performance.now()
     const text = (await generateGeminiText(currentModelName, requestParts))
       .replace(/```json|```/g, '')
       .trim()
+    const apiTime = performance.now() - apiStartTime
 
+    // Profiling: JSON 解析
+    const parseStartTime = performance.now()
     let parsed = JSON.parse(text) as GradingResult
+    const parseTime = performance.now() - parseStartTime
+    
+    // 輸出 profiling 結果
+    console.log(`${logPrefix}⏱️ 耗時: 壓縮=${compressTime.toFixed(0)}ms, base64=${base64Time.toFixed(0)}ms, API=${apiTime.toFixed(0)}ms, parse=${parseTime.toFixed(0)}ms`)
 
     // 硬性覆蓋：強制無法辨識的題目
     if (options?.regrade?.forceUnrecognizableQuestionIds?.length && parsed.details) {

@@ -22,7 +22,7 @@ import {
   gradeSubmission,
   isGeminiAvailable
 } from '@/lib/gemini'
-import { startInkSession, closeInkSession } from '@/lib/ink-session'
+import { startInkSession, closeInkSession, getInkSessionId } from '@/lib/ink-session'
 import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { getSubmissionImageUrl, fixCorruptedBase64 } from '@/lib/utils'
 import { blobToBase64 } from '@/lib/imageCompression'
@@ -335,12 +335,22 @@ export default function GradingPage({
     const initInkSession = async () => {
       setInkSessionReady(false)
       setInkSessionError(null)
+      
+      // 已有 session（例如同頁面重載狀態復原）就沿用
+      if (getInkSessionId()) {
+        console.log('[ink-session] 頁面載入：已有 session，沿用')
+        setInkSessionReady(true)
+        return
+      }
+      
       try {
+        console.log('[ink-session] 頁面載入：建立新 session...')
         const data = await startInkSession()
         if (cancelled) return
         if (!data?.sessionId) {
           throw new Error('無法建立批改會話')
         }
+        console.log('[ink-session] 頁面載入：session 建立成功')
         setInkSessionReady(true)
       } catch (err) {
         if (cancelled) return
@@ -361,9 +371,31 @@ export default function GradingPage({
       }
       cancelled = true
       if (hasClosedSessionRef.current) return
-      void closeInkSession()
+      hasClosedSessionRef.current = true
+      console.log('[ink-session] 頁面離開：關閉 session...')
+      void closeInkSession().catch((e) => {
+        console.warn('[ink-session] 頁面離開：關閉 session 失敗:', e)
+      })
     }
   }, [assignmentId])
+
+  // 處理瀏覽器關閉/重新整理（unmount 有時候抓不到）
+  useEffect(() => {
+    const handler = () => {
+      if (hasClosedSessionRef.current) return
+      hasClosedSessionRef.current = true
+      console.log('[ink-session] 瀏覽器關閉/重新整理：嘗試關閉 session...')
+      void closeInkSession().catch(() => {})
+    }
+
+    window.addEventListener('pagehide', handler)
+    window.addEventListener('beforeunload', handler)
+
+    return () => {
+      window.removeEventListener('pagehide', handler)
+      window.removeEventListener('beforeunload', handler)
+    }
+  }, [])
 
   // 將 AI 題目詳情映射到可編輯狀態
   useEffect(() => {
