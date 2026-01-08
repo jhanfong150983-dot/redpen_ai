@@ -568,6 +568,15 @@ export default function GradingPage({
     }
   }, [selectedSubmission, students])
 
+  // 批改訊息每 10 秒輪播
+  useEffect(() => {
+    if (!isGrading && !isDownloading) return
+    const interval = setInterval(() => {
+      setGradingMessage(getRandomGradingMessage())
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [isGrading, isDownloading])
+
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true)
     await loadData()
