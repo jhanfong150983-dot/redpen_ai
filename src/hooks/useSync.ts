@@ -127,13 +127,10 @@ export function useSync(options: UseSyncOptions = {}) {
       const params = extraParams
         ? new URLSearchParams(extraParams)
         : new URLSearchParams()
-      if (viewAsOwnerId) {
-        params.set('ownerId', viewAsOwnerId)
-      }
       const query = params.toString()
       return query ? `/api/data/sync?${query}` : '/api/data/sync'
     },
-    [viewAsOwnerId]
+    []
   )
 
   const updateSubmissionImageCache = async (
@@ -840,85 +837,12 @@ export function useSync(options: UseSyncOptions = {}) {
       debugLog('🔍 pullMetadata 後本地 folders:', localFolders)
     }
   }, [buildSyncUrl])
-
-  // 使用 localStorage 追蹤本地資料對應的 ownerId
-  const SYNC_OWNER_KEY = 'sync_current_owner_id'
-
+  // 頁面初次載入時更新 pendingCount
   useEffect(() => {
-    // 取得本地資料目前對應的 ownerId
-    const storedOwnerId = localStorage.getItem(SYNC_OWNER_KEY)
-    const currentOwnerId = viewAsOwnerId ?? '__self__'
-
-    console.log('🔍 [useSync] 檢查是否需要 resetLocal:', {
-      storedOwnerId,
-      currentOwnerId,
-      isMatch: storedOwnerId === currentOwnerId,
-      isOnline
-    })
-
-    // ✅ 修復：只要 localStorage 中的 ownerId 匹配，就認為已初始化
-    // 不再依賴 hasInitializedRef，因為它在頁面刷新時會丟失
-    if (storedOwnerId === currentOwnerId) {
-      console.log('✅ [useSync] ownerId 匹配，跳過 resetLocal')
-      viewAsRef.current = viewAsOwnerId
-
-      // 頁面刷新後，執行一次正常同步
-      // 注意：不在此處直接調用 performSync，讓其他 useEffect 自動觸發同步
-      if (isOnline) {
-        void updatePendingCount()
-      }
-      return  // 跳過 resetLocal
+    if (isOnline) {
+      void updatePendingCount()
     }
-
-    // 只有在明確切換用戶時才清空數據
-    console.log('⚠️ [useSync] ownerId 不匹配，需要清空並重新載入', {
-      from: storedOwnerId,
-      to: currentOwnerId
-    })
-
-    viewAsRef.current = viewAsOwnerId
-    syncBlockedReasonRef.current = null
-
-    const resetLocal = async () => {
-      console.log('🔄 [useSync] ViewAs 變更，重新載入資料...', { from: storedOwnerId, to: currentOwnerId })
-      isSyncingRef.current = false
-      syncQueuedRef.current = false
-      await Promise.all([
-        db.classrooms.clear(),
-        db.students.clear(),
-        db.assignments.clear(),
-        db.submissions.clear(),
-        db.syncQueue.clear(),
-        db.folders.clear(),
-        db.answerExtractionCorrections.clear()
-      ])
-
-      // 儲存當前的 ownerId
-      localStorage.setItem(SYNC_OWNER_KEY, currentOwnerId)
-
-      setStatus((prev) => ({
-        ...prev,
-        lastSyncTime: null,
-        pendingCount: 0,
-        error: null
-      }))
-
-      if (!isOnline) return
-
-      await pullMetadata()
-      if (!syncBlockedReasonRef.current) {
-        const remainingCount = await updatePendingCount()
-        setStatus((prev) => ({
-          ...prev,
-          lastSyncTime: Date.now(),
-          pendingCount: remainingCount,
-          error: null
-        }))
-      }
-    }
-
-    void resetLocal()
-  }, [viewAsOwnerId, isOnline, pullMetadata, updatePendingCount])
+  }, [isOnline, updatePendingCount])
 
   /**
    * 執行同步
@@ -1061,7 +985,7 @@ export function useSync(options: UseSyncOptions = {}) {
         }, 0)
       }
     }
-  }, [isOnline, isReadOnly, updatePendingCount, pushMetadata, pullMetadata])
+  }, [isOnline, updatePendingCount, pushMetadata, pullMetadata])
 
   /**
    * 提供給外部手動觸發同步
