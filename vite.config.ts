@@ -14,16 +14,16 @@ export default defineConfig({
       manifest: {
         name: 'RedPen AI - 作業批改',
         short_name: 'RedPen AI',
-        id: '/',
-        description: 'AI 輔助教師快速批改作業,自動辨識錯誤並提供個人化建議',
-        theme_color: '#2563eb',
-        background_color: '#ffffff',
-        display: 'standalone',
-        orientation: 'any',
         start_url: '/',
+        display: 'standalone',
+        background_color: '#ffffff',
+        theme_color: '#2563eb',
+        description: 'AI 輔助教師快速批改作業,自動辨識錯誤並提供個人化建議',
+        id: '/',
         scope: '/',
         lang: 'zh-TW',
         dir: 'ltr',
+        orientation: 'any',
         categories: ['education', 'productivity'],
         prefer_related_applications: false,
         icons: [
@@ -60,32 +60,32 @@ export default defineConfig({
         ],
         screenshots: [
           {
-            src: '/screenshot-upload.png',
-            sizes: '844x1500',
+            src: '/screenshot-1-landing.png',
+            sizes: '1242x2688',
             type: 'image/png',
             form_factor: 'narrow',
-            label: '上傳學生作業'
+            label: 'RedPen AI - 智慧作業批改系統'
           },
           {
-            src: '/screenshot-grading.png',
-            sizes: '497x1080',
+            src: '/screenshot-2-features.png',
+            sizes: '1242x2688',
             type: 'image/png',
             form_factor: 'narrow',
-            label: 'AI 批改中'
+            label: 'AI 自動批改與個人化建議'
           },
           {
-            src: '/screenshot-report.png',
-            sizes: '106x230',
+            src: '/screenshot-3-intro.png',
+            sizes: '1242x2688',
             type: 'image/png',
             form_factor: 'narrow',
-            label: '批改報告'
+            label: '功能介紹與使用說明'
           },
           {
-            src: '/screenshot-summary.png',
-            sizes: '85x184',
+            src: '/screenshot-4-demo.png',
+            sizes: '1242x2688',
             type: 'image/png',
             form_factor: 'narrow',
-            label: '成績總覽'
+            label: '快速批改 釋放教師時間'
           }
         ],
         shortcuts: [
