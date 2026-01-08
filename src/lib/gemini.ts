@@ -521,7 +521,7 @@ async function getRecentAnswerExtractionCorrections(
   try {
     let collection = db.answerExtractionCorrections.orderBy('createdAt').reverse()
     if (domain) {
-      collection = collection.filter((item) => item.domain === domain)
+      collection = collection.filter((item: AnswerExtractionCorrection) => item.domain === domain)
     }
     return await collection.limit(limit).toArray()
   } catch (err) {
@@ -670,7 +670,7 @@ function buildDomainRulesWithDecisionTree(domain: string = '其他'): string {
 領域通用規則：
 - 直排文字閱讀：從右上角開始，往左、往下依序排列
 - 選項順序：甲乙丙丁通常是從右到左排列
-- 題號編排：依照直排閱讀順序（圖片有題號就用，無則按順序編號）
+- 題號編排：依照直排閱讀順序（圖片有題號就用，沒有則按順序編號）
 
 題型判斷與擷取規則：
 

@@ -1515,6 +1515,230 @@ async function handleTags(req, res, supabaseAdmin) {
   res.status(405).json({ error: 'Method Not Allowed' })
 }
 
+// ========== USER STATS ==========
+async function handleUserStats(req, res, supabaseAdmin) {
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  try {
+    // 1. 获取所有用户基本信息
+    const { data: users, error: usersError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, email, name, avatar_url, role, permission_tier, ink_balance, created_at, updated_at')
+      .order('created_at', { ascending: false })
+
+    if (usersError) throw usersError
+
+    // 2. 批量查询统计数据 - 班级数
+    const { data: classroomStats } = await supabaseAdmin
+      .from('classrooms')
+      .select('owner_id')
+
+    const classroomCountMap = {}
+    classroomStats?.forEach(row => {
+      classroomCountMap[row.owner_id] = (classroomCountMap[row.owner_id] || 0) + 1
+    })
+
+    // 3. 批量查询统计数据 - 学生数
+    const { data: studentStats } = await supabaseAdmin
+      .from('students')
+      .select('owner_id')
+
+    const studentCountMap = {}
+    studentStats?.forEach(row => {
+      studentCountMap[row.owner_id] = (studentCountMap[row.owner_id] || 0) + 1
+    })
+
+    // 4. 批量查询统计数据 - 作业数
+    const { data: assignmentStats } = await supabaseAdmin
+      .from('assignments')
+      .select('owner_id')
+
+    const assignmentCountMap = {}
+    assignmentStats?.forEach(row => {
+      assignmentCountMap[row.owner_id] = (assignmentCountMap[row.owner_id] || 0) + 1
+    })
+
+    // 5. 批量查询统计数据 - 提交总数和已批改数
+    const { data: submissionStats } = await supabaseAdmin
+      .from('submissions')
+      .select('owner_id, graded_at')
+
+    const submissionCountMap = {}
+    const gradedCountMap = {}
+    submissionStats?.forEach(row => {
+      submissionCountMap[row.owner_id] = (submissionCountMap[row.owner_id] || 0) + 1
+      if (row.graded_at) {
+        gradedCountMap[row.owner_id] = (gradedCountMap[row.owner_id] || 0) + 1
+      }
+    })
+
+    // 6. 批量查询统计数据 - 墨水消耗（最近30天）
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const { data: inkStats } = await supabaseAdmin
+      .from('ink_ledger')
+      .select('user_id, delta')
+      .lt('delta', 0)  // 只统计消耗（负数）
+      .gte('created_at', thirtyDaysAgo)
+
+    const inkUsedMap = {}
+    inkStats?.forEach(row => {
+      inkUsedMap[row.user_id] = (inkUsedMap[row.user_id] || 0) + Math.abs(row.delta)
+    })
+
+    // 7. 组合数据
+    const userStats = (users || []).map(user => {
+      const classroomCount = classroomCountMap[user.id] || 0
+      const studentCount = studentCountMap[user.id] || 0
+      const assignmentCount = assignmentCountMap[user.id] || 0
+      const submissionCount = submissionCountMap[user.id] || 0
+      const gradedCount = gradedCountMap[user.id] || 0
+      const totalInkUsed = inkUsedMap[user.id] || 0
+
+      return {
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        avatarUrl: user.avatar_url,
+        inkBalance: user.ink_balance || 0,
+        role: user.role || 'user',
+        permissionTier: user.permission_tier || 'basic',
+        createdAt: user.created_at,
+        updatedAt: user.updated_at,
+        classroomCount,
+        studentCount,
+        assignmentCount,
+        submissionCount,
+        gradedCount,
+        gradingProgress: submissionCount > 0
+          ? Math.round((gradedCount / submissionCount) * 100)
+          : 0,
+        totalInkUsed,
+        lastActiveAt: user.updated_at
+      }
+    })
+
+    res.status(200).json({ users: userStats })
+  } catch (err) {
+    console.error('Error fetching user stats:', err)
+    res.status(500).json({ error: '获取用户统计数据失败' })
+  }
+}
+
+// ========== USER DETAIL ==========
+async function handleUserDetail(req, res, supabaseAdmin) {
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  const userId = req.query.userId
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing userId parameter' })
+  }
+
+  try {
+    // 1. 用户基本信息
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle()
+
+    if (profileError) throw profileError
+    if (!profile) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    // 2. 班级列表（带学生数统计）
+    const { data: classrooms, error: classroomsError } = await supabaseAdmin
+      .from('classrooms')
+      .select('*')
+      .eq('owner_id', userId)
+      .order('created_at', { ascending: false })
+
+    if (classroomsError) throw classroomsError
+
+    const classroomIds = classrooms?.map(c => c.id) || []
+
+    let studentCountMap = {}
+    if (classroomIds.length > 0) {
+      const { data: studentCounts } = await supabaseAdmin
+        .from('students')
+        .select('classroom_id')
+        .in('classroom_id', classroomIds)
+
+      studentCounts?.forEach(s => {
+        studentCountMap[s.classroom_id] = (studentCountMap[s.classroom_id] || 0) + 1
+      })
+    }
+
+    const classroomsWithStats = classrooms?.map(c => ({
+      ...c,
+      studentCount: studentCountMap[c.id] || 0
+    }))
+
+    // 3. 作业列表（带提交统计）
+    const { data: assignments, error: assignmentsError } = await supabaseAdmin
+      .from('assignments')
+      .select('*')
+      .eq('owner_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(100)  // 限制返回最近100个作业
+
+    if (assignmentsError) throw assignmentsError
+
+    const assignmentIds = assignments?.map(a => a.id) || []
+
+    let submissionStats = {}
+    if (assignmentIds.length > 0) {
+      const { data: submissions } = await supabaseAdmin
+        .from('submissions')
+        .select('assignment_id, graded_at')
+        .in('assignment_id', assignmentIds)
+
+      submissions?.forEach(sub => {
+        if (!submissionStats[sub.assignment_id]) {
+          submissionStats[sub.assignment_id] = { total: 0, graded: 0 }
+        }
+        submissionStats[sub.assignment_id].total++
+        if (sub.graded_at) {
+          submissionStats[sub.assignment_id].graded++
+        }
+      })
+    }
+
+    const assignmentsWithStats = assignments?.map(a => ({
+      ...a,
+      submissionCount: submissionStats[a.id]?.total || 0,
+      gradedCount: submissionStats[a.id]?.graded || 0,
+      gradingProgress: submissionStats[a.id]?.total > 0
+        ? Math.round((submissionStats[a.id].graded / submissionStats[a.id].total) * 100)
+        : 0
+    }))
+
+    // 4. 墨水消耗记录（最近50条）
+    const { data: inkLedger, error: inkLedgerError } = await supabaseAdmin
+      .from('ink_ledger')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    if (inkLedgerError) throw inkLedgerError
+
+    res.status(200).json({
+      profile,
+      classrooms: classroomsWithStats || [],
+      assignments: assignmentsWithStats || [],
+      inkLedger: inkLedger || []
+    })
+  } catch (err) {
+    console.error('Error fetching user detail:', err)
+    res.status(500).json({ error: '获取用户详细信息失败' })
+  }
+}
+
 // ========== ANALYTICS ==========
 async function handleAnalytics(req, res, supabaseAdmin) {
   if (req.method !== 'GET') {
@@ -2961,6 +3185,14 @@ export default async function handler(req, res) {
   // 路由到對應的處理函數
   if (action === 'users') {
     return await handleUsers(req, res, supabaseAdmin)
+  }
+
+  if (action === 'user-stats') {
+    return await handleUserStats(req, res, supabaseAdmin)
+  }
+
+  if (action === 'user-detail') {
+    return await handleUserDetail(req, res, supabaseAdmin)
   }
 
   if (action === 'packages') {

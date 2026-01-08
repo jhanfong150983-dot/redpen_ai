@@ -2,7 +2,6 @@ import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { db } from './db'
 import { debugLog } from './logger'
-import { getAdminViewAs } from './admin-view-as'
 
 /**
  * 合併 Tailwind CSS class names
@@ -119,11 +118,6 @@ export function getSubmissionImageUrl(submission?: {
   // 策略 3: 使用云端 URL（從 Supabase 下載）
   if (submission.imageUrl && submission.id) {
     const params = new URLSearchParams({ submissionId: submission.id })
-    // 如果在 viewAs 模式下，加入 ownerId 參數
-    const viewAs = getAdminViewAs()
-    if (viewAs?.ownerId) {
-      params.set('ownerId', viewAs.ownerId)
-    }
     const url = `/api/storage/download?${params.toString()}`
     debugLog(`✅ 使用雲端 URL (${browser})`, { submissionId: submission.id, url })
     return url

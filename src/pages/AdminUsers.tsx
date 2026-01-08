@@ -1,43 +1,53 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
-  ArrowLeft,
   Shield,
   Search,
   RefreshCw,
   Edit2,
   Trash2,
   Loader,
-  Crown
+  Crown,
+  Users as UsersIcon,
+  FileText,
+  GraduationCap,
+  CheckCircle2,
+  Droplet,
+  Clock
 } from 'lucide-react'
-import { useAdminViewAs } from '@/lib/admin-view-as'
 
 interface AdminUsersProps {
-  onBack?: () => void
+  onNavigateToDetail?: (userId: string) => void
 }
 
-interface AdminUser {
-  id: string
+interface UserStatsData {
+  userId: string
   email?: string
   name?: string
-  avatar_url?: string
+  avatarUrl?: string
   role?: string
-  permission_tier?: string
-  ink_balance?: number
-  admin_note?: string
-  created_at?: string
-  updated_at?: string
+  permissionTier?: string
+  inkBalance?: number
+  createdAt?: string
+  updatedAt?: string
+  classroomCount: number
+  studentCount: number
+  assignmentCount: number
+  submissionCount: number
+  gradedCount: number
+  gradingProgress: number
+  totalInkUsed: number
+  lastActiveAt?: string
 }
 
 type BalanceMode = 'none' | 'set' | 'delta'
 
-export default function AdminUsers({ onBack }: AdminUsersProps) {
-  const { viewAs, setViewAs, clearViewAs } = useAdminViewAs()
-  const [users, setUsers] = useState<AdminUser[]>([])
+export default function AdminUsers({ onNavigateToDetail }: AdminUsersProps) {
+  const [users, setUsers] = useState<UserStatsData[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
 
-  const [editingUser, setEditingUser] = useState<AdminUser | null>(null)
+  const [editingUser, setEditingUser] = useState<UserStatsData | null>(null)
   const [role, setRole] = useState('user')
   const [permissionTier, setPermissionTier] = useState('basic')
   const [adminNote, setAdminNote] = useState('')
@@ -46,19 +56,15 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
   const [modalError, setModalError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
-  const viewAsLabel = viewAs
-    ? viewAs.name || viewAs.email || viewAs.ownerId
-    : ''
-
   const loadUsers = useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/admin/users?action=users', { credentials: 'include' })
+      const response = await fetch('/api/admin/user-stats?action=user-stats', { credentials: 'include' })
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
         setUsers([])
-        setError(data?.error || '讀取使用者清單失敗')
+        setError(data?.error || '讀取使用者統計失敗')
         return
       }
 
@@ -66,7 +72,7 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
       setUsers(Array.isArray(data?.users) ? data.users : [])
     } catch (err) {
       setUsers([])
-      setError(err instanceof Error ? err.message : '讀取使用者清單失敗')
+      setError(err instanceof Error ? err.message : '讀取使用者統計失敗')
     } finally {
       setIsLoading(false)
     }
@@ -83,9 +89,9 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
       const haystack = [
         user.email,
         user.name,
-        user.id,
+        user.userId,
         user.role,
-        user.permission_tier
+        user.permissionTier
       ]
         .filter(Boolean)
         .join(' ')
@@ -94,18 +100,27 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
     })
   }, [users, query])
 
-  const formatDate = (value?: string) => {
-    if (!value) return '—'
+  const formatRelativeTime = (value?: string) => {
+    if (!value) return '未知'
     const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return value
-    return date.toLocaleString('zh-TW')
+    if (Number.isNaN(date.getTime())) return '未知'
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffDays === 0) return '今天'
+    if (diffDays === 1) return '昨天'
+    if (diffDays < 7) return `${diffDays} 天前`
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} 週前`
+    if (diffDays < 365) return `${Math.floor(diffDays / 30)} 月前`
+    return `${Math.floor(diffDays / 365)} 年前`
   }
 
-  const openEdit = (user: AdminUser) => {
+  const openEdit = (user: UserStatsData) => {
     setEditingUser(user)
     setRole(user.role || 'user')
-    setPermissionTier(user.permission_tier || 'basic')
-    setAdminNote(user.admin_note || '')
+    setPermissionTier(user.permissionTier || 'basic')
+    setAdminNote('')
     setBalanceMode('none')
     setBalanceValue('')
     setModalError(null)
@@ -120,7 +135,7 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
   const handleSelectBalanceMode = (mode: BalanceMode) => {
     setBalanceMode(mode)
     if (mode === 'set') {
-      setBalanceValue(String(editingUser?.ink_balance ?? 0))
+      setBalanceValue(String(editingUser?.inkBalance ?? 0))
       return
     }
     setBalanceValue('')
@@ -131,7 +146,7 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
     setModalError(null)
 
     const payload: Record<string, unknown> = {
-      userId: editingUser.id,
+      userId: editingUser.userId,
       role,
       permission_tier: permissionTier,
       admin_note: adminNote
@@ -180,7 +195,7 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
 
   const handleDelete = async () => {
     if (!editingUser) return
-    const display = editingUser.email || editingUser.name || editingUser.id
+    const display = editingUser.email || editingUser.name || editingUser.userId
     const ok = window.confirm(`確定要刪除使用者「${display}」嗎？`)
     if (!ok) return
 
@@ -192,7 +207,7 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ userId: editingUser.id })
+        body: JSON.stringify({ userId: editingUser.userId })
       })
 
       if (!response.ok) {
@@ -210,177 +225,209 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
     }
   }
 
+  const handleCardClick = (user: UserStatsData) => {
+    if (onNavigateToDetail) {
+      onNavigateToDetail(user.userId)
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-6xl mx-auto pt-8">
-        {onBack && (
+    <div className="space-y-6">
+      {/* Header Card */}
+      <div className="bg-white rounded-2xl shadow-xl p-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-amber-100 rounded-xl">
+              <Shield className="w-7 h-7 text-amber-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">使用者統計</h1>
+              <p className="text-sm text-gray-600">
+                查看所有使用者的詳細使用統計
+              </p>
+            </div>
+          </div>
           <button
-            onClick={onBack}
-            className="mb-4 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+            type="button"
+            onClick={() => void loadUsers()}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50"
+            disabled={isLoading}
           >
-            <ArrowLeft className="w-5 h-5" />
-            返回首頁
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            重新整理
           </button>
-        )}
-
-        <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-3 bg-amber-100 rounded-xl">
-                <Shield className="w-7 h-7 text-amber-600" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">管理者介面</h1>
-                <p className="text-sm text-gray-600">
-                  查看 / 編輯 / 刪除使用者點數與權限
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => void loadUsers()}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50"
-              disabled={isLoading}
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-              重新整理
-            </button>
-          </div>
-
-          {viewAs && (
-            <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              <div>
-                目前檢視中：<span className="font-semibold">{viewAsLabel}</span>
-              </div>
-              <button
-                type="button"
-                onClick={clearViewAs}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-white"
-              >
-                退出檢視
-              </button>
-            </div>
-          )}
-
-          <div className="mt-4 flex flex-col md:flex-row md:items-center gap-3">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜尋姓名、Email、ID"
-                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-              />
-            </div>
-            <div className="text-xs text-gray-500">
-              共 {users.length} 位使用者
-            </div>
-          </div>
         </div>
 
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 text-sm text-red-700 rounded-xl">
-            {error}
+        {/* Search Bar */}
+        <div className="mt-4 flex flex-col md:flex-row md:items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜尋姓名、Email、ID"
+              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+            />
           </div>
-        )}
-
-        {isLoading ? (
-          <div className="bg-white rounded-2xl shadow p-6 flex items-center gap-3 text-sm text-gray-600">
-            <Loader className="w-4 h-4 animate-spin" />
-            載入中...
+          <div className="text-xs text-gray-500">
+            共 {users.length} 位使用者 {filteredUsers.length !== users.length && `（顯示 ${filteredUsers.length} 位）`}
           </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredUsers.length === 0 ? (
-              <div className="bg-white rounded-2xl shadow p-6 text-sm text-gray-500">
-                查無符合條件的使用者
-              </div>
-            ) : (
-              filteredUsers.map((user) => {
-                const isViewing = viewAs?.ownerId === user.id
-                return (
-                  <div
-                    key={user.id}
-                    className="bg-white rounded-2xl shadow p-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
-                  >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-semibold flex-shrink-0">
-                      {(user.name || user.email || '?').charAt(0).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-900 truncate">
-                        {user.name || '未命名使用者'}
-                      </p>
-                      <p className="text-xs text-gray-500 truncate">
-                        {user.email || user.id}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        建立：{formatDate(user.created_at)}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 text-xs text-gray-600">
-                    <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700">
-                      角色：{user.role || 'user'}
-                    </span>
-                    <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 inline-flex items-center gap-1">
-                      <span>權限：</span>
-                      {user.permission_tier === 'advanced' ? (
-                        <>
-                          <Crown className="w-3.5 h-3.5 text-amber-500" />
-                          Pro
-                        </>
-                      ) : (
-                        'Basic'
-                      )}
-                    </span>
-                    <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700">
-                      墨水：{user.ink_balance ?? 0} 滴
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setViewAs({
-                          ownerId: user.id,
-                          name: user.name,
-                          email: user.email
-                        })
-                        // 導航回主頁面以查看該用戶的資料
-                        if (onBack) {
-                          onBack()
-                        }
-                      }}
-                      className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
-                        isViewing
-                          ? 'border-emerald-200 text-emerald-700 bg-emerald-50'
-                          : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-                      }`}
-                      disabled={isViewing}
-                    >
-                      {isViewing ? '檢視中' : '切換檢視'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openEdit(user)}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                      編輯
-                    </button>
-                  </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        )}
+        </div>
       </div>
 
+      {/* Error Message */}
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 text-sm text-red-700 rounded-xl">
+          {error}
+        </div>
+      )}
+
+      {/* Loading State */}
+      {isLoading ? (
+        <div className="bg-white rounded-2xl shadow p-6 flex items-center gap-3 text-sm text-gray-600">
+          <Loader className="w-4 h-4 animate-spin" />
+          載入中...
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredUsers.length === 0 ? (
+            <div className="col-span-full bg-white rounded-2xl shadow p-6 text-sm text-gray-500 text-center">
+              查無符合條件的使用者
+            </div>
+          ) : (
+            filteredUsers.map((user) => (
+              <div
+                key={user.userId}
+                className="bg-white rounded-2xl shadow-md hover:shadow-xl transition-shadow cursor-pointer border border-gray-100 overflow-hidden"
+                onClick={() => handleCardClick(user)}
+              >
+                {/* Card Header */}
+                <div className="p-5 border-b border-gray-100">
+                  <div className="flex items-start gap-3">
+                    <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg flex-shrink-0">
+                      {(user.name || user.email || '?').charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-base font-semibold text-gray-900 truncate">
+                        {user.name || '未命名使用者'}
+                      </h3>
+                      <p className="text-xs text-gray-500 truncate mt-0.5">
+                        {user.email || user.userId}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {user.role === 'admin' && (
+                          <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">
+                            管理員
+                          </span>
+                        )}
+                        {user.permissionTier === 'advanced' && (
+                          <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-xs font-medium inline-flex items-center gap-1">
+                            <Crown className="w-3 h-3" />
+                            Pro
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs">
+                          {user.role || 'user'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Stats Grid */}
+                <div className="p-4 bg-gray-50">
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <div className="text-center">
+                      <div className="flex items-center justify-center mb-1">
+                        <UsersIcon className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <div className="text-lg font-bold text-gray-900">{user.classroomCount}</div>
+                      <div className="text-xs text-gray-500">班級</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="flex items-center justify-center mb-1">
+                        <GraduationCap className="w-4 h-4 text-green-600" />
+                      </div>
+                      <div className="text-lg font-bold text-gray-900">{user.studentCount}</div>
+                      <div className="text-xs text-gray-500">學生</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="flex items-center justify-center mb-1">
+                        <FileText className="w-4 h-4 text-purple-600" />
+                      </div>
+                      <div className="text-lg font-bold text-gray-900">{user.assignmentCount}</div>
+                      <div className="text-xs text-gray-500">作業</div>
+                    </div>
+                  </div>
+
+                  {/* Grading Progress */}
+                  <div className="bg-white rounded-lg p-3 mb-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-gray-600 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+                        批改進度
+                      </span>
+                      <span className="text-xs font-semibold text-gray-900">
+                        {user.gradedCount}/{user.submissionCount}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-green-500 to-emerald-600 rounded-full transition-all"
+                        style={{ width: `${user.gradingProgress}%` }}
+                      />
+                    </div>
+                    <div className="text-xs text-gray-500 text-right mt-1">
+                      {user.gradingProgress}%
+                    </div>
+                  </div>
+
+                  {/* Ink Usage */}
+                  <div className="bg-white rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600 flex items-center gap-1">
+                        <Droplet className="w-3.5 h-3.5 text-blue-600" />
+                        墨水餘額
+                      </span>
+                      <span className="text-sm font-semibold text-blue-700">
+                        {user.inkBalance ?? 0} 滴
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500">近30日消耗</span>
+                      <span className="text-xs font-medium text-gray-700">
+                        {user.totalInkUsed} 滴
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card Footer */}
+                <div className="px-4 py-3 border-t border-gray-100 bg-white flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>最後活躍：{formatRelativeTime(user.lastActiveAt)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openEdit(user)
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    編輯
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Edit Modal */}
       {editingUser && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
@@ -396,10 +443,10 @@ export default function AdminUsers({ onBack }: AdminUsersProps) {
                   編輯使用者
                 </h2>
                 <p className="text-xs text-gray-500 mt-1">
-                  {editingUser.email || editingUser.id}
+                  {editingUser.email || editingUser.userId}
                 </p>
                 <p className="text-xs text-gray-400">
-                  目前墨水：{editingUser.ink_balance ?? 0} 滴
+                  目前墨水：{editingUser.inkBalance ?? 0} 滴
                 </p>
               </div>
               <button

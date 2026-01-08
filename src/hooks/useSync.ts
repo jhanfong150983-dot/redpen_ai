@@ -9,7 +9,6 @@ import { downloadImageFromSupabase } from '@/lib/supabase-download'
 import { fixCorruptedBase64 } from '@/lib/utils'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 import { debugLog, infoLog } from '@/lib/logger'
-import { useAdminViewAs } from '@/lib/admin-view-as'
 
 interface SyncStatus {
   isSyncing: boolean
@@ -106,9 +105,8 @@ const toMillis = (value: unknown): number | undefined => {
 
 export function useSync(options: UseSyncOptions = {}) {
   const { autoSync = true } = options
-  const { viewAs } = useAdminViewAs()
-  const viewAsOwnerId = viewAs?.ownerId?.trim() || null
-  const isReadOnly = Boolean(viewAsOwnerId)
+  const viewAsOwnerId: string | null = null
+  const isReadOnly = false
 
   const isOnline = useOnlineStatus()
   const [status, setStatus] = useState<SyncStatus>({
@@ -124,7 +122,8 @@ export function useSync(options: UseSyncOptions = {}) {
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
   const syncBlockedReasonRef = useRef<string | null>(null)
   const viewAsRef = useRef<string | null>(viewAsOwnerId)
-  const hasInitializedRef = useRef(false)
+  // hasInitializedRef 已廢棄：改用 localStorage 來判斷是否已初始化，避免頁面刷新時重置
+  // const hasInitializedRef = useRef(false)
 
   const buildSyncUrl = useCallback(
     (extraParams?: URLSearchParams) => {
@@ -496,6 +495,8 @@ export function useSync(options: UseSyncOptions = {}) {
         answerKey: a.answerKey,
         updatedAt: a.updatedAt
       }))
+    
+    console.log(`📤 [Sync Push] 準備上傳 ${assignmentPayload.length} 個作業:`, assignmentPayload.map(a => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
 
     const submissionPayload = submissions
       .filter((sub) => sub.status !== 'scanned')
@@ -586,6 +587,8 @@ export function useSync(options: UseSyncOptions = {}) {
     const submissions = Array.isArray(data.submissions) ? data.submissions : []
     const folders = Array.isArray(data.folders) ? data.folders : []
     const deleted = data?.deleted && typeof data.deleted === 'object' ? data.deleted : {}
+    
+    console.log(`📥 [Sync Pull] 從雲端拉取 ${assignments.length} 個作業:`, assignments.map((a: any) => ({ id: a.id, title: a.title, hasAnswerKey: !!a.answerKey })))
 
     const collectDeletedIds = (items: unknown) =>
       Array.isArray(items)
@@ -852,19 +855,39 @@ export function useSync(options: UseSyncOptions = {}) {
     // 取得本地資料目前對應的 ownerId
     const storedOwnerId = localStorage.getItem(SYNC_OWNER_KEY)
     const currentOwnerId = viewAsOwnerId ?? '__self__'
-    
-    // 如果 ownerId 沒變，跳過重載
-    if (storedOwnerId === currentOwnerId && hasInitializedRef.current) {
+
+    console.log('🔍 [useSync] 檢查是否需要 resetLocal:', {
+      storedOwnerId,
+      currentOwnerId,
+      isMatch: storedOwnerId === currentOwnerId,
+      isOnline
+    })
+
+    // ✅ 修復：只要 localStorage 中的 ownerId 匹配，就認為已初始化
+    // 不再依賴 hasInitializedRef，因為它在頁面刷新時會丟失
+    if (storedOwnerId === currentOwnerId) {
+      console.log('✅ [useSync] ownerId 匹配，跳過 resetLocal')
       viewAsRef.current = viewAsOwnerId
-      return
+
+      // 頁面刷新後，執行一次正常同步
+      // 注意：不在此處直接調用 performSync，讓其他 useEffect 自動觸發同步
+      if (isOnline) {
+        void updatePendingCount()
+      }
+      return  // 跳過 resetLocal
     }
-    
+
+    // 只有在明確切換用戶時才清空數據
+    console.log('⚠️ [useSync] ownerId 不匹配，需要清空並重新載入', {
+      from: storedOwnerId,
+      to: currentOwnerId
+    })
+
     viewAsRef.current = viewAsOwnerId
-    hasInitializedRef.current = true
     syncBlockedReasonRef.current = null
 
     const resetLocal = async () => {
-      console.log('🔄 ViewAs 變更，重新載入資料...', { from: storedOwnerId, to: currentOwnerId })
+      console.log('🔄 [useSync] ViewAs 變更，重新載入資料...', { from: storedOwnerId, to: currentOwnerId })
       isSyncingRef.current = false
       syncQueuedRef.current = false
       await Promise.all([
@@ -876,10 +899,10 @@ export function useSync(options: UseSyncOptions = {}) {
         db.folders.clear(),
         db.answerExtractionCorrections.clear()
       ])
-      
+
       // 儲存當前的 ownerId
       localStorage.setItem(SYNC_OWNER_KEY, currentOwnerId)
-      
+
       setStatus((prev) => ({
         ...prev,
         lastSyncTime: null,

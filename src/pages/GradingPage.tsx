@@ -17,7 +17,6 @@ import {
 } from 'lucide-react'
 import { db, type Assignment, type Student, type Submission, type Classroom } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
-import { queueDelete } from '@/lib/sync-delete-queue'
 import {
   gradeMultipleSubmissions,
   gradeSubmission,
@@ -514,42 +513,6 @@ export default function GradingPage({
       return next
     })
   }
-  const handleDeleteSubmission = async (submission: Submission, student: Student) => {
-    const confirmMessage = `確定要刪除 ${student.name} (座號 ${student.seatNumber}) 的作業嗎？\n\n此操作無法復原。`
-
-    if (!window.confirm(confirmMessage)) {
-      return
-    }
-
-    try {
-      // 1. 加入刪除佇列（用於雲端同步）
-      await queueDelete('submissions', submission.id)
-
-      // 2. 從本地資料庫刪除
-      await db.submissions.delete(submission.id)
-
-      // 3. 更新 UI 狀態
-      setSubmissions((prev) => {
-        const next = new Map(prev)
-        next.delete(submission.studentId)
-        return next
-      })
-
-      // 4. 如果刪除的是當前選中的項目，關閉詳細視窗
-      if (selectedSubmission?.submission.id === submission.id) {
-        setSelectedSubmission(null)
-      }
-
-      // 5. 觸發雲端同步
-      requestSync()
-
-      console.log(`✅ 已刪除學生 ${student.name} 的作業`)
-    } catch (error) {
-      console.error('❌ 刪除作業失敗:', error)
-      alert('刪除作業失敗，請稍後再試')
-    }
-  }
-
   const handleRegradeSingle = async (submission: Submission) => {
     if (inkSessionError) {
       alert(inkSessionError)
@@ -788,6 +751,43 @@ export default function GradingPage({
       alert('重評失敗')
     } finally {
       setIsGrading(false)
+    }
+  }
+
+  const handleDeleteSubmission = async (submission: Submission, student: Student) => {
+    const confirmMessage = `確定要刪除 ${student.seatNumber} 號 ${student.name} 的作業嗎？\n\n此操作無法復原。`
+
+    if (!window.confirm(confirmMessage)) {
+      return
+    }
+
+    try {
+      // 從數據庫中刪除
+      await db.submissions.delete(submission.id)
+
+      // 加入刪除隊列以同步到雲端
+      const { queueDelete } = await import('@/lib/sync-delete-queue')
+      await queueDelete('submissions', submission.id)
+
+      // 更新本地狀態
+      setSubmissions((prev) => {
+        const next = new Map(prev)
+        next.delete(student.id)
+        return next
+      })
+
+      // 如果刪除的是當前選中的作業，清除選中狀態
+      if (selectedSubmission?.submission.id === submission.id) {
+        setSelectedSubmission(null)
+      }
+
+      // 觸發同步
+      requestSync()
+
+      console.log(`✅ 已刪除 ${student.name} 的作業`)
+    } catch (error) {
+      console.error('刪除作業失敗:', error)
+      alert('刪除作業失敗，請稍後再試')
     }
   }
 
@@ -1440,9 +1440,8 @@ export default function GradingPage({
                               e.stopPropagation()
                               void handleDeleteSubmission(submission, student)
                             }}
-                            className="absolute bottom-2 right-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 z-10"
+                            className="absolute bottom-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 z-10"
                             title="刪除此學生的作業"
-                            disabled={isGrading}
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
