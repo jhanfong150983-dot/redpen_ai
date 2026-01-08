@@ -1,5 +1,12 @@
 // api/proxy.js
 // 這段程式碼在 Vercel 的伺服器上執行，前端看不到
+
+// 強制使用 Node.js runtime，避免 Edge runtime 的限制
+export const config = {
+  runtime: 'nodejs',
+  maxDuration: 60  // 允許最多 60 秒（Vercel Pro 限制）
+}
+
 import { getAuthUser } from '../server/_auth.js'
 import { getSupabaseAdmin } from '../server/_supabase.js'
 

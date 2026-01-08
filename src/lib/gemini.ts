@@ -8,7 +8,7 @@ import {
 import { blobToBase64 as blobToDataUrl, compressImageFile } from './imageCompression'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from './blob-storage'
 import { dispatchInkBalance } from './ink-events'
-import { getInkSessionId } from './ink-session'
+import { getInkSessionId, startInkSession, closeInkSession } from './ink-session'
 
 const geminiProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/proxy'
 
@@ -18,6 +18,25 @@ export const isGeminiAvailable = true
 const GEMINI_SINGLE_IMAGE_TARGET_BYTES = 1200 * 1024
 const GEMINI_DUAL_IMAGE_TARGET_BYTES = 900 * 1024
 
+// ============================================
+// Feature Flag: 分頁批改（多頁考卷拆分）
+// ============================================
+// 當啟用時，大圖片會被拆分成多段分別批改，降低單次請求的超時風險
+// 設為 true 開啟，false 關閉（使用傳統單次批改）
+const ENABLE_PAGED_GRADING = true
+
+// 分頁批改觸發條件：高寬比閾值
+// 超過此比例的圖片會被視為「多頁合併圖」，觸發拆分批改
+// 例如 A4 紙約 1.4:1，2 頁合併就是 2.8:1
+const PAGED_GRADING_ASPECT_RATIO_THRESHOLD = 2.2  // height/width > 2.2 才視為多頁
+
+// 分頁切割時的重疊區域（像素），避免題目被切斷
+const PAGED_GRADING_OVERLAP_PX = 100
+
+// Gemini 圖片壓縮的解析度底線
+const GEMINI_MIN_WIDTH = 1200      // 一般字 + 手寫仍清楚
+const GEMINI_HARD_MIN_WIDTH = 1024 // 再低就容易糊，寧可大一點
+
 async function compressForGemini(
   blob: Blob,
   targetBytes: number,
@@ -25,37 +44,78 @@ async function compressForGemini(
 ): Promise<Blob> {
   if (blob.size <= targetBytes) return blob
 
+  // 策略：逐步降低品質和解析度，但不低於 hardMinWidth
   const strategies = [
+    // 優先降品質，保持較高解析度
     { maxWidth: 1600, quality: 0.82 },
-    { maxWidth: 1280, quality: 0.76 },
-    { maxWidth: 1024, quality: 0.7 },
-    { maxWidth: 900, quality: 0.65 },
-    { maxWidth: 800, quality: 0.6 }
+    { maxWidth: 1400, quality: 0.78 },
+    { maxWidth: GEMINI_MIN_WIDTH, quality: 0.75 },
+    // 到達 minWidth 後，只降品質
+    { maxWidth: GEMINI_MIN_WIDTH, quality: 0.70 },
+    { maxWidth: GEMINI_MIN_WIDTH, quality: 0.65 },
+    // 最後手段：降到 hardMinWidth（但不再往下）
+    { maxWidth: GEMINI_HARD_MIN_WIDTH, quality: 0.68 },
+    { maxWidth: GEMINI_HARD_MIN_WIDTH, quality: 0.62 }
   ]
 
-  let current = blob
+  let bestResult = blob
+  let bestWidth = Infinity  // 追蹤最佳結果的寬度
+  
+  // 先取得原圖寬度
+  try {
+    const originalBitmap = await createImageBitmap(blob)
+    bestWidth = originalBitmap.width
+    originalBitmap.close()
+  } catch {
+    // 無法讀取原圖尺寸，繼續嘗試壓縮
+  }
+  
   for (const strategy of strategies) {
     try {
-      const compressed = await compressImageFile(current, strategy)
-      if (compressed.size < current.size) {
-        current = compressed
+      const compressed = await compressImageFile(blob, strategy)
+      
+      // ✅ 驗證輸出寬度，確保不低於底線
+      let compressedWidth = strategy.maxWidth
+      try {
+        const bitmap = await createImageBitmap(compressed)
+        compressedWidth = bitmap.width
+        bitmap.close()
+      } catch {
+        // 無法讀取，假設為 maxWidth
       }
-      if (current.size <= targetBytes) {
-        break
+      
+      // 如果寬度低於硬底線，跳過這個策略
+      if (compressedWidth < GEMINI_HARD_MIN_WIDTH) {
+        console.warn(`⚠️ ${label} 壓縮後寬度 ${compressedWidth}px < 底線 ${GEMINI_HARD_MIN_WIDTH}px，回退`)
+        continue
+      }
+      
+      if (compressed.size < bestResult.size) {
+        bestResult = compressed
+        bestWidth = compressedWidth
+      }
+      
+      if (bestResult.size <= targetBytes) {
+        console.log(`✅ ${label} 壓縮成功: ${Math.round(bestResult.size / 1024)}KB (寬度=${bestWidth}px)`)
+        return bestResult
       }
     } catch (error) {
-      console.warn(`⚠️ ${label} 圖片壓縮失敗，改用原圖`, error)
-      return blob
+      console.warn(`⚠️ ${label} 壓縮策略失敗:`, error)
     }
   }
 
-  if (current.size > targetBytes) {
-    console.warn(
-      `⚠️ ${label} 圖片仍偏大 (${Math.round(current.size / 1024)} KB)，可能仍觸發限制`
-    )
+  // 到達 hardMinWidth 仍超過目標大小：接受較大的圖片，不再壓縮
+  // 寧可 650-900KB 也不要再縮解析度
+  if (bestResult.size > targetBytes) {
+    const sizeKB = Math.round(bestResult.size / 1024)
+    if (sizeKB <= 900) {
+      console.log(`⚠️ ${label} 已達解析度底線 (寬度=${bestWidth}px)，保持 ${sizeKB}KB 不再壓縮`)
+    } else {
+      console.warn(`⚠️ ${label} 圖片仍偏大 (${sizeKB}KB)，但已達解析度底線，無法再壓縮`)
+    }
   }
 
-  return current
+  return bestResult
 }
 
 // 工具：Blob 轉 Base64（去掉 data: 前綴）
@@ -131,11 +191,35 @@ function normalizeParts(parts: GeminiRequestPart[]): GeminiPart[] {
   return parts.map((part) => (typeof part === 'string' ? { text: part } : part))
 }
 
-async function generateGeminiText(
+/**
+ * 延遲函數（用於退避重試）
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * 可恢復的錯誤類型
+ */
+class RecoverableError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly shouldRetry: boolean = true
+  ) {
+    super(message)
+    this.name = 'RecoverableError'
+  }
+}
+
+/**
+ * 執行單次 Gemini API 請求
+ */
+async function executeGeminiRequest(
   modelName: string,
-  parts: GeminiRequestPart[]
-): Promise<string> {
-  const inkSessionId = getInkSessionId()
+  parts: GeminiRequestPart[],
+  inkSessionId: string | null
+): Promise<{ text: string; data: any }> {
   const response = await fetch(geminiProxyUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -155,85 +239,67 @@ async function generateGeminiText(
   }
 
   if (!response.ok) {
-    // 特別處理 413 錯誤（檔案過大）
+    // 409：Session 失效（可恢復）
+    if (response.status === 409) {
+      throw new RecoverableError(
+        data?.error || '批改會話已過期',
+        409,
+        true
+      )
+    }
+
+    // 504：Gateway Timeout（可恢復）
+    if (response.status === 504) {
+      console.warn('⏱️ 504 Gateway Timeout，準備重試...')
+      throw new RecoverableError(
+        'AI 請求超時，正在重試...',
+        504,
+        true
+      )
+    }
+
+    // 503：Service Unavailable（可恢復）
+    if (response.status === 503) {
+      console.warn('⚠️ 503 Service Unavailable，準備重試...')
+      throw new RecoverableError(
+        'AI 服務暫時不可用，正在重試...',
+        503,
+        true
+      )
+    }
+
+    // 429：Rate Limited（可恢復）
+    if (response.status === 429) {
+      console.warn('⚠️ 429 Rate Limited，準備重試...')
+      throw new RecoverableError(
+        'API 請求過於頻繁，正在重試...',
+        429,
+        true
+      )
+    }
+
+    // 413：檔案過大（不可恢復）
     if (response.status === 413) {
       throw new Error('檔案總大小過大，超過 AI 處理限制。建議分批上傳檔案。')
     }
 
-    // 特別處理 504 錯誤（Gateway Timeout）
-    if (response.status === 504) {
-      const errorDetails = {
-        status: 504,
-        model: modelName,
-        timestamp: new Date().toISOString(),
-        message: 'Gemini API 請求超時'
-      }
-      console.error('🚨 504 Gateway Timeout 錯誤詳情:', errorDetails)
-
-      throw new Error(
-        `⏱️ AI 解析超時 (504 Gateway Timeout)\n\n` +
-        `詳細資訊：\n` +
-        `• 使用模型：${modelName}\n` +
-        `• 錯誤時間：${new Date().toLocaleString('zh-TW')}\n` +
-        `• 可能原因：\n` +
-        `  - Google Gemini API 伺服器回應緩慢\n` +
-        `  - 圖片過大或內容過於複雜\n` +
-        `  - 網路連線不穩定\n\n` +
-        `建議解決方式：\n` +
-        `1. 稍等 1-2 分鐘後重試\n` +
-        `2. 一次只上傳 1 張圖片\n` +
-        `3. 壓縮圖片後再上傳（建議 < 500KB）\n` +
-        `4. 如果持續發生，請通知系統管理員\n\n` +
-        `[工程師參考] 錯誤代碼：GEMINI_TIMEOUT_504`
-      )
-    }
-
-    // 特別處理 503 錯誤（Service Unavailable）
-    if (response.status === 503) {
-      const errorDetails = {
-        status: 503,
-        model: modelName,
-        timestamp: new Date().toISOString(),
-        message: 'Gemini API 服務不可用'
-      }
-      console.error('🚨 503 Service Unavailable 錯誤詳情:', errorDetails)
-
-      throw new Error(
-        `⚠️ AI 服務暫時無法使用 (503 Service Unavailable)\n\n` +
-        `詳細資訊：\n` +
-        `• 使用模型：${modelName}\n` +
-        `• 錯誤時間：${new Date().toLocaleString('zh-TW')}\n` +
-        `• 可能原因：\n` +
-        `  - Google Gemini API 伺服器過載\n` +
-        `  - API 服務正在維護中\n` +
-        `  - 達到 API 使用限制\n\n` +
-        `建議解決方式：\n` +
-        `1. 請稍候 5-10 分鐘後重試\n` +
-        `2. 檢查 Google AI Studio 服務狀態\n` +
-        `3. 如果問題持續，請通知系統管理員\n\n` +
-        `[工程師參考] 錯誤代碼：GEMINI_UNAVAILABLE_503`
-      )
-    }
-
-    // 其他錯誤
+    // 其他錯誤（不可恢復）
     const message =
       data?.error?.message ||
       data?.error ||
       `Gemini request failed (${response.status})`
 
-    // 為其他錯誤也添加詳細資訊
-    if (response.status >= 400) {
-      console.error('🚨 Gemini API 錯誤:', {
-        status: response.status,
-        model: modelName,
-        timestamp: new Date().toISOString(),
-        error: message
-      })
-    }
+    console.error('🚨 Gemini API 錯誤:', {
+      status: response.status,
+      model: modelName,
+      timestamp: new Date().toISOString(),
+      error: message
+    })
 
     throw new Error(message)
   }
 
+  // 更新墨水餘額
   const updatedBalance = Number(data?.ink?.balanceAfter)
   if (Number.isFinite(updatedBalance)) {
     dispatchInkBalance(updatedBalance)
@@ -249,7 +315,101 @@ async function generateGeminiText(
     throw new Error('Gemini response empty')
   }
 
-  return text
+  return { text, data }
+}
+
+/**
+ * 帶重試邏輯的 Gemini 文本生成
+ * - 409 (Session 失效)：自動建立新 session 並重試
+ * - 504/503/429：指數退避重試（最多 2 次）
+ */
+async function generateGeminiText(
+  modelName: string,
+  parts: GeminiRequestPart[]
+): Promise<string> {
+  const MAX_RETRIES = 2
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      // 確保 session 有效（第一次嘗試時檢查，重試時可能已經重建）
+      let inkSessionId = getInkSessionId()
+      
+      // 如果沒有 session，嘗試建立（但不強制，因為用戶可能在非批改流程）
+      // ensureInkSessionFresh 會在批改流程中被呼叫
+      
+      const result = await executeGeminiRequest(modelName, parts, inkSessionId)
+      return result.text
+      
+    } catch (error) {
+      lastError = error as Error
+      
+      if (error instanceof RecoverableError) {
+        // 409：Session 失效 → 關閉舊 session，建立新 session 並立即重試
+        if (error.status === 409) {
+          console.log(`🔄 [重試 ${attempt + 1}/${MAX_RETRIES + 1}] Session 失效 (${error.message})，重建 session...`)
+          try {
+            // 檢查錯誤訊息是否暗示舊 session 需要關閉
+            const needsClose = /衝突|conflict|已關閉|closed|expired/i.test(error.message)
+            if (needsClose) {
+              console.log('   → 偵測到 session 衝突，先關閉舊 session...')
+              try {
+                await closeInkSession()
+              } catch (closeError) {
+                console.warn('   ⚠️ 關閉舊 session 失敗（忽略）:', closeError)
+              }
+            }
+            await startInkSession()
+            continue // 立即重試，不需要等待
+          } catch (sessionError) {
+            console.error('❌ 建立新 session 失敗:', sessionError)
+            throw new Error('批改會話已過期，請重新進入批改頁面')
+          }
+        }
+        
+        // 504/503/429：指數退避重試
+        if (error.shouldRetry && attempt < MAX_RETRIES) {
+          const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000) // 1s, 2s, 4s, max 8s
+          console.log(`🔄 [重試 ${attempt + 1}/${MAX_RETRIES + 1}] ${error.status} 錯誤，等待 ${backoffMs}ms 後重試...`)
+          await delay(backoffMs)
+          continue
+        }
+        
+        // 重試次數已用盡，拋出詳細錯誤
+        if (error.status === 504) {
+          throw new Error(
+            `⏱️ AI 解析超時 (504 Gateway Timeout)\n\n` +
+            `已重試 ${MAX_RETRIES} 次仍然失敗。\n\n` +
+            `建議解決方式：\n` +
+            `1. 稍等 1-2 分鐘後重試\n` +
+            `2. 嘗試壓縮圖片後再上傳\n` +
+            `3. 如果持續發生，請通知系統管理員`
+          )
+        }
+        
+        if (error.status === 503) {
+          throw new Error(
+            `⚠️ AI 服務暫時無法使用 (503)\n\n` +
+            `已重試 ${MAX_RETRIES} 次仍然失敗。\n` +
+            `請稍候 5-10 分鐘後重試。`
+          )
+        }
+        
+        if (error.status === 429) {
+          throw new Error(
+            `⚠️ API 請求過於頻繁 (429)\n\n` +
+            `請稍候片刻後重試。`
+          )
+        }
+      }
+      
+      // 不可恢復的錯誤，直接拋出
+      throw error
+    }
+  }
+  
+  // 不應該到達這裡，但以防萬一
+  throw lastError || new Error('Gemini request failed after retries')
 }
 
 // 預設使用的模型名稱
@@ -267,6 +427,10 @@ export interface GradeSubmissionOptions {
   strict?: boolean
   domain?: string
   skipMissingRetry?: boolean
+  /** @internal 內部使用：跳過分頁批改邏輯，避免遞迴 */
+  _skipPagedGrading?: boolean
+  /** @internal 內部使用：標記這是分頁批改中的部分圖片 */
+  _isPartialImage?: boolean
   regrade?: {
     questionIds: string[]
     previousDetails?: Array<{
@@ -945,8 +1109,321 @@ function isEmptyStudentAnswer(ans?: string) {
   return a === '未作答' || a === '無法辨識' || a === '未作答/無法辨識'
 }
 
+// ============================================
+// 分頁批改輔助函數
+// ============================================
+
 /**
- * 單份作業批改（支援 AnswerKey 與答案卷圖片）
+ * 檢查圖片是否為多頁合併圖（根據高寬比判斷）
+ */
+async function isMultiPageImage(imageBlob: Blob): Promise<{ isMultiPage: boolean; width: number; height: number; aspectRatio: number }> {
+  try {
+    const bitmap = await createImageBitmap(imageBlob)
+    const { width, height } = bitmap
+    bitmap.close()
+    
+    const aspectRatio = height / width
+    const isMultiPage = aspectRatio > PAGED_GRADING_ASPECT_RATIO_THRESHOLD
+    
+    return { isMultiPage, width, height, aspectRatio }
+  } catch {
+    return { isMultiPage: false, width: 0, height: 0, aspectRatio: 0 }
+  }
+}
+
+/**
+ * 將大圖片拆分成多個段落（帶重疊區避免切斷題目）
+ * @param imageBlob 原始圖片 Blob
+ * @param maxSegments 最大段數（預設 4）
+ * @returns 拆分後的圖片 Blob 陣列
+ */
+async function splitImageIntoSegments(
+  imageBlob: Blob,
+  maxSegments: number = 4
+): Promise<Blob[]> {
+  try {
+    const bitmap = await createImageBitmap(imageBlob)
+    const { width, height } = bitmap
+    
+    // 用高寬比估算頁數（A4 約 1.4:1）
+    const aspectRatio = height / width
+    const estimatedPages = Math.round(aspectRatio / 1.4)
+    const segments = Math.min(Math.max(estimatedPages, 1), maxSegments)
+    
+    console.log(`📄 [分頁批改] 圖片尺寸: ${width}x${height}px, 高寬比=${aspectRatio.toFixed(2)}, 估計 ${estimatedPages} 頁, 拆分為 ${segments} 段`)
+    
+    if (segments <= 1) {
+      bitmap.close()
+      return [imageBlob]
+    }
+    
+    // 計算每段高度（不含重疊）
+    const baseSegmentHeight = Math.ceil(height / segments)
+    const overlap = PAGED_GRADING_OVERLAP_PX
+    const results: Blob[] = []
+    
+    for (let i = 0; i < segments; i++) {
+      // 計算該段的起始和結束位置（含重疊）
+      const baseStartY = i * baseSegmentHeight
+      const baseEndY = Math.min((i + 1) * baseSegmentHeight, height)
+      
+      // 加入重疊區：前面的段落往下延伸，後面的段落往上延伸
+      const startY = i === 0 ? 0 : Math.max(0, baseStartY - overlap)
+      const endY = i === segments - 1 ? height : Math.min(height, baseEndY + overlap)
+      const actualHeight = endY - startY
+      
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = actualHeight
+      const ctx = canvas.getContext('2d')
+      
+      if (!ctx) {
+        throw new Error('無法建立畫布')
+      }
+      
+      // 從原圖裁切出該段
+      ctx.drawImage(
+        bitmap,
+        0, startY, width, actualHeight,  // source
+        0, 0, width, actualHeight         // destination
+      )
+      
+      // 轉為 Blob（用 WebP 高品質保真，後續交給 compressForGemini 壓縮）
+      const segmentBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => {
+            if (blob) resolve(blob)
+            else reject(new Error(`無法建立第 ${i + 1} 段圖片`))
+          },
+          'image/webp',  // WebP 高品質，比 PNG 小但字跡仍清晰
+          0.92
+        )
+      })
+      
+      results.push(segmentBlob)
+      console.log(`   ✂️ 段落 ${i + 1}/${segments}: Y=${startY}-${endY} (${actualHeight}px), ${Math.round(segmentBlob.size / 1024)}KB (WebP)`)
+    }
+    
+    bitmap.close()
+    return results
+  } catch (error) {
+    console.error('❌ [分頁批改] 拆分圖片失敗:', error)
+    // 拆分失敗，返回原圖
+    return [imageBlob]
+  }
+}
+
+/**
+ * 合併多個段落的批改結果
+ * 選擇策略：可用答案 > score > confidence
+ */
+function mergeGradingResults(results: GradingResult[], answerKey?: AnswerKey): GradingResult {
+  const allDetails: GradingResult['details'] = []
+  const allMistakes: GradingResult['mistakes'] = []
+  const allWeaknesses: string[] = []
+  const allSuggestions: string[] = []
+  const allFeedback: string[] = []
+  const allReviewReasons: string[] = []
+  
+  for (const result of results) {
+    if (result.details) {
+      allDetails.push(...result.details)
+    }
+    if (result.mistakes) {
+      allMistakes.push(...result.mistakes)
+    }
+    if (result.weaknesses) {
+      allWeaknesses.push(...result.weaknesses)
+    }
+    if (result.suggestions) {
+      allSuggestions.push(...result.suggestions)
+    }
+    if (result.feedback) {
+      allFeedback.push(...result.feedback)
+    }
+    if (result.reviewReasons) {
+      allReviewReasons.push(...result.reviewReasons)
+    }
+  }
+  
+  // 去除重複的 details（以 questionId 為 key）
+  // 選擇策略：可用答案 > confidence > score
+  const detailsMap = new Map<string, typeof allDetails[0]>()
+  
+  const isUsableAnswer = (ans?: string) => {
+    const a = (ans ?? '').trim()
+    return a !== '' && a !== '未作答' && a !== '無法辨識' && a !== '未作答/無法辨識'
+  }
+  
+  for (const detail of allDetails) {
+    const qid = detail.questionId ?? ''
+    if (!qid) continue
+    
+    const existing = detailsMap.get(qid)
+    if (!existing) {
+      detailsMap.set(qid, detail)
+      continue
+    }
+    
+    // 比較優先級：可用答案 > confidence > score
+    const existingUsable = isUsableAnswer(existing.studentAnswer)
+    const newUsable = isUsableAnswer(detail.studentAnswer)
+    
+    // 1. 可用答案優先
+    if (newUsable && !existingUsable) {
+      detailsMap.set(qid, detail)
+      continue
+    }
+    if (existingUsable && !newUsable) {
+      continue
+    }
+    
+    // 2. score 優先（跟 AnswerKey 對到的訊號更可靠）
+    const existingScore = existing.score ?? 0
+    const newScore = detail.score ?? 0
+    if (newScore > existingScore) {
+      detailsMap.set(qid, detail)
+      continue
+    }
+    if (existingScore > newScore) {
+      continue
+    }
+    
+    // 3. confidence 作為 tie-break
+    if ((detail.confidence ?? 0) > (existing.confidence ?? 0)) {
+      detailsMap.set(qid, detail)
+    }
+  }
+  
+  let mergedDetails = Array.from(detailsMap.values())
+  
+  // 去重工具函數
+  const uniqueBy = <T>(arr: T[], key: (x: T) => string) => {
+    const seen = new Set<string>()
+    return arr.filter((x) => {
+      const k = key(x)
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+  }
+  
+  // 去重
+  const uniqueWeaknesses = [...new Set(allWeaknesses)]
+  const uniqueSuggestions = [...new Set(allSuggestions)]
+  const uniqueMistakes = allMistakes.length > 0
+    ? uniqueBy(allMistakes, m => `${m.id ?? ''}:${m.reason ?? ''}`)
+    : []
+  const uniqueReviewReasons = [...new Set(allReviewReasons)]
+  
+  // 如果有 AnswerKey，按題號順序排序
+  if (answerKey && mergedDetails.length > 0) {
+    const order = new Map(answerKey.questions.map((q, i) => [q.id, i]))
+    mergedDetails.sort((a, b) => {
+      const ai = order.get(a.questionId ?? '') ?? 9999
+      const bi = order.get(b.questionId ?? '') ?? 9999
+      return ai - bi
+    })
+  }
+  
+  const totalScore = mergedDetails.reduce((sum, d) => sum + (d.score ?? 0), 0)
+  
+  const merged: GradingResult = {
+    totalScore,
+    details: mergedDetails,
+    mistakes: uniqueMistakes.length > 0 ? uniqueMistakes : [],
+    weaknesses: uniqueWeaknesses,
+    suggestions: uniqueSuggestions,
+    feedback: allFeedback.length > 0 ? allFeedback : undefined,
+    needsReview: uniqueReviewReasons.length > 0 || results.some(r => r.needsReview),
+    reviewReasons: uniqueReviewReasons.length > 0 ? uniqueReviewReasons : undefined
+  }
+  
+  // 如果有 AnswerKey，檢查是否有遺漏的題目
+  if (answerKey) {
+    const answeredIds = new Set(mergedDetails.map(d => d.questionId))
+    const missingIds = answerKey.questions
+      .map(q => q.id)
+      .filter(id => !answeredIds.has(id))
+    
+    if (missingIds.length > 0) {
+      merged.needsReview = true
+      merged.reviewReasons = [
+        ...(merged.reviewReasons ?? []),
+        `分頁批改後仍有 ${missingIds.length} 題未批改: ${missingIds.join(', ')}`
+      ]
+    }
+  }
+  
+  return merged
+}
+
+/**
+ * 分頁批改：將大圖片拆分後逐段批改（不問題號，直接批全題）
+ */
+async function gradeSubmissionPaged(
+  submissionImage: Blob,
+  answerKeyImage: Blob | null,
+  answerKey: AnswerKey,
+  options?: GradeSubmissionOptions
+): Promise<GradingResult> {
+  console.log(`📄 [分頁批改] 開始分頁批改流程...`)
+  
+  // Step 1: 拆分圖片
+  const segments = await splitImageIntoSegments(submissionImage)
+  
+  if (segments.length === 1) {
+    console.log(`📄 [分頁批改] 無需拆分，使用標準批改流程`)
+    return gradeSubmissionCore(submissionImage, answerKeyImage, answerKey, {
+      ...options,
+      _skipPagedGrading: true
+    })
+  }
+  
+  // Step 2: 逐段批改（每段都批全題號，讓 AI 自己判斷看到哪些）
+  const results: GradingResult[] = []
+  
+  for (let i = 0; i < segments.length; i++) {
+    const segmentBlob = segments[i]
+    
+    console.log(`📄 [分頁批改] 批改段落 ${i + 1}/${segments.length}...`)
+    
+    try {
+      // 直接用完整的 AnswerKey，但加入提示讓 AI 只批看到的題目
+      const result = await gradeSubmissionCore(segmentBlob, null, answerKey, {
+        ...options,
+        _skipPagedGrading: true,
+        _isPartialImage: true  // 標記這是部分圖片
+      })
+      results.push(result)
+      
+      const answeredCount = result.details?.filter(d => 
+        d.studentAnswer && d.studentAnswer !== '未作答' && d.studentAnswer !== '無法辨識'
+      ).length ?? 0
+      console.log(`   ✅ 段落 ${i + 1} 批改完成，識別到 ${answeredCount} 題有作答`)
+    } catch (error) {
+      console.error(`   ❌ 段落 ${i + 1} 批改失敗:`, error)
+      results.push({
+        totalScore: 0,
+        mistakes: [],
+        weaknesses: [],
+        suggestions: [],
+        feedback: [`段落 ${i + 1} 批改失敗: ${(error as Error).message}`],
+        needsReview: true,
+        reviewReasons: [`段落 ${i + 1} 批改失敗`]
+      })
+    }
+  }
+  
+  // Step 3: 合併結果
+  const merged = mergeGradingResults(results, answerKey)
+  console.log(`📄 [分頁批改] 完成！總分: ${merged.totalScore}，共批改 ${merged.details?.length ?? 0} 題`)
+  
+  return merged
+}
+
+/**
+ * 單份作業批改入口（自動判斷是否使用分頁批改）
  */
 export async function gradeSubmission(
   submissionImage: Blob,
@@ -956,6 +1433,46 @@ export async function gradeSubmission(
 ): Promise<GradingResult> {
   if (!isGeminiAvailable) throw new Error('Gemini 服務未設定')
 
+  // 確保整個批改流程在同一個 ink session 內
+  try {
+    await startInkSession()
+    
+    // 判斷是否應該使用分頁批改（使用高寬比而非檔案大小）
+    if (ENABLE_PAGED_GRADING && !options?._skipPagedGrading) {
+      const imageInfo = await isMultiPageImage(submissionImage)
+      
+      if (imageInfo.isMultiPage) {
+        // 有 AnswerKey JSON 才能分頁（圖片模式不支援）
+        if (answerKey && !answerKeyImage) {
+          console.log(`📄 [分頁批改] 偵測到多頁圖片 (${imageInfo.width}x${imageInfo.height}px, 高寬比=${imageInfo.aspectRatio.toFixed(2)})，啟用分頁批改`)
+          return await gradeSubmissionPaged(submissionImage, answerKeyImage, answerKey, options)
+        } else if (answerKeyImage) {
+          // answerKeyImage 模式不支援分頁，發出警告但繼續標準批改
+          console.warn(`⚠️ [分頁批改] 偵測到多頁圖片，但使用「答案卷圖片」模式無法分頁批改。建議：改用 AnswerKey JSON 模式以獲得更好的批改效果。`)
+        }
+      }
+    }
+    
+    return await gradeSubmissionCore(submissionImage, answerKeyImage, answerKey, options)
+  } finally {
+    // 整份作業批改完成後關閉 session
+    try {
+      await closeInkSession()
+    } catch (closeError) {
+      console.warn('⚠️ 關閉 ink session 失敗（忽略）:', closeError)
+    }
+  }
+}
+
+/**
+ * 單份作業批改核心邏輯（支援 AnswerKey 與答案卷圖片）
+ */
+async function gradeSubmissionCore(
+  submissionImage: Blob,
+  answerKeyImage: Blob | null,
+  answerKey?: AnswerKey,
+  options?: GradeSubmissionOptions
+): Promise<GradingResult> {
   try {
     console.log(`🧠 使用模型 ${currentModelName} 進行批改...`)
 
@@ -984,6 +1501,19 @@ export async function gradeSubmission(
 
     if (answerKey) {
       const questionIds = answerKey.questions.map((q) => q.id).join(', ')
+      
+      // 判斷是否為分頁批改的部分圖片
+      const isPartialImage = options?._isPartialImage === true
+      const partialImageHint = isPartialImage
+        ? `
+⚠️ 【分頁批改模式】
+這張圖片是多頁作業拆分後的其中一段，可能只包含部分題目。
+- 只批改你在這張圖片中實際看到的題目，看不到的題號請不要輸出
+- 如果某題號在圖片中完全看不到（沒有題目也沒有作答區域），則不輸出該題
+- 這不是遺漏，而是該題在其他分頁中
+`
+        : ''
+      
       promptSections.push(
         `
 下面是本次作業的標準答案與配分（JSON 格式）：
@@ -991,9 +1521,12 @@ ${JSON.stringify(answerKey)}
 
 【批改流程】
 請嚴格依照這份 AnswerKey 逐題批改，請注意「擷取」與「給分」是兩個獨立的步驟：
-
-- 必須輸出所有題號：${questionIds}（共 ${answerKey.questions.length} 題）
-- 🚨 重要：即使學生未作答、空白、或無法辨識，也必須輸出該題的記錄
+${partialImageHint}
+- ${isPartialImage ? '輸出你在這張圖片中實際看到的題號（可能不是全部）' : `必須輸出所有題號：${questionIds}（共 ${answerKey.questions.length} 題）`}
+${isPartialImage
+  ? `- 🚨 重要：只要「題目或作答區在本圖片中可見」，即使未作答/空白/無法辨識，也必須輸出該題記錄
+- 若題號/題幹/作答區在本圖片完全不可見：不要輸出該題`
+  : `- 🚨 重要：即使學生未作答、空白、或無法辨識，也必須輸出該題的記錄`}
   ⚠️ 但「輸出記錄」≠「生成答案」！
   - ✅ 正確：學生空白 → 輸出 {"questionId": "1", "studentAnswer": "未作答", "score": 0, ...}
   - ❌ 錯誤：學生空白 → 腦補答案並輸出 {"questionId": "1", "studentAnswer": "台北", "score": 0, ...}
@@ -1528,16 +2061,23 @@ ${forcedIds.map((id) => `- 題號 ${id}：studentAnswer="無法辨識", score=0,
     parsed.needsReview = reviewReasons.length > 0
     parsed.reviewReasons = reviewReasons
 
-    // 步驟 2：後處理補漏（如果有 AnswerKey）
+    // 步驟 2：後處理補漏（如果有 AnswerKey，且不是分頁批改的部分圖片）
     let missingQuestionIds: string[] = []
-    if (answerKey && !options?.regrade?.mode) {
+    const isPartial = options?._isPartialImage === true
+    
+    if (answerKey && !options?.regrade?.mode && !isPartial) {
       const fillResult = fillMissingQuestions(parsed, answerKey)
       parsed = fillResult.result
       missingQuestionIds = fillResult.missingQuestionIds
     }
 
-    // 步驟 3：自動重試缺失的題目（除非明確跳過）
-    if (missingQuestionIds.length > 0 && !options?.skipMissingRetry && !options?.regrade?.mode) {
+    // 步驟 3：自動重試缺失的題目（除非明確跳過，或是分頁批改的部分圖片）
+    if (
+      missingQuestionIds.length > 0 &&
+      !options?.skipMissingRetry &&
+      !options?.regrade?.mode &&
+      !isPartial
+    ) {
       console.log(`🔄 自動重試批改缺失的 ${missingQuestionIds.length} 題...`)
 
       try {

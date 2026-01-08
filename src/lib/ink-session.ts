@@ -1,12 +1,21 @@
 import { dispatchInkBalance } from './ink-events'
 
 const INK_SESSION_STORAGE_KEY = 'rp-ink-session-id'
+const INK_SESSION_EXPIRES_KEY = 'rp-ink-session-expires-at'
 
 let cachedInkSessionId: string | null = null
+let cachedInkSessionExpiresAt: number | null = null
 
 function readStoredInkSessionId() {
   if (typeof window === 'undefined') return null
   return window.sessionStorage.getItem(INK_SESSION_STORAGE_KEY)
+}
+
+function readStoredInkSessionExpiresAt(): number | null {
+  if (typeof window === 'undefined') return null
+  const v = window.sessionStorage.getItem(INK_SESSION_EXPIRES_KEY)
+  const n = v ? Number(v) : NaN
+  return Number.isFinite(n) ? n : null
 }
 
 export function getInkSessionId() {
@@ -16,6 +25,13 @@ export function getInkSessionId() {
   return cachedInkSessionId
 }
 
+export function getInkSessionExpiresAt(): number | null {
+  if (cachedInkSessionExpiresAt !== null) return cachedInkSessionExpiresAt
+  const stored = readStoredInkSessionExpiresAt()
+  cachedInkSessionExpiresAt = stored
+  return cachedInkSessionExpiresAt
+}
+
 export function setInkSessionId(sessionId: string | null) {
   cachedInkSessionId = sessionId
   if (typeof window === 'undefined') return
@@ -23,6 +39,16 @@ export function setInkSessionId(sessionId: string | null) {
     window.sessionStorage.setItem(INK_SESSION_STORAGE_KEY, sessionId)
   } else {
     window.sessionStorage.removeItem(INK_SESSION_STORAGE_KEY)
+  }
+}
+
+function setInkSessionExpiresAt(expiresAt: number | null) {
+  cachedInkSessionExpiresAt = expiresAt
+  if (typeof window === 'undefined') return
+  if (expiresAt) {
+    window.sessionStorage.setItem(INK_SESSION_EXPIRES_KEY, String(expiresAt))
+  } else {
+    window.sessionStorage.removeItem(INK_SESSION_EXPIRES_KEY)
   }
 }
 
@@ -82,6 +108,15 @@ export async function startInkSession() {
   }
 
   setInkSessionId(sessionId)
+  
+  // 儲存過期時間
+  if (data?.expiresAt) {
+    const expiresAtMs = Date.parse(data.expiresAt) || Number(data.expiresAt) || null
+    if (expiresAtMs) {
+      setInkSessionExpiresAt(expiresAtMs)
+    }
+  }
+  
   return { sessionId, expiresAt: data?.expiresAt }
 }
 
@@ -125,6 +160,7 @@ export async function closeInkSession(sessionId?: string | null) {
     console.warn('Ink session close failed:', error)
   } finally {
     setInkSessionId(null)
+    setInkSessionExpiresAt(null)  // 清除過期時間
   }
 
   // 如果沒有成功派發餘額更新，嘗試從 API 刷新
@@ -134,4 +170,39 @@ export async function closeInkSession(sessionId?: string | null) {
   }
 
   return inkSummary
+}
+
+/**
+ * 確保 Ink Session 有效且未過期
+ * - 若無 session 或已過期（< 60秒），自動建立新 session
+ * - 若 session 有效，直接返回
+ */
+export async function ensureInkSessionFresh(): Promise<{ sessionId: string; expiresAt: number | null }> {
+  const id = getInkSessionId()
+  const exp = getInkSessionExpiresAt()
+  const now = Date.now()
+
+  // 沒有 session 或過期時間不明 → 建立新 session
+  if (!id || !exp) {
+    console.log('[ink-session] 無有效 session，建立新 session')
+    const result = await startInkSession()
+    return { 
+      sessionId: result.sessionId, 
+      expiresAt: result.expiresAt ? Date.parse(result.expiresAt) : null 
+    }
+  }
+
+  // 剩餘時間 < 60 秒 → 關閉舊的並建立新 session
+  if (exp - now < 60_000) {
+    console.log('[ink-session] Session 即將過期，續期中...')
+    await closeInkSession(id)
+    const result = await startInkSession()
+    return { 
+      sessionId: result.sessionId, 
+      expiresAt: result.expiresAt ? Date.parse(result.expiresAt) : null 
+    }
+  }
+
+  // Session 有效
+  return { sessionId: id, expiresAt: exp }
 }
