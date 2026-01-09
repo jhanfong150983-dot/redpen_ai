@@ -141,7 +141,6 @@ export default function GradingPage({
     submission: Submission
     student: Student
   } | null>(null)
-  const reviewTimeoutRef = useRef<number | null>(null)
 
   // 🆕 停止批改相關
   const [stopRequested, setStopRequested] = useState(false)
@@ -499,40 +498,6 @@ export default function GradingPage({
       setEditableDetails([])
     }
   }, [selectedSubmission])
-
-  // 自動複核：若需複核，開啟卡片 5 秒後自動清除需複核標記
-  useEffect(() => {
-    if (reviewTimeoutRef.current) {
-      clearTimeout(reviewTimeoutRef.current)
-      reviewTimeoutRef.current = null
-    }
-
-    if (selectedSubmission?.submission.gradingResult?.needsReview) {
-      reviewTimeoutRef.current = window.setTimeout(async () => {
-        const id = selectedSubmission.submission.id
-        const submission = await db.submissions.get(id)
-        if (!submission?.gradingResult?.needsReview) return
-
-        const newGradingResult = { ...submission.gradingResult, needsReview: false, reviewReasons: [] }
-        await db.submissions.update(id, { gradingResult: newGradingResult })
-        requestSync()
-
-        const updated = await db.submissions.get(id)
-        if (updated) {
-          setSubmissions((prev) => new Map(prev).set(updated.studentId, updated))
-          const student = students.find((s) => s.id === updated.studentId)
-          if (student) setSelectedSubmission({ submission: updated, student })
-        }
-      }, 5000)
-    }
-
-    return () => {
-      if (reviewTimeoutRef.current) {
-        clearTimeout(reviewTimeoutRef.current)
-        reviewTimeoutRef.current = null
-      }
-    }
-  }, [selectedSubmission, students])
 
   // 批改訊息每 10 秒輪播
   useEffect(() => {
@@ -1742,7 +1707,11 @@ export default function GradingPage({
               typeof maxScore === 'number' && maxScore > 0
                 ? scoreValue < maxScore * 0.8
                 : scoreValue < 60
-            const needsReview = status === 'graded' && gradingResult?.needsReview
+            const hasGradingResult =
+              !!gradingResult && typeof gradingResult.totalScore === 'number'
+            const showResultBadge =
+              hasGradingResult && (status === 'graded' || status === 'synced')
+            const needsReview = showResultBadge && !!gradingResult?.needsReview
             const minConfidence = needsReview && gradingResult
               ? getSubmissionMinConfidenceInfo(gradingResult)
               : null
@@ -1803,7 +1772,7 @@ export default function GradingPage({
                         </>
                       )
                     })()}
-                    {status === 'graded' && gradingResult && (
+                    {showResultBadge && gradingResult && (
                       <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
                         {needsReview ? (
                           <>
@@ -1834,8 +1803,13 @@ export default function GradingPage({
                         已掃描
                       </div>
                     )}
-                    {status === 'synced' && (
+                    {status === 'synced' && !showResultBadge && (
                       <div className="absolute top-2 right-2 px-2 py-1 bg-purple-500 text-white rounded-full text-xs font-semibold shadow">
+                        已上傳
+                      </div>
+                    )}
+                    {status === 'synced' && showResultBadge && (
+                      <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-[10px] font-semibold shadow">
                         已上傳
                       </div>
                     )}
