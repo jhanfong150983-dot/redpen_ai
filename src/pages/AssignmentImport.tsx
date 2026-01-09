@@ -19,7 +19,7 @@ import {
   getFileType,
   sortFilesByNumber
 } from '@/lib/pdfToImage'
-import { blobToBase64 } from '@/lib/imageCompression'
+import { blobToBase64, compressToTargetBytes } from '@/lib/imageCompression'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 
@@ -131,59 +131,6 @@ async function mergePageBlobs(pageBlobs: Blob[]): Promise<Blob> {
  * 壓縮圖片到目標大小（先縮尺寸、再降 quality）
  * 用於確保合併後的長圖不超過 1.5MB
  */
-async function compressToTargetBytes(
-  blob: Blob,
-  targetBytes: number,
-  opts: { maxWidth?: number; format?: 'image/jpeg' | 'image/webp'; qualities?: number[] } = {}
-): Promise<Blob> {
-  if (blob.size <= targetBytes) return blob
-
-  // 合併長圖用較小的寬度上限
-  const maxWidth = opts.maxWidth ?? 1600
-  const format = opts.format ?? getDefaultImageFormat()
-  const qualities = opts.qualities ?? [0.82, 0.75, 0.68, 0.6]
-
-  const bmp = await createImageBitmap(blob)
-
-  // 先縮放到 maxWidth（維持比例）
-  const scale = Math.min(1, maxWidth / bmp.width)
-  const w = Math.max(1, Math.round(bmp.width * scale))
-  const h = Math.max(1, Math.round(bmp.height * scale))
-
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')
-  if (!ctx) {
-    bmp.close()
-    console.warn('[compressToTargetBytes] 無法建立 Canvas，放棄壓縮')
-    return blob
-  }
-  ctx.drawImage(bmp, 0, 0, w, h)
-  bmp.close()
-
-  console.log(`[compressToTargetBytes] 原始 ${(blob.size / 1024).toFixed(0)}KB, 縮放到 ${w}x${h}`)
-
-  // 再用多個 quality 嘗試壓到 targetBytes
-  for (const q of qualities) {
-    // eslint-disable-next-line no-await-in-loop
-    const out = await safeToBlobWithFallback(canvas, { format, quality: q })
-    console.log(`[compressToTargetBytes] quality=${q} -> ${(out.size / 1024).toFixed(0)}KB`)
-    if (out.size <= targetBytes) {
-      canvas.width = 0
-      canvas.height = 0
-      return out
-    }
-  }
-
-  // 仍超過就回傳最後一次（至少已降很多）
-  const out = await safeToBlobWithFallback(canvas, { format, quality: qualities[qualities.length - 1] })
-  canvas.width = 0
-  canvas.height = 0
-  console.warn(`[compressToTargetBytes] 仍超過目標: ${(out.size / 1024).toFixed(0)}KB > ${(targetBytes / 1024).toFixed(0)}KB`)
-  return out
-}
-
 export default function AssignmentImport({
   assignmentId,
   onBack,
@@ -633,6 +580,14 @@ export default function AssignmentImport({
         const compressMaxWidth = pageBlobs.length === 1 ? 1900 : 1600
         imageBlob = await compressToTargetBytes(imageBlob, TARGET_MAX_BYTES, { maxWidth: compressMaxWidth })
 
+        // 產生縮圖（用於 Grid 顯示，提升效能）
+        const thumbnailBlob = await compressToTargetBytes(
+          imageBlob,
+          50 * 1024, // 50KB 上限
+          { maxWidth: 400 }  // 400px 寬度
+        )
+        const thumbnailBase64 = await blobToBase64(thumbnailBlob)
+
         const existingSubmissions = await db.submissions
           .where('assignmentId')
           .equals(assignment.id)
@@ -673,6 +628,9 @@ export default function AssignmentImport({
           status: 'scanned',
           imageBase64,
           ...(avoidBlobStorage ? {} : { imageBlob }),
+          // 新增縮圖欄位
+          thumbnailBase64,
+          ...(avoidBlobStorage ? {} : { thumbnailBlob }),
           createdAt: getCurrentTimestamp()
         }
 

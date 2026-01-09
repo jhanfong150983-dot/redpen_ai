@@ -64,7 +64,10 @@ export function getSubmissionImageUrl(submission?: {
   imageBlob?: Blob
   imageBase64?: string
   imageUrl?: string
-} | null): string | null {
+  thumbnailBlob?: Blob
+  thumbnailBase64?: string
+  thumbnailUrl?: string
+} | null, useThumbnail = false): string | null {
   if (!submission) {
     // 正常情況：某些學生可能沒有提交作業
     return null
@@ -72,6 +75,38 @@ export function getSubmissionImageUrl(submission?: {
 
   const safari = isSafari()
   const browser = safari ? 'Safari' : 'Chrome/Other'
+
+  // 如果使用縮圖模式，優先使用縮圖欄位
+  if (useThumbnail) {
+    // 策略 1: 優先使用縮圖 Base64
+    if (submission.thumbnailBase64) {
+      const base64 = fixCorruptedBase64(submission.thumbnailBase64)
+      debugLog(`✅ 使用縮圖 Base64 (${browser})`, { submissionId: submission.id, length: base64.length })
+      return base64
+    }
+
+    // 策略 2: 使用縮圖 Blob
+    if (submission.thumbnailBlob && submission.thumbnailBlob.size > 0) {
+      try {
+        const url = URL.createObjectURL(submission.thumbnailBlob)
+        debugLog(`✅ 使用縮圖 Blob URL (${browser})`, { submissionId: submission.id, url })
+        return url
+      } catch (error) {
+        console.error(`❌ 創建縮圖 Blob URL 失敗 (${browser}):`, error, { submissionId: submission.id })
+      }
+    }
+
+    // 策略 3: 使用雲端縮圖 URL（如果有的話）
+    if (submission.thumbnailUrl && submission.id) {
+      const params = new URLSearchParams({ submissionId: submission.id, thumbnail: 'true' })
+      const url = `/api/storage/download?${params.toString()}`
+      debugLog(`✅ 使用雲端縮圖 URL (${browser})`, { submissionId: submission.id, url })
+      return url
+    }
+
+    // Fallback: 如果沒有縮圖，使用原圖
+    console.warn('⚠️ 沒有縮圖可用，回退到原圖', { submissionId: submission.id })
+  }
 
   debugLog(`🖼️ 取得圖片 URL (${browser}):`, {
     submissionId: submission.id,

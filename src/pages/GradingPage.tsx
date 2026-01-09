@@ -1720,7 +1720,7 @@ export default function GradingPage({
                 <div className="relative">
                   <div className="aspect-[4/3] bg-gray-100 rounded-t-xl overflow-hidden flex items-center justify-center relative">
                     {(() => {
-                      const imageUrl = getSubmissionImageUrl(submission)
+                      const imageUrl = getSubmissionImageUrl(submission, true)  // 使用縮圖
                       return imageUrl ? (
                         <img
                           src={imageUrl}
