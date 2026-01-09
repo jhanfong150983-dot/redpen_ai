@@ -1711,7 +1711,7 @@ export default function GradingPage({
             return (
               <div
                 key={student.id}
-                className="bg-white rounded-xl shadow-md hover:shadow-lg transition-shadow cursor-pointer group flex flex-col"
+                className="bg-white rounded-xl shadow-sm hover:shadow-md hover:border-blue-400 border border-gray-200 transition-all cursor-pointer group flex flex-col"
                 onClick={() => {
                   if (!submission) return
                   setSelectedSubmission({ submission, student })
@@ -1726,6 +1726,9 @@ export default function GradingPage({
                           src={imageUrl}
                           alt="作業縮圖"
                           className="w-full h-full object-cover"
+                          loading="lazy"
+                          decoding="async"
+                          fetchPriority="low"
                         />
                       ) : submission?.status === 'synced' ? (
                         <div className="flex flex-col items-center justify-center text-gray-500">
