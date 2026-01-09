@@ -860,7 +860,9 @@ export function useSync(options: UseSyncOptions = {}) {
       console.log('🔄 [同步] 跳過同步：目前正在同步中，已加入佇列')
       debugLog('目前正在同步中，跳過本次')
       syncQueuedRef.current = true
-      // 不觸發 notifySyncComplete，因為進行中的同步會觸發
+      // 觸發 notifySyncComplete，讓等待者知道這次請求已被處理（會在進行中的同步完成後執行）
+      // 注意：這不會影響進行中的同步，只是通知等待者不需要再等
+      notifySyncComplete()
       return
     }
 

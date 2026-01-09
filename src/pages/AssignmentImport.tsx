@@ -686,15 +686,6 @@ export default function AssignmentImport({
       }
 
       if (successCount > 0) {
-        // 觸發同步前再次檢查資料庫狀態
-        const allSubmissions = await db.submissions.toArray()
-        const scannedCount = allSubmissions.filter(s => s.status === 'scanned').length
-        console.log('🔄 [PDF匯入] 觸發同步前檢查:', {
-          total: allSubmissions.length,
-          scanned: scannedCount,
-          scannedIds: allSubmissions.filter(s => s.status === 'scanned').map(s => s.id)
-        })
-
         console.log('⏰ [PDF匯入] 觸發同步並等待完成...')
 
         // 先設置監聯器，再觸發同步，避免錯過事件
