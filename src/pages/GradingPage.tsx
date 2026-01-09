@@ -157,6 +157,7 @@ export default function GradingPage({
   const [gradingStartTime, setGradingStartTime] = useState<number>(0)
   const [completedReviewCount, setCompletedReviewCount] = useState(0)
   const [gradingMessage, setGradingMessage] = useState<string>('AI 批改中...')
+  const [nowTs, setNowTs] = useState(() => Date.now())
 
   // 題目詳情（可編輯）
   const [editableDetails, setEditableDetails] = useState<any[]>([])
@@ -169,6 +170,7 @@ export default function GradingPage({
   )
   const [activeRegradeId, setActiveRegradeId] = useState<string | null>(null)
   const avoidBlobStorage = shouldAvoidIndexedDbBlob()
+  const isBusy = isGrading || isDownloading
   
   // 🆕 計算待複核數量
   const needsReviewCount = useMemo(() => {
@@ -541,6 +543,16 @@ export default function GradingPage({
     return () => clearInterval(interval)
   }, [isGrading, isDownloading])
 
+  useEffect(() => {
+    if (!isBusy) return
+    const timer = window.setInterval(() => setNowTs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [isBusy])
+
+  useEffect(() => {
+    if (isBusy) setEditingReasonIndex(null)
+  }, [isBusy])
+
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true)
     await loadData()
@@ -632,6 +644,8 @@ export default function GradingPage({
     setActiveRegradeId(submission.id)
     setIsGrading(true)
     setGradingMessage(getRandomGradingMessage())
+    setCompletedReviewCount(0)
+    setGradingStartTime(Date.now())
     try {
       if (!submission.imageBlob) {
         // 優先從 Base64 重建 Blob
@@ -742,6 +756,8 @@ export default function GradingPage({
 
     setIsGrading(true)
     setGradingMessage(getRandomGradingMessage())
+    setCompletedReviewCount(0)
+    setGradingStartTime(Date.now())
     try {
       const existingDetails = submission.gradingResult?.details ?? []
       const forcedUnrecognizableQuestionIds = flaggedIds.filter((questionId) =>
@@ -1129,6 +1145,7 @@ export default function GradingPage({
 
   // 單題得分即時更新（自動重算總分並儲存）
   const handleDetailScoreChange = async (index: number, scoreValue: number) => {
+    if (isBusy) return
     if (!selectedSubmission) return
 
     const updatedDetails = editableDetails.map((d: any, i: number) =>
@@ -1185,6 +1202,7 @@ export default function GradingPage({
 
   // 理由即時更新
   const handleDetailReasonChange = async (index: number, reasonValue: string) => {
+    if (isBusy) return
     if (!selectedSubmission) return
 
     const updatedDetails = editableDetails.map((d: any, i: number) =>
@@ -1273,6 +1291,55 @@ export default function GradingPage({
     return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
   }
 
+  const getSubmissionMinConfidenceInfo = (result?: Submission['gradingResult']) => {
+    if (!result?.details || !Array.isArray(result.details)) return null
+
+    let minValue: number | null = null
+    let minQuestionId: string | null = null
+
+    result.details.forEach((detail: any, index: number) => {
+      const rawValue = Number(detail?.confidence)
+      if (!Number.isFinite(rawValue)) return
+      const value = Math.min(100, Math.max(0, rawValue))
+
+      if (minValue === null || value < minValue) {
+        minValue = value
+        minQuestionId = detail?.questionId ?? `#${index + 1}`
+      }
+    })
+
+    if (minValue === null) return null
+    return { value: Math.round(minValue), questionId: minQuestionId }
+  }
+
+  const getDisplayReviewReasons = useCallback(
+    (submission: Submission) => {
+      const reasons = submission.gradingResult?.reviewReasons ?? []
+      if (reasons.length > 0) return reasons
+
+      const derived = new Set<string>()
+      const details = submission.gradingResult?.details ?? []
+
+      if (details.some((detail: any) => Number(detail?.confidence) < 80)) {
+        derived.add('信心偏低')
+      }
+      if (details.some((detail: any) => detail?.studentAnswer === 'AI無法辨識')) {
+        derived.add('有題目無法辨識')
+      }
+      if (answerExtractionFlags.get(submission.id)?.size) {
+        derived.add('答案可能不一致')
+      }
+
+      return Array.from(derived)
+    },
+    [answerExtractionFlags]
+  )
+
+  const formatQuestionId = (questionId?: string | null) => {
+    if (!questionId) return null
+    return questionId.startsWith('#') ? questionId.slice(1) : questionId
+  }
+
   // 錯誤類型 -> 標籤
   const classifyMistakeToTag = (reason: string): string => {
   const text = (reason || '').toLowerCase().trim()
@@ -1347,6 +1414,35 @@ export default function GradingPage({
       return a.seatNumber - b.seatNumber
     })
   }, [students, submissions])
+
+  const selectedReviewReasons = selectedSubmission
+    ? getDisplayReviewReasons(selectedSubmission.submission)
+    : []
+  const selectedMinConfidence = selectedSubmission?.submission.gradingResult
+    ? getSubmissionMinConfidenceInfo(selectedSubmission.submission.gradingResult)
+    : null
+  const selectedConfidenceAverage = selectedSubmission?.submission.gradingResult
+    ? getSubmissionConfidenceAverage(selectedSubmission.submission.gradingResult)
+    : null
+  const selectedConfidenceLabel = selectedMinConfidence
+    ? `最低信心 ${selectedMinConfidence.value}%${
+        selectedMinConfidence.questionId
+          ? `（第${formatQuestionId(selectedMinConfidence.questionId)}題）`
+          : ''
+      }`
+    : typeof selectedConfidenceAverage === 'number'
+      ? `平均信心 ${selectedConfidenceAverage}%`
+      : null
+  const activeProgress = isDownloading ? downloadProgress : gradingProgress
+  const progressPercent =
+    activeProgress.total > 0
+      ? Math.round((activeProgress.current / activeProgress.total) * 100)
+      : 0
+  const progressWidth =
+    activeProgress.total > 0
+      ? (activeProgress.current / activeProgress.total) * 100
+      : 0
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
@@ -1418,97 +1514,6 @@ export default function GradingPage({
             <div className="text-center">
               <p className="text-lg font-semibold text-gray-800">AI 使用計算中...</p>
               <p className="text-sm text-gray-500 mt-1">正在結算本次批改費用，請稍候</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 🆕 批改進度 Overlay（改進版） */}
-      {(isGrading || isDownloading) && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full mx-4">
-            <div className="flex flex-col items-center gap-4">
-              {isDownloading ? (
-                <Download className="w-12 h-12 text-blue-500 animate-bounce" />
-              ) : (
-                <Sparkles className="w-12 h-12 text-purple-500 animate-pulse" />
-              )}
-              
-              <div className="text-center">
-                <p className="text-xl font-bold text-gray-800">
-                  {isDownloading ? '準備圖片中...' : gradingMessage}
-                </p>
-                {currentGradingStudent && (
-                  <p className="text-sm text-gray-600 mt-1">
-                    正在處理：{currentGradingStudent}
-                  </p>
-                )}
-              </div>
-
-              {/* 進度條 */}
-              <div className="w-full">
-                <div className="flex justify-between text-sm text-gray-600 mb-2">
-                  <span>
-                    {isDownloading 
-                      ? `下載 ${downloadProgress.current}/${downloadProgress.total}`
-                      : `批改 ${gradingProgress.current}/${gradingProgress.total}`
-                    }
-                  </span>
-                  <span>
-                    {isDownloading
-                      ? `${Math.round((downloadProgress.current / downloadProgress.total) * 100 || 0)}%`
-                      : `${Math.round((gradingProgress.current / gradingProgress.total) * 100 || 0)}%`
-                    }
-                  </span>
-                </div>
-                <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full transition-all duration-300 ${isDownloading ? 'bg-blue-500' : 'bg-purple-500'}`}
-                    style={{ 
-                      width: `${isDownloading 
-                        ? (downloadProgress.current / downloadProgress.total) * 100 
-                        : (gradingProgress.current / gradingProgress.total) * 100}%` 
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* 預估時間和複核統計 */}
-              {!isDownloading && gradingProgress.current > 0 && (
-                <div className="flex items-center gap-4 text-sm text-gray-500">
-                  {gradingStartTime > 0 && (
-                    <span>
-                      已用時 {Math.round((Date.now() - gradingStartTime) / 1000)}秒
-                    </span>
-                  )}
-                  {completedReviewCount > 0 && (
-                    <span className="text-amber-600">
-                      {completedReviewCount} 份需複核
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* 停止按鈕 */}
-              <button
-                onClick={handleStopGrading}
-                disabled={stopRequested}
-                className={`mt-2 flex items-center gap-2 px-6 py-2 rounded-xl transition-all ${
-                  stopRequested
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    : 'bg-red-100 text-red-600 hover:bg-red-200'
-                }`}
-              >
-                <Square className="w-4 h-4" />
-                {stopRequested ? '正在停止...' : '停止批改'}
-              </button>
-
-              <p className="text-xs text-gray-400 text-center">
-                {stopRequested 
-                  ? '將在完成當前作業後停止'
-                  : '已完成的批改結果會保留'
-                }
-              </p>
             </div>
           </div>
         </div>
@@ -1610,6 +1615,83 @@ export default function GradingPage({
           </div>
         </div>
 
+        {isBusy && (
+          <div className="sticky top-4 z-40 mb-4">
+            <div className="bg-white rounded-2xl shadow-lg px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 shrink-0">
+                  {isDownloading ? (
+                    <Download className="w-5 h-5 text-blue-500" />
+                  ) : (
+                    <Sparkles className="w-5 h-5 text-purple-500" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 break-words">
+                    {isDownloading ? '準備圖片中...' : gradingMessage}
+                  </p>
+                  {currentGradingStudent && (
+                    <p className="text-xs text-gray-500 break-words">
+                      正在處理：{currentGradingStudent}
+                    </p>
+                  )}
+                  {!isDownloading && (
+                    <p className="text-xs text-gray-500">
+                      已用時 {gradingStartTime > 0 ? Math.round((nowTs - gradingStartTime) / 1000) : 0} 秒 · 需複核 {completedReviewCount}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex-1 sm:max-w-xs">
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>
+                    {isDownloading
+                      ? `下載 ${activeProgress.current}/${activeProgress.total}`
+                      : `批改 ${activeProgress.current}/${activeProgress.total}`}
+                  </span>
+                  <span>{progressPercent}%</span>
+                </div>
+                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${isDownloading ? 'bg-blue-500' : 'bg-purple-500'}`}
+                    style={{
+                      width: `${progressWidth}%`
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:items-end gap-1">
+                {needsReviewCount > 0 && (
+                  <button
+                    onClick={jumpToNextReview}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all bg-amber-100 text-amber-700 hover:bg-amber-200"
+                  >
+                    <Eye className="w-4 h-4" />
+                    跳到待複核 ({needsReviewCount})
+                  </button>
+                )}
+                <button
+                  onClick={handleStopGrading}
+                  disabled={stopRequested}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all ${
+                    stopRequested
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-red-100 text-red-600 hover:bg-red-200'
+                  }`}
+                >
+                  <Square className="w-4 h-4" />
+                  {stopRequested ? '正在停止...' : '停止批改'}
+                </button>
+                {stopRequested && (
+                  <p className="text-xs text-red-600">將在完成當前作業後停止</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {!inkSessionReady && (
           <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl px-4 py-3 text-sm">
             正在建立批改會話，請稍候...
@@ -1660,13 +1742,20 @@ export default function GradingPage({
               typeof maxScore === 'number' && maxScore > 0
                 ? scoreValue < maxScore * 0.8
                 : scoreValue < 60
-            const confidenceAverage = gradingResult
+            const needsReview = status === 'graded' && gradingResult?.needsReview
+            const minConfidence = needsReview && gradingResult
+              ? getSubmissionMinConfidenceInfo(gradingResult)
+              : null
+            const confidenceAverage = needsReview && gradingResult
               ? getSubmissionConfidenceAverage(gradingResult)
               : null
-            const isLowConfidence =
-              typeof confidenceAverage === 'number' ? confidenceAverage < 100 : false
-            const showConfidence =
-              typeof confidenceAverage === 'number' ? confidenceAverage < 100 : false
+            const confidenceHint = needsReview
+              ? minConfidence
+                ? `最低信心 ${minConfidence.value}%`
+                : typeof confidenceAverage === 'number'
+                  ? `平均信心 ${confidenceAverage}%`
+                  : null
+              : null
 
             if (activeTag && !tags.includes(activeTag)) {
               return null
@@ -1716,30 +1805,26 @@ export default function GradingPage({
                     })()}
                     {status === 'graded' && gradingResult && (
                       <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
-                        <div
-                          className={`px-2 py-1 rounded-full text-xs font-bold shadow ${
-                            !isLowScore
-                              ? 'bg-green-500 text-white'
-                              : 'bg-red-500 text-white'
-                          }`}
-                        >
-                          {gradingResult.totalScore} 分
-                        </div>
-                        {showConfidence && (
+                        {needsReview ? (
+                          <>
+                            <div className="px-2 py-1 rounded-full text-xs font-bold shadow bg-amber-100 text-amber-700 border border-amber-200">
+                              需複核
+                            </div>
+                            {confidenceHint && (
+                              <div className="text-[10px] text-amber-700">
+                                {confidenceHint}
+                              </div>
+                            )}
+                          </>
+                        ) : (
                           <div
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold shadow ${
-                              isLowConfidence
-                                ? 'bg-red-100 text-red-700 border border-red-200'
-                                : 'bg-red-100 text-red-700 border border-red-200'
+                            className={`px-2 py-1 rounded-full text-xs font-bold shadow ${
+                              !isLowScore
+                                ? 'bg-green-500 text-white'
+                                : 'bg-red-500 text-white'
                             }`}
                           >
-                            信心 {confidenceAverage}%
-                          </div>
-                        )}
-                        {/* 🆕 需複核標記 */}
-                        {gradingResult.needsReview && (
-                          <div className="px-2 py-0.5 rounded-full text-[10px] font-semibold shadow bg-amber-100 text-amber-700 border border-amber-200">
-                            需複核
+                            {gradingResult.totalScore} 分
                           </div>
                         )}
                       </div>
@@ -1763,9 +1848,9 @@ export default function GradingPage({
                               e.stopPropagation()
                               void handleRegradeSingle(submission)
                             }}
-                            className="absolute top-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-50 hover:text-blue-600 z-10"
+                            className="absolute top-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-50 hover:text-blue-600 z-10 disabled:opacity-50 disabled:cursor-not-allowed"
                             title="重新使用 AI 批改此學生"
-                            disabled={isGrading || !inkSessionReady}
+                            disabled={isBusy || !inkSessionReady}
                           >
                             <RotateCcw
                               className={`w-4 h-4 ${activeRegradeId === submission.id ? 'animate-spin' : ''}`}
@@ -1776,8 +1861,9 @@ export default function GradingPage({
                               e.stopPropagation()
                               void handleDeleteSubmission(submission, student)
                             }}
-                            className="absolute bottom-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 z-10"
+                            className="absolute bottom-2 left-2 p-1.5 bg-white/90 text-gray-700 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 z-10 disabled:opacity-50 disabled:cursor-not-allowed"
                             title="刪除此學生的作業"
+                            disabled={isBusy}
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1939,8 +2025,15 @@ export default function GradingPage({
                       <div>
                         <p className="text-sm font-medium text-amber-700">需要複核</p>
                         <p className="text-xs text-amber-600">
-                          {selectedSubmission.submission.gradingResult.reviewReasons?.join('、') || 'AI 建議人工檢查'}
+                          {selectedReviewReasons.length > 0
+                            ? selectedReviewReasons.join('、')
+                            : 'AI 建議人工檢查'}
                         </p>
+                        {selectedConfidenceLabel && (
+                          <p className="text-xs text-amber-600 mt-1">
+                            {selectedConfidenceLabel}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <button
@@ -1996,6 +2089,11 @@ export default function GradingPage({
                 {/* 題目詳情（可調整） */}
                 {editableDetails.length > 0 ? (
                   <div>
+                    {isBusy && (
+                      <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                        批改進行中，若要編輯請先停止批改
+                      </div>
+                    )}
                     <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2 text-sm uppercase tracking-wide">
                       <FileQuestion className="w-4 h-4 text-blue-500" /> 題目詳情（可調整）
                     </h3>
@@ -2048,8 +2146,9 @@ export default function GradingPage({
                                   type="text"
                                   inputMode="numeric"
                                   pattern="[0-9]*"
-                                  className="w-14 px-1 py-0.5 rounded border border-white/60 bg-white/70 text-gray-800 text-[10px] text-center"
+                                  className="w-14 px-1 py-0.5 rounded border border-white/60 bg-white/70 text-gray-800 text-[10px] text-center disabled:opacity-60 disabled:cursor-not-allowed"
                                   value={d.score ?? ''}
+                                  disabled={isBusy}
                                   onFocus={(e) => {
                                     // 點擊時自動選取全部文字，方便清除
                                     e.target.select()
@@ -2106,9 +2205,10 @@ export default function GradingPage({
                               <span className="mt-0.5">理由：</span>
                               {editingReasonIndex === i ? (
                                 <textarea
-                                  className="flex-1 px-2 py-1 border border-gray-300 rounded min-h-[48px]"
+                                  className="flex-1 px-2 py-1 border border-gray-300 rounded min-h-[48px] disabled:opacity-60 disabled:cursor-not-allowed"
                                   value={d.reason ?? ''}
                                   autoFocus
+                                  disabled={isBusy}
                                   onChange={(e) => {
                                     const v = e.target.value
                                     setEditableDetails((prev) => {
@@ -2139,8 +2239,9 @@ export default function GradingPage({
                                   <button
                                     type="button"
                                     onClick={() => setEditingReasonIndex(i)}
-                                    className="text-gray-400 hover:text-blue-600"
+                                    className="text-gray-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="編輯理由"
+                                    disabled={isBusy}
                                   >
                                     <Pencil className="w-4 h-4" />
                                   </button>
@@ -2241,11 +2342,11 @@ export default function GradingPage({
                   <button
                     onClick={() => handleRegradeFlagged(selectedSubmission.submission)}
                     disabled={
-                      isGrading ||
+                      isBusy ||
                       !inkSessionReady ||
                       (answerExtractionFlags.get(selectedSubmission.submission.id)?.size ?? 0) === 0
                     }
-                    className="w-full flex items-center justify-center gap-2 py-3 bg-white border border-gray-300 shadow-sm rounded-lg hover:bg-blue-600 hover:text-white hover:border-blue-600 font-medium text-gray-700 transition-all"
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-white border border-gray-300 shadow-sm rounded-lg hover:bg-blue-600 hover:text-white hover:border-blue-600 font-medium text-gray-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                   <RotateCcw className={`w-4 h-4 ${isGrading ? 'animate-spin' : ''}`} />
                   {isGrading ? 'AI 正在再次批改...' : '再次批改'}
