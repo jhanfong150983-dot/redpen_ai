@@ -196,6 +196,8 @@ export function useSync(options: UseSyncOptions = {}) {
       let imageBase64: string
       let contentType: string | undefined
       let base64DataUrl: string | null = null
+      let thumbBase64: string | undefined
+      let thumbContentType: string | undefined
 
       // 優先使用 imageBase64（如果已經有）
       if (submission.imageBase64) {
@@ -254,6 +256,21 @@ export function useSync(options: UseSyncOptions = {}) {
         }
       }
 
+      if (base64DataUrl) {
+        try {
+          const thumbBlob = await compressImage(base64DataUrl, {
+            maxWidth: 360,
+            quality: 0.7
+          })
+          const thumbDataUrl = await blobToDataUrl(thumbBlob)
+          const normalizedThumb = normalizeBase64Payload(thumbDataUrl, thumbBlob.type)
+          thumbBase64 = normalizedThumb.data
+          thumbContentType = normalizedThumb.mimeType || thumbBlob.type || 'image/webp'
+        } catch (error) {
+          console.warn('⚠️ 縮圖產生失敗，略過縮圖上傳', error)
+        }
+      }
+
       const response = await fetch('/api/data/submission', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -264,7 +281,9 @@ export function useSync(options: UseSyncOptions = {}) {
           studentId: submission.studentId,
           createdAt: submission.createdAt,
           imageBase64,
-          contentType
+          contentType,
+          thumbBase64,
+          thumbContentType
         })
       })
 
@@ -294,7 +313,9 @@ export function useSync(options: UseSyncOptions = {}) {
               studentId: submission.studentId,
               createdAt: submission.createdAt,
               imageBase64,
-              contentType
+              contentType,
+              thumbBase64,
+              thumbContentType
             })
           })
 
@@ -344,7 +365,8 @@ export function useSync(options: UseSyncOptions = {}) {
 
       await db.submissions.update(submission.id, {
         status: 'synced',
-        imageUrl: newImageUrl
+        imageUrl: newImageUrl,
+        thumbUrl: `submissions/thumbs/${submission.id}.webp`
         // 注意：不更新 imageBlob 和 imageBase64，保留原有數據
       })
 
@@ -497,6 +519,10 @@ export function useSync(options: UseSyncOptions = {}) {
         status: rest.status,
         createdAt: rest.createdAt,
         imageUrl: rest.imageUrl || `submissions/${rest.id}.webp`,
+        thumbUrl:
+          rest.thumbUrl ||
+          rest.thumbnailUrl ||
+          `submissions/thumbs/${rest.id}.webp`,
         score: rest.score,
         feedback: rest.feedback,
         gradingResult: rest.gradingResult,
@@ -622,7 +648,8 @@ export function useSync(options: UseSyncOptions = {}) {
         sub.id,
         {
           imageBlob: sub.imageBlob,
-          imageBase64: sub.imageBase64
+          imageBase64: sub.imageBase64,
+          thumbUrl: sub.thumbUrl
         }
       ])
     )
@@ -658,6 +685,12 @@ export function useSync(options: UseSyncOptions = {}) {
 
         // 從本地恢復圖片數據
         const localImageData = imageDataMap.get(sub.id)
+        const thumbUrl =
+          (sub as Submission & { thumbUrl?: string }).thumbUrl ??
+          (sub as { thumb_url?: string }).thumb_url ??
+          (sub as Submission & { thumbnailUrl?: string }).thumbnailUrl ??
+          (sub as { thumbnail_url?: string }).thumbnail_url ??
+          localImageData?.thumbUrl
 
         if (localImageData && (localImageData.imageBlob || localImageData.imageBase64)) {
           debugLog(`🔄 恢復圖片數據: ${sub.id}`, {
@@ -679,6 +712,7 @@ export function useSync(options: UseSyncOptions = {}) {
           gradedAt,
           correctionCount: sub.correctionCount,
           imageUrl: sub.imageUrl,
+          thumbUrl,
           imageBlob: localImageData?.imageBlob,       // 保留本地 Blob
           imageBase64: localImageData?.imageBase64,   // 保留本地 Base64
           updatedAt: toMillis(sub.updatedAt ?? (sub as { updated_at?: unknown }).updated_at)

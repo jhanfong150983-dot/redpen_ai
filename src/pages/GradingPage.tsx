@@ -375,48 +375,12 @@ export default function GradingPage({
 
       setSubmissions(map)
 
-      // 🔧 跨設備支持：自動下載沒有 Base64 的作業圖片
-      const needDownloadBase64 = submissionsData.filter(
-        (sub) => !sub.imageBase64 && !sub.imageBlob && sub.imageUrl && sub.status === 'synced'
-      )
+      // ✅ 先放行 UI：提早結束 loading 狀態，讓畫面能快速顯示
+      setIsLoading(false)
 
-      if (needDownloadBase64.length > 0) {
-        console.log(`📥 檢測到 ${needDownloadBase64.length} 份作業沒有本地圖片，開始下載...`)
-
-        // 在背景下載並轉換為 Base64
-        for (const sub of needDownloadBase64) {
-          try {
-            const blob = await downloadImageFromSupabase(sub.id)
-            const base64 = await blobToBase64(blob)
-
-            // 🔍 調試：檢查 Base64 格式
-            console.log(`🔍 下載後的 Base64 格式檢查:`, {
-              submissionId: sub.id,
-              length: base64.length,
-              startsWithData: base64.startsWith('data:'),
-              prefix150: base64.substring(0, 150)
-            })
-
-            // 更新資料庫和 state
-            await updateSubmissionWithImages(sub.id, {}, blob, base64)
-
-            // 更新 UI
-            sub.imageBlob = avoidBlobStorage ? undefined : blob
-            sub.imageBase64 = base64
-            setSubmissions((prev) => new Map(prev).set(sub.studentId, sub))
-
-            console.log(`✅ 下載並緩存成功: ${sub.id}`)
-          } catch (error) {
-            console.error(`❌ 下載失敗: ${sub.id}`, error)
-          }
-        }
-
-        console.log(`✅ 背景下載完成`)
-      }
     } catch (err) {
       console.error('載入失敗', err)
       setError(err instanceof Error ? err.message : '載入失敗')
-    } finally {
       setIsLoading(false)
     }
   }, [assignmentId])
@@ -1721,22 +1685,33 @@ export default function GradingPage({
                   <div className="aspect-[4/3] bg-gray-100 rounded-t-xl overflow-hidden flex items-center justify-center relative">
                     {(() => {
                       const imageUrl = getSubmissionImageUrl(submission, true)  // 使用縮圖
-                      return imageUrl ? (
-                        <img
-                          src={imageUrl}
-                          alt="作業縮圖"
-                          className="w-full h-full object-cover"
-                          loading="lazy"
-                          decoding="async"
-                          fetchPriority="low"
-                        />
-                      ) : submission?.status === 'synced' ? (
-                        <div className="flex flex-col items-center justify-center text-gray-500">
-                          <ImageIcon className="w-10 h-10 text-blue-500" />
-                          <p className="text-xs text-gray-500">已上傳雲端</p>
-                        </div>
-                      ) : (
-                        <ImageIcon className="w-12 h-12 text-gray-400" />
+                      const isSynced = submission?.status === 'synced'
+                      return (
+                        <>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            {isSynced ? (
+                              <div className="flex flex-col items-center justify-center text-gray-500">
+                                <ImageIcon className="w-10 h-10 text-blue-500" />
+                                <p className="text-xs text-gray-500">已上傳雲端</p>
+                              </div>
+                            ) : (
+                              <ImageIcon className="w-12 h-12 text-gray-400" />
+                            )}
+                          </div>
+                          {imageUrl && (
+                            <img
+                              src={imageUrl}
+                              alt="作業縮圖"
+                              className="w-full h-full object-cover relative"
+                              loading="lazy"
+                              decoding="async"
+                              fetchPriority="low"
+                              onError={(event) => {
+                                event.currentTarget.style.display = 'none'
+                              }}
+                            />
+                          )}
+                        </>
                       )
                     })()}
                     {status === 'graded' && gradingResult && (
@@ -2283,4 +2258,5 @@ export default function GradingPage({
     </div>
   )
 }
+
 
