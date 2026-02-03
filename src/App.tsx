@@ -974,18 +974,31 @@ function App() {
               </button>
               <button
                 onClick={() => {
-                  // 功能暫時禁用：研發中
-                  return
+                  if (canAccessTracking) {
+                    setCurrentPage('ai-report')
+                  }
                 }}
-                disabled={true}
-                className="w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
+                disabled={!canAccessTracking}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ${
+                  canAccessTracking
+                    ? 'bg-white border-gray-200 hover:border-amber-400'
+                    : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
               >
-                <span className="flex items-center gap-2 font-medium text-gray-400">
-                  <BarChart3 className="w-5 h-5 text-gray-300" />
+                <span
+                  className={`flex items-center gap-2 font-medium ${
+                    canAccessTracking ? 'text-gray-800' : 'text-gray-400'
+                  }`}
+                >
+                  <BarChart3
+                    className={`w-5 h-5 ${
+                      canAccessTracking ? 'text-amber-600' : 'text-gray-300'
+                    }`}
+                  />
                   AI 學情報告
                 </span>
-                <span className="text-xs text-amber-600 font-medium">
-                  功能研發中，敬請期待
+                <span className="text-xs text-gray-500">
+                  {canAccessTracking ? '學習狀況與能力分析' : '需要 Pro 權限'}
                 </span>
               </button>
             </div>
