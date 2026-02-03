@@ -17,8 +17,8 @@ function parseBooleanParam(value) {
   if (typeof value === 'boolean') return value
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase()
-    if (normalized === '1' || normalized === 'true') return true
-    if (normalized === '0' || normalized === 'false') return false
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false
   }
   return false
 }
@@ -61,7 +61,7 @@ export default async function handler(req, res) {
 
     const { data: submission, error: submissionError } = await supabaseDb
       .from('submissions')
-      .select('id, owner_id')
+      .select('id, owner_id, thumb_url, thumbUrl')
       .eq('id', submissionId)
       .maybeSingle()
 
@@ -91,14 +91,45 @@ export default async function handler(req, res) {
     const wantsThumbnail = parseBooleanParam(
       req.query?.thumbnail ?? req.query?.thumb ?? req.query?.thumbUrl
     )
-    const filePath = wantsThumbnail
-      ? `submissions/thumbs/${submissionId}.webp`
-      : `submissions/${submissionId}.webp`
-    const { data, error } = await supabaseDb.storage
-      .from('homework-images')
-      .download(filePath)
 
-    if (error || !data) {
+    const normalizedThumbUrl =
+      submission?.thumb_url ??
+      (submission as { thumbUrl?: string }).thumbUrl ??
+      undefined
+
+    const originalPath = `submissions/${submissionId}.webp`
+    const thumbFallbackPath = `submissions/thumbs/${submissionId}.webp`
+    const candidatePaths = []
+
+    if (wantsThumbnail) {
+      if (normalizedThumbUrl) {
+        candidatePaths.push(normalizedThumbUrl.replace(/^\/+/, ''))
+      }
+      candidatePaths.push(thumbFallbackPath)
+    }
+    candidatePaths.push(originalPath)
+
+    let data = null
+    let filePathUsed = originalPath
+    for (const candidate of candidatePaths) {
+      const { data: downloadData, error: downloadError } = await supabaseDb.storage
+        .from('homework-images')
+        .download(candidate)
+
+      if (!downloadError && downloadData) {
+        data = downloadData
+        filePathUsed = candidate
+        break
+      }
+
+      // If download failed because the thumb path doesn't exist, keep trying
+      if (downloadError && candidate === candidatePaths[candidatePaths.length - 1]) {
+        res.status(404).json({ error: 'Image not found' })
+        return
+      }
+    }
+
+    if (!data) {
       res.status(404).json({ error: 'Image not found' })
       return
     }
