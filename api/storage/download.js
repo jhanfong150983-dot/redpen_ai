@@ -92,10 +92,7 @@ export default async function handler(req, res) {
       req.query?.thumbnail ?? req.query?.thumb ?? req.query?.thumbUrl
     )
 
-    const normalizedThumbUrl =
-      submission?.thumb_url ??
-      (submission as { thumbUrl?: string }).thumbUrl ??
-      undefined
+    const normalizedThumbUrl = submission?.thumb_url ?? undefined
 
     const originalPath = `submissions/${submissionId}.webp`
     const thumbFallbackPath = `submissions/thumbs/${submissionId}.webp`
@@ -110,7 +107,6 @@ export default async function handler(req, res) {
     candidatePaths.push(originalPath)
 
     let data = null
-    let filePathUsed = originalPath
     for (const candidate of candidatePaths) {
       const { data: downloadData, error: downloadError } = await supabaseDb.storage
         .from('homework-images')
@@ -118,7 +114,6 @@ export default async function handler(req, res) {
 
       if (!downloadError && downloadData) {
         data = downloadData
-        filePathUsed = candidate
         break
       }
 
