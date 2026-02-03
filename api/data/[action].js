@@ -95,7 +95,7 @@ async function requireAdminOverride(userId) {
     throw new Error('讀取使用者權限失敗')
   }
 
-  if (data?.role !== 'admin') {
+  if (data?.role?.toLowerCase?.() !== 'admin') {
     return null
   }
 

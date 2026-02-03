@@ -93,8 +93,8 @@ export default async function handler(req, res) {
           profile = {
             name: data.name?.trim(),
             avatar_url: data.avatar_url?.trim(),
-            role: data.role?.trim(),
-            permission_tier: data.permission_tier?.trim(),
+            role: data.role?.trim()?.toLowerCase(),
+            permission_tier: data.permission_tier?.trim()?.toLowerCase(),
             ink_balance: data.ink_balance
           }
 

@@ -31,7 +31,7 @@ async function isAdminUser(supabaseDb, userId) {
     .maybeSingle()
 
   if (error) return false
-  return data?.role === 'admin'
+  return data?.role?.toLowerCase?.() === 'admin'
 }
 
 export default async function handler(req, res) {

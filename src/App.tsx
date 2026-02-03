@@ -131,8 +131,8 @@ function App() {
         status: 'authenticated',
         user: {
           ...data.user,
-          role: data.user.role || 'user',
-          permissionTier: data.user.permissionTier || 'basic',
+          role: (data.user.role || 'user').toLowerCase(),
+          permissionTier: (data.user.permissionTier || 'basic').toLowerCase(),
           inkBalance: typeof data.user.inkBalance === 'number' ? data.user.inkBalance : 0
         }
       })
