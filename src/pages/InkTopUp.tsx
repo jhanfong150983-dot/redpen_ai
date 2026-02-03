@@ -95,7 +95,7 @@ export default function InkTopUp({ onBack, currentBalance = 0 }: InkTopUpProps) 
       : 0
   const totalDrops = effectiveDrops ? effectiveDrops + bonusDrops : 0
   const refundFeePercent = Math.round(REFUND_FEE_RATE * 1000) / 10
-  const isCheckoutLocked = true // TODO: 綠界付款恢復後改成 false
+  const isCheckoutLocked = false
   const pendingOrders = orders.filter((order) => order.status === 'pending')
   const pendingBaseDrops = pendingOrders.reduce(
     (sum, order) => sum + (Number(order.drops) || 0),
