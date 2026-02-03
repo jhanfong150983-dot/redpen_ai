@@ -429,6 +429,7 @@ async function handleSync(req, res) {
           studentId: row.student_id,
           status: row.status ?? 'synced',
           imageUrl: row.image_url ?? undefined,
+          thumbUrl: row.thumb_url ?? row.thumbnail_url ?? undefined,
           createdAt: Number.isFinite(createdAt) ? createdAt : undefined,
           score: row.score ?? undefined,
           feedback: row.feedback ?? undefined,
@@ -506,7 +507,10 @@ async function handleSync(req, res) {
 
         // 步驟 1: 針對 submissions，先刪除雲端儲存檔案
         if (tableName === 'submissions') {
-          const filePaths = list.map(item => `submissions/${item.id}.webp`)
+          const filePaths = list.flatMap(item => ([
+            `submissions/${item.id}.webp`,
+            `submissions/thumbs/${item.id}.webp`
+          ]))
 
           try {
             // 使用批次刪除 API (Supabase 支援一次刪除多個檔案)
@@ -689,6 +693,12 @@ async function handleSync(req, res) {
           const gradedAt = toNumber(s.gradedAt)
           const imageUrl =
             s.imageUrl || s.image_url || `submissions/${s.id}.webp`
+          const thumbUrl =
+            s.thumbUrl ||
+            s.thumb_url ||
+            s.thumbnailUrl ||
+            s.thumbnail_url ||
+            `submissions/thumbs/${s.id}.webp`
 
           return compactObject({
             id: s.id,
@@ -696,6 +706,7 @@ async function handleSync(req, res) {
             student_id: s.studentId,
             status: s.status ?? undefined,
             image_url: imageUrl,
+            thumb_url: thumbUrl,
             created_at: createdAt ?? undefined,
             score: toNumber(s.score) ?? undefined,
             feedback: s.feedback ?? undefined,
@@ -794,7 +805,9 @@ async function handleSubmission(req, res) {
       studentId,
       createdAt,
       imageBase64,
-      contentType
+      contentType,
+      thumbBase64,
+      thumbContentType
     } = body || {}
 
     if (!submissionId || !assignmentId || !studentId || !createdAt || !imageBase64) {
@@ -845,6 +858,29 @@ async function handleSubmission(req, res) {
     }
 
     console.log('✅ [上傳] 檔案上傳成功:', filePath)
+
+    let thumbFilePath = null
+    if (thumbBase64) {
+      const candidateThumbPath = `submissions/thumbs/${submissionId}.webp`
+      try {
+        const thumbBuffer = Buffer.from(String(thumbBase64), 'base64')
+        const { error: thumbUploadError } = await supabaseDb.storage
+          .from('homework-images')
+          .upload(candidateThumbPath, thumbBuffer, {
+            contentType: thumbContentType || 'image/webp',
+            upsert: true
+          })
+
+        if (thumbUploadError) {
+          console.warn('⚠️ [縮圖] 上傳失敗，略過縮圖:', thumbUploadError.message)
+        } else {
+          thumbFilePath = candidateThumbPath
+          console.log('✅ [縮圖] 上傳成功:', thumbFilePath)
+        }
+      } catch (err) {
+        console.warn('⚠️ [縮圖] 上傳異常，略過縮圖:', err)
+      }
+    }
 
     const createdTime =
       typeof createdAt === 'number' ? createdAt : Date.parse(createdAt)
@@ -898,8 +934,11 @@ async function handleSubmission(req, res) {
         try {
           await supabaseDb.storage
             .from('homework-images')
-            .remove([`submissions/${oldId}.webp`])
-          console.log('✅ [覆蓋] 已刪除舊作業雲端檔案:', `submissions/${oldId}.webp`)
+            .remove([`submissions/${oldId}.webp`, `submissions/thumbs/${oldId}.webp`])
+          console.log('✅ [覆蓋] 已刪除舊作業雲端檔案:', {
+            original: `submissions/${oldId}.webp`,
+            thumb: `submissions/thumbs/${oldId}.webp`
+          })
         } catch (err) {
           console.warn('⚠️ [覆蓋] 刪除舊檔案失敗:', err)
         }
@@ -917,15 +956,18 @@ async function handleSubmission(req, res) {
 
     const { error: dbError } = await supabaseDb
       .from('submissions')
-      .insert({
-        id: submissionId,
-        assignment_id: assignmentId,
-        student_id: studentId,
-        image_url: filePath,
-        status: 'synced',
-        created_at: timestamp,
-        owner_id: user.id
-      })
+      .insert(
+        compactObject({
+          id: submissionId,
+          assignment_id: assignmentId,
+          student_id: studentId,
+          image_url: filePath,
+          thumb_url: thumbFilePath ?? undefined,
+          status: 'synced',
+          created_at: timestamp,
+          owner_id: user.id
+        })
+      )
 
     if (dbError) {
       console.error('❌ [資料庫] 寫入失敗:', dbError.message)

@@ -64,7 +64,11 @@ export function getSubmissionImageUrl(submission?: {
   imageBlob?: Blob
   imageBase64?: string
   imageUrl?: string
-} | null): string | null {
+  thumbUrl?: string
+  thumbnailBlob?: Blob
+  thumbnailBase64?: string
+  thumbnailUrl?: string
+} | null, useThumbnail = false): string | null {
   if (!submission) {
     // 正常情況：某些學生可能沒有提交作業
     return null
@@ -73,7 +77,62 @@ export function getSubmissionImageUrl(submission?: {
   const safari = isSafari()
   const browser = safari ? 'Safari' : 'Chrome/Other'
 
-  debugLog(`🖼️ 取得圖片 URL (${browser}):`, {
+  // 如果使用縮圖模式，優先使用縮圖欄位
+  if (useThumbnail) {
+    // 策略 1: 優先使用雲端縮圖 URL（避免一開始就下載全部圖片到本地）
+    const cloudThumbUrl = submission.thumbUrl || submission.thumbnailUrl
+    if (cloudThumbUrl && submission.id) {
+      const params = new URLSearchParams({ submissionId: submission.id, thumb: 'true' })
+      const url = `/api/storage/download?${params.toString()}`
+      debugLog(`✅ 使用雲端縮圖 URL (${browser})`, { submissionId: submission.id, url })
+      return url
+    }
+
+    // 策略 2: 使用本地縮圖 Base64（如果已經下載過）
+    if (submission.thumbnailBase64) {
+      const base64 = fixCorruptedBase64(submission.thumbnailBase64)
+      debugLog(`✅ 使用本地縮圖 Base64 (${browser})`, { submissionId: submission.id, length: base64.length })
+      return base64
+    }
+
+    // 策略 3: 使用本地縮圖 Blob（如果已經下載過）
+    if (submission.thumbnailBlob && submission.thumbnailBlob.size > 0) {
+      try {
+        const url = URL.createObjectURL(submission.thumbnailBlob)
+        debugLog(`✅ 使用本地縮圖 Blob URL (${browser})`, { submissionId: submission.id, url })
+        return url
+      } catch (error) {
+        console.error(`❌ 創建縮圖 Blob URL 失敗 (${browser}):`, error, { submissionId: submission.id })
+      }
+    }
+
+    // 策略 4: 使用本地原圖（已存在則直接用，避免額外下載）
+    if (submission.imageBase64) {
+      const base64 = fixCorruptedBase64(submission.imageBase64)
+      debugLog(`✅ 使用本地原圖 Base64 (${browser})`, { submissionId: submission.id, length: base64.length })
+      return base64
+    }
+
+    if (submission.imageBlob) {
+      try {
+        if (submission.imageBlob.size > 0) {
+          const url = URL.createObjectURL(submission.imageBlob)
+          debugLog(`✅ 使用本地原圖 Blob URL (${browser})`, { submissionId: submission.id, url })
+          return url
+        }
+      } catch (error) {
+        console.error(`❌ 創建原圖 Blob URL 失敗 (${browser}):`, error, { submissionId: submission.id })
+      }
+    }
+
+    // Fallback: 雲端已有原圖但沒有縮圖，顯示占位即可
+    if (submission.imageUrl) {
+      debugLog('⚠️ 沒有縮圖，顯示雲端占位', { submissionId: submission.id })
+      return null
+    }
+  }
+
+  debugLog(`📷 取得圖片 URL (${browser}):`, {
     submissionId: submission.id,
     hasBlob: !!submission.imageBlob,
     blobSize: submission.imageBlob?.size,
@@ -131,7 +190,6 @@ export function getSubmissionImageUrl(submission?: {
   })
   return null
 }
-
 /**
  * 檢查資料夾名稱是否已被使用（跨類型唯一性）
  * 規則：
@@ -198,3 +256,5 @@ export async function checkFolderNameUnique(
 
   return { isUnique: true }
 }
+
+

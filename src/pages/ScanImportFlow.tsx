@@ -5,7 +5,7 @@ import type { Student, Submission } from '@/lib/db'
 import { requestSync } from '@/lib/sync-events'
 import { queueDeleteMany } from '@/lib/sync-delete-queue'
 import { safeToBlobWithFallback } from '@/lib/canvasToBlob'
-import { blobToBase64 } from '@/lib/imageCompression'
+import { blobToBase64, compressToTargetBytes } from '@/lib/imageCompression'
 import { isIndexedDbBlobError, shouldAvoidIndexedDbBlob } from '@/lib/blob-storage'
 import SeatSelectionPage from './SeatSelectionPage'
 import CameraCapturePage from './CameraCapturePage'
@@ -142,6 +142,15 @@ export default function ScanImportFlow({
         // 建立新的 submission
         // 同時存儲 Blob 和 Base64，確保平板 Chrome 也能正常顯示
         const imageBase64 = await blobToBase64(imageBlob)
+
+        // 產生縮圖（用於 Grid 顯示，提升效能）
+        const thumbnailBlob = await compressToTargetBytes(
+          imageBlob,
+          50 * 1024, // 50KB 上限
+          { maxWidth: 400 }  // 400px 寬度
+        )
+        const thumbnailBase64 = await blobToBase64(thumbnailBlob)
+
         const submission: Submission = {
           id: generateId(),
           assignmentId,
@@ -149,6 +158,9 @@ export default function ScanImportFlow({
           status: 'scanned',
           imageBase64,
           ...(avoidBlobStorage ? {} : { imageBlob }),
+          // 新增縮圖欄位
+          thumbnailBase64,
+          ...(avoidBlobStorage ? {} : { thumbnailBlob }),
           createdAt: getCurrentTimestamp()
         }
 
@@ -162,6 +174,7 @@ export default function ScanImportFlow({
               studentId: submission.studentId,
               status: submission.status,
               imageBase64: submission.imageBase64,
+              thumbnailBase64: submission.thumbnailBase64,
               createdAt: submission.createdAt
             }
             await db.submissions.add(submissionWithoutBlob)

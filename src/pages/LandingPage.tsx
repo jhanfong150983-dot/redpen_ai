@@ -322,9 +322,36 @@ export default function LandingPage() {
               <h3 className="text-2xl font-bold text-white">Pro 方案</h3>
               <p className="mt-2 text-blue-100">解鎖完整功能</p>
               <div className="mt-6">
-                <span className="text-4xl font-bold text-white">購買墨水</span>
+                <span className="text-4xl font-bold text-white">NT$ 100 起</span>
               </div>
-              <p className="text-blue-200 text-sm mt-1">即可自動升級 Pro</p>
+              <p className="text-blue-200 text-sm mt-1">購買墨水即自動升級 Pro</p>
+
+              {/* 墨水方案清單 */}
+              <div className="mt-4 bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                <h4 className="text-sm font-semibold text-white mb-3">墨水方案</h4>
+                <ul className="space-y-2 text-sm">
+                  <li className="flex justify-between text-blue-50">
+                    <span>100 墨水</span>
+                    <span className="font-semibold">NT$ 100</span>
+                  </li>
+                  <li className="flex justify-between text-blue-50">
+                    <span>300 墨水</span>
+                    <span className="font-semibold">NT$ 280</span>
+                  </li>
+                  <li className="flex justify-between text-blue-50">
+                    <span>1000 墨水</span>
+                    <span className="font-semibold">NT$ 800</span>
+                  </li>
+                </ul>
+                <p className="text-xs text-blue-200 mt-3 border-t border-white/20 pt-3">
+                  墨水用於 AI 批改用量（依頁數/題數扣點），購買後自動升級 Pro 功能
+                </p>
+              </div>
+
+              <p className="text-xs text-blue-100 mt-4 text-center">
+                價格皆以新台幣（NT$）計價
+              </p>
+
               <ul className="mt-6 space-y-3">
                 <li className="flex items-center gap-3">
                   <Check className="w-5 h-5 text-green-300 flex-shrink-0" />

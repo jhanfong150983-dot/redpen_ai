@@ -13,6 +13,16 @@ function resolveOwnerIdParam(req) {
   return null
 }
 
+function parseBooleanParam(value) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === '1' || normalized === 'true') return true
+    if (normalized === '0' || normalized === 'false') return false
+  }
+  return false
+}
+
 async function isAdminUser(supabaseDb, userId) {
   const { data, error } = await supabaseDb
     .from('profiles')
@@ -78,7 +88,12 @@ export default async function handler(req, res) {
       return
     }
 
-    const filePath = `submissions/${submissionId}.webp`
+    const wantsThumbnail = parseBooleanParam(
+      req.query?.thumbnail ?? req.query?.thumb ?? req.query?.thumbUrl
+    )
+    const filePath = wantsThumbnail
+      ? `submissions/thumbs/${submissionId}.webp`
+      : `submissions/${submissionId}.webp`
     const { data, error } = await supabaseDb.storage
       .from('homework-images')
       .download(filePath)

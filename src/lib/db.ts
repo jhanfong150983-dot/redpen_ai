@@ -191,6 +191,13 @@ export interface Submission {
   imageBlob?: Blob
   imageBase64?: string  // Safari 備用：Base64 格式的圖片（包含 data URL prefix）
   imageUrl?: string
+  thumbUrl?: string
+
+  // 縮圖（用於 Grid 顯示，提升效能）
+  thumbnailBlob?: Blob
+  thumbnailBase64?: string  // Safari 備用：縮圖的 Base64 格式
+  thumbnailUrl?: string     // Supabase 雲端縮圖 URL（可選）
+
   createdAt: number
   updatedAt?: number
 

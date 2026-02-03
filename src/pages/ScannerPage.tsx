@@ -706,7 +706,7 @@ export default function ScannerPage({
           <div className="grid lg:grid-cols-[1.4fr_1fr] gap-4 mb-6">
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex flex-col gap-3 min-h-[320px]">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-gray-700">作業預覽</h3>
+                <h3 className="text-sm font-semibold text-gray-700">PDF轉向</h3>
                 {previewStudent && (
                   <span className="text-xs text-gray-500">
                     {previewStudent.seatNumber}號 {previewStudent.name}
