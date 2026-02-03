@@ -61,7 +61,7 @@ export default async function handler(req, res) {
 
     const { data: submission, error: submissionError } = await supabaseDb
       .from('submissions')
-      .select('id, owner_id, thumb_url, thumbUrl')
+      .select('id, owner_id, thumb_url')
       .eq('id', submissionId)
       .maybeSingle()
 
